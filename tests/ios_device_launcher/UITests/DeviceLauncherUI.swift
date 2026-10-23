@@ -9,6 +9,14 @@ final class DeviceLauncherUI: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication(bundleIdentifier: "com.smartvelo.totk")
+        if name.contains("test05ExistingGameTouch") {
+            XCTAssertNotEqual(app.state, .notRunning, "Keep the existing game process for this input")
+            app.activate()
+            return
+        }
+        if name.contains("test04PlayAndNativeHUD") {
+            app.launchEnvironment = ["DM_NVN_TSV": "milestone-1-timings.tsv", "DM_NVN_TSV_CALLS": "0"]
+        }
         app.launch()
         XCTAssertTrue(app.navigationBars["Tears of the Kingdom"].waitForExistence(timeout: 20))
     }
@@ -104,7 +112,9 @@ final class DeviceLauncherUI: XCTestCase {
         let local = app.cells["DOC.sidebar.item.On My iPad"]
         XCTAssertTrue(local.waitForExistence(timeout: 15))
         local.tap()
-        let documents = app.staticTexts["TOTK"].firstMatch
+        let documents = app.collectionViews.staticTexts.matching(
+            NSPredicate(format: "label IN %@", ["TOTK", "Tears of the Kingdom"])
+        ).firstMatch
         XCTAssertTrue(documents.waitForExistence(timeout: 10))
         documents.tap()
         let folder = app.staticTexts[transferName].firstMatch
@@ -121,6 +131,19 @@ final class DeviceLauncherUI: XCTestCase {
         app.alerts.buttons["Import"].tap()
         XCTAssertTrue(app.alerts.staticTexts["Save ready. Press Play to load it."].waitForExistence(timeout: 30))
         record("Own save import complete")
+        app.alerts.buttons["OK"].tap()
+    }
+
+    func test03cRestoreLatestOwnBackup() {
+        cell("Restore backup").tap()
+        let backup = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Save-")).firstMatch
+        XCTAssertTrue(backup.waitForExistence(timeout: 10))
+        record("Latest own backup chosen for restore")
+        backup.tap()
+        XCTAssertTrue(app.alerts["Restore backup?"].waitForExistence(timeout: 10))
+        app.alerts.buttons["Restore"].tap()
+        XCTAssertTrue(app.alerts.staticTexts["Save ready. Press Play to load it."].waitForExistence(timeout: 30))
+        record("Own backup restored")
         app.alerts.buttons["OK"].tap()
     }
 
@@ -143,5 +166,20 @@ final class DeviceLauncherUI: XCTestCase {
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { frames.fulfill() }
         wait(for: [frames], timeout: 35)
         record("Game after Play with native HUD enabled")
+    }
+
+    func test05ExistingGameTouch() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let x = Double(environment["TOTK_TEST_TOUCH_X"] ?? ""),
+              let y = Double(environment["TOTK_TEST_TOUCH_Y"] ?? "") else {
+            throw XCTSkip("A reviewed screenshot and explicit touch coordinates are required")
+        }
+        XCTAssertTrue((0...1).contains(x) && (0...1).contains(y))
+        record("Existing game before reviewed touch")
+        app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)).tap()
+        let response = expectation(description: "Allow the existing game to respond")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { response.fulfill() }
+        wait(for: [response], timeout: 15)
+        record("Existing game after reviewed touch")
     }
 }

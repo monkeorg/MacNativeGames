@@ -39,7 +39,7 @@ The prepared run stores its shared export name in `transfer-name.txt` beside the
 The Play test runs last and captures the screen after 30 seconds with native HUD enabled.
 Screenshots and accessibility trees remain in the result bundle. Treat them as private device evidence.
 
-The Files tests assume English system labels and the app's visible folder name `TOTK`.
+The Files tests assume English system labels and the visible folder name `TOTK` or `Tears of the Kingdom`.
 Save transfer verification is separate from successful game loading and native HUD visual verification.
 
 If XCTest reports `Timed out while enabling automation mode`, no test action has executed.
@@ -52,4 +52,17 @@ Physical evidence from 2026-10-23: preferences, lifecycle, centered layout, back
 All 19 exported save files matched the private pre-transfer SHA256 snapshot.
 The initial import script selected enclosing Documents and exposed a production copy-stack overflow.
 The full 22-file profile matched its immediate pre-transfer hashes, excluding the incomplete import staging directory.
-The corrected import script requires folder navigation confirmation. Its successful import result remains unverified.
+The corrected import script passed on implementation `2dc8c34` after explicit folder navigation confirmation.
+All 22 profile files matched the immediate pre-transfer snapshot after import. No staging directories remained.
+This comparison does not establish equality with an older milestone backup.
+Physical restore of the latest own-save backup also passed, with the same 22-file equality before Play.
+
+Play reached the real title screen. Three separately reviewed touch-A presses selected Continue, the existing save,
+and its Load confirmation. A physical screenshot then showed Link in Beneath Hyrule Castle.
+No New Game or save-overwrite command was selected.
+The native HUD preference was on, but no native HUD appeared in the captured title or gameplay screenshots.
+A later launch with `MTL_HUD_ENABLED=1` displayed the native HUD. The user then enabled the device Developer setting and confirmed the in-app switch works.
+
+The Play test enables the existing timing-only `DM_NVN_TSV` diagnostic in the launched app's environment.
+The optional existing-process touch test skips unless explicit normalized coordinates are supplied.
+Review a current screenshot before each such touch. Use it only for a known control; never select New Game.

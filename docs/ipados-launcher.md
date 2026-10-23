@@ -7,13 +7,15 @@ The launcher appears before the game starts. Press **Play** after you choose set
 Tap a settings row to open its choices. Tap a choice to apply it.
 
 - **Graphics:** shows this build's 1280×720 game picture. The performance overlay can show all readings, FPS only, or nothing.
-- **Apple Metal HUD:** enables Apple’s native performance overlay for this development build. Apply the choice before Play.
+- **Apple Metal HUD:** selects Apple’s native performance overlay for this development build. Apply the choice before Play. Enable device-level support once as described below.
 - **Controls:** Automatic keeps the existing touch behavior. Off requires a connected controller with an extended gamepad profile.
 - **Language:** uses the same preference as the app's pane in iPad Settings. System follows the device language.
 
 Preferences persist between launches and apply before Play. Invalid stored values return to defaults. A developer-supplied `TOTK_LANG` environment value still takes precedence.
 
 This milestone does not add resolution scaling, aspect patches, mouse input, or new MetalFX modes.
+
+On the tested iPad, the native HUD appeared with `MTL_HUD_ENABLED=1` supplied at process launch. The saved preference alone did not activate it. Enable **Settings → Developer → Graphics HUD → Show Graphics HUD** once. The user confirmed the in-app switch works after this device setting was enabled.
 
 ## Save transfers
 
@@ -56,6 +58,6 @@ Run all repository tests with the existing build virtual environment. The save p
 python -m unittest discover -s tests
 ```
 
-The launcher UI tests use a separate simulator harness without game content. Neither automated probes nor simulator tests prove a physical-device game-save load.
+Use the [physical-device UI runner](../tests/ios_device_launcher/README.md) against the installed app. It does not transfer the game or use a simulator. Physical Files import, backup restore, byte equality, and an existing-save load passed on implementation `2dc8c34`.
 
 Apple reference: https://developer.apple.com/documentation/xcode/monitoring-your-metal-apps-graphics-performance

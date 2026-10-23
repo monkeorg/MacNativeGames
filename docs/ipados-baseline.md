@@ -16,7 +16,7 @@ Evidence review date: 2026-10-23. This record establishes a startup baseline. It
 | Current drawable | 1280×960 | Runtime `view drawable 1280x960`, line 1. |
 | Resolution patch | Game's own resolution; no build-time resolution patch | Runtime log, line 8. |
 | Shader state | Existing bundled shaders and pipeline archives; startup warm-up enabled | Runtime log, lines 6614–6623. Full scene warm-up completion is unverified. |
-| Save backup | 22 regular files, 9,562,585 bytes; no empty files or symbolic links | Local filesystem inspection. Physical API export/import/restore preserves all 22 file hashes. Gameplay save load remains unverified. |
+| Initial save backup | 22 regular files, 9,562,585 bytes; no empty files or symbolic links | Retained privately. Files export/import and backup restore preserve all 22 immediate pre-transfer profile hashes. Existing-save load is verified. |
 
 The current 720-high game image and 960-high drawable are separate measurements. Neither establishes correct full-aspect projection or the roadmap's 1080-high target.
 
@@ -57,12 +57,12 @@ The log also describes a 120 Hz presentation cadence and an uncapped clock limit
 
 | Stage | Status | Remaining evidence |
 |---|---|---|
-| Source revision | Verified commit exists | Attest source revision and build options for the next tested app. |
-| Launcher build | Physical-device build succeeded for `6d896fc` | Cached Xcode build; dedicated development signature verified. This is a candidate, not the original baseline binary. |
-| Installation | Candidate installed under the existing app identifier | Physical launch succeeds; all 22 original save-profile hashes match after installation. |
-| Runtime launch | Log establishes startup and first presentation | Repeat with the tested build and retain its sanitized log. |
-| Save backup | Physical production API backup, export, import, and restore succeeded | All 22 profile hashes match afterward. External Files picker transfer and gameplay save load require separate verification. |
-| Gameplay and visual correctness | Unverified | Record the actual save, scene, controls, and observed image correctness privately. |
+| Source revision | Candidate implementation `2dc8c34` attested by source hashes | Private build report records the exact iOS implementation sources. |
+| Launcher build | Physical-device build succeeded for `2dc8c34` | Cached Xcode build; dedicated development signature verified. This is a candidate, not the original baseline binary. |
+| Installation | Candidate installed under the existing app identifier | All 22 profile hashes match the immediate pre-import snapshot after installation. |
+| Runtime launch | Physical Play test reached the real title screen | Candidate runtime log records first presentation at 3.827 seconds. This is not tap-to-gameplay time. |
+| Save transfers | Physical Files export/import and own-backup restore passed | All 19 exported save files and all 22 post-transfer profile files match their immediate baselines. |
+| Gameplay and visual correctness | Existing save loaded; Link and the world appeared | Three reviewed touch inputs selected Continue, the existing save, and Load. Broader visual correctness remains unverified. |
 | Gameplay frame times and FPS | Unverified | Capture rendered-frame intervals during a sustained session. |
 | Memory and thermal behavior | Unverified | Capture a synchronized 30-minute trace and report tool availability. |
 
@@ -82,7 +82,7 @@ Follow [CONTRIBUTING.md](../CONTRIBUTING.md#picture-quality-and-performance) and
 6. Keep these conditions constant between baseline and candidate runs.
 7. Confirm a private save backup before any test that can change the save.
 
-Scene selection remains pending access to the actual save and physical hardware. Do not substitute invented save locations or routes.
+The existing save loads Beneath Hyrule Castle. A fixed-view gameplay screenshot is retained privately. Traversal and busy-scene routes remain unselected. Do not substitute invented routes.
 
 Choose three available scenes: a quiet fixed view, a repeatable traversal, and a busy view with repeatable actions. Record the exact choices privately.
 
@@ -147,4 +147,8 @@ An enclosing-folder import exposed recursive staging and a worker-stack overflow
 
 After installation, all 22 profile hashes match the immediate pre-import snapshot. The account identity and all 12 slot files also match the older initial backup. Three cache-related files differ from that older backup; these comparisons use distinct baselines.
 
-The iPad currently rejects launch with `CoreDevice 10002 / SBMainWorkspace Locked`. The corrected Files import, exact crash-staging cleanup, Play, native Metal HUD display, save load, and sustained gameplay remain unverified.
+The iPad was unlocked. Exact crash-staging cleanup, guarded Files import, own-backup restore, Play, and existing-save load passed. Both import and restore preserve all 22 immediate pre-transfer profile hashes before Play. No staging directories remain.
+
+Apple Metal HUD is visible with the documented process-launch environment variable `MTL_HUD_ENABLED=1`. The saved app preference, Info.plist key, and defaults key alone did not display it on this device. Setting the environment variable after launch, before Play, also failed. The user enabled Settings → Developer → Graphics HUD → Show Graphics HUD and confirmed that the in-app switch works. A fresh device capture shows the native HUD over loaded gameplay.
+
+The timing-only diagnostic was enabled for the Play run. Live TSV readback failed with a closed socket; the retained 30 MB copy is partial. It does not establish a sustained gameplay result. Frame-time, memory, and thermal capture remain pending.
