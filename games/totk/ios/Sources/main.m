@@ -112,6 +112,18 @@ void runtime_shortcut_help_toggle(void) {}
         if (!getenv("TOTK_LANG") && lang.length) setenv("TOTK_LANG",lang.UTF8String,0);
         NSInteger hud = TOTKLauncherHUD(NSUserDefaults.standardUserDefaults);
         for (unsigned i=0;i<3 && fps_overlay_hud_mode()!=hud;i++) fps_overlay_toggle_hints();
+        unsigned width, height; BOOL fullDisplay;
+        CGSize viewSize = g_active_window.bounds.size;
+        if (TOTKLauncherDisplaySize(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.infoDictionary,
+                                   viewSize.width, viewSize.height, &width, &height, &fullDisplay)) {
+            char size[32], drawableHeight[16];
+            snprintf(size,sizeof size,"%ux%u",width,height);
+            snprintf(drawableHeight,sizeof drawableHeight,"%u",height);
+            setenv("TOTK_RENDER_RES",size,0);
+            setenv("TOTK_OUTPUT_RES",size,0);
+            setenv("TOTK_ASPECT",fullDisplay ? "display" : "0",0);
+            setenv("TOTK_IOS_DRAWABLE_H",drawableHeight,0);
+        }
         g_root_controller = [TOTKGameController new];
         g_active_window.rootViewController = g_root_controller;
     }];

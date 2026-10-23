@@ -307,21 +307,38 @@ static int output_full_at_start;
 static unsigned output_w,output_h;
 static _Atomic(uint8_t *) output_page;
 static uint64_t pack_size(unsigned w,unsigned h){return (uint64_t)h<<32|w;}
+/* The opt-in signed iOS profile reserves one 1920x1080 swapchain and matching heaps.
+ * Pre-Play preferences only change writable size/aspect values within that capacity. */
+static int ios_display_settings(void){
+#if TARGET_OS_IPHONE
+#ifdef TOTK_IOS_DISPLAY_SETTINGS
+    return 1;
+#else
+    return 0;
+#endif
+#else
+    const char *e=getenv("TOTK_IOS_DISPLAY_SETTINGS");
+    return getenv("TOTK_EXPORT_IOS")&&e&&!strcmp(e,"1");
+#endif
+}
+static uint64_t ios_output_requested(void){
+    unsigned w=1280,h=720;char tail;const char *e=getenv("TOTK_OUTPUT_RES");
+    if(e&&*e&&(sscanf(e,"%ux%u%c",&w,&h,&tail)!=2||w<640||h<360||w>1920||h>1080))
+        runtime_fail("iOS display profile: TOTK_OUTPUT_RES must fit 640x360 through 1920x1080");
+    return pack_size(w,h);
+}
 uint64_t runtime_output_size_current(void){
     uint8_t *page=atomic_load(&output_page);
-    return page?atomic_load((_Atomic uint64_t *)(void *)(page+32)):pack_size(1920,1080);
+    if(page)return atomic_load((_Atomic uint64_t *)(void *)(page+32));
+    return ios_display_settings()?ios_output_requested():pack_size(1920,1080);
 }
 int runtime_output_res(unsigned *w,unsigned *h){
     static int decided,on;static unsigned cw,ch;
     if(!decided){
         const char *e=getenv("TOTK_OUTPUT_RES");
-        /* iOS shows 720p only (the user, 2026-10-18): no larger swapchain, heaps or output there, whatever
-           TOTK_OUTPUT_RES says. The iOS export runs these patches on the Mac to make the phone's embedded code
-           (TOTK_EXPORT_IOS), so it follows the same rule: before, auto put the 2560x1440 swapchain into the phone's code,
-           and the phone, which carries the heap overlay in its bundle, reserved 88 MiB more for a picture it never shows. */
         if(TARGET_OS_IPHONE||getenv("TOTK_EXPORT_IOS")){
-            on=0;
-            if(e&&*e&&strcmp(e,"0")&&strcmp(e,"auto"))fprintf(stderr,"[totk] TOTK_OUTPUT_RES=%s ignored: iOS shows 720p only\n",e);
+            on=ios_display_settings();cw=1920;ch=1080;
+            if(!on&&e&&*e&&strcmp(e,"0")&&strcmp(e,"auto"))fprintf(stderr,"[totk] TOTK_OUTPUT_RES=%s ignored: stock iOS profile shows 720p only\n",e);
         }else if(e&&!strcmp(e,"0"))on=0;
         else if(!e||!*e||!strcmp(e,"auto")){
             const char *dir=getenv("TOTK_ROMFS_PATCHES_OUT");char path[4096];
@@ -342,10 +359,11 @@ int runtime_output_res(unsigned *w,unsigned *h){
  * margin: measured 2026-10-19, a 3440x1440 canvas with a 2580x1080 scene crashed in the allocator (main+0x1c2d20) at
  * +258 MiB and loaded at +400 MiB. That was before render_res_publish divided out the game's own canvas scaling (the
  * scene was then about 4620x1935), so for the scene asked for the heaps are now larger than needed: safe, not tight.
- * The HeapDef overlay (scripts/make_output_res_overlay.py --scene) uses the same formula. Mac only: iOS keeps the
- * game's own heaps. */
+ * The HeapDef overlay (scripts/make_output_res_overlay.py --scene) uses the same formula. Stock iOS keeps the
+ * game's own heaps; its opt-in signed display profile reserves the existing maximum-scene overlay. */
 static int render_res(unsigned *w,unsigned *h);
 int runtime_render_res(unsigned *w,unsigned *h){
+    if(ios_display_settings()){*w=1920;*h=1080;return 1;}   /* capacity: reuse the verified maximum-scene HeapDef overlay */
 #if TARGET_OS_IPHONE
     (void)w;(void)h;return 0;
 #else
@@ -398,10 +416,15 @@ static void patch_output_res(Module *m){
     for(unsigned i=0;i<3;i++)memcpy(m->base+guards[i].off,words+i,4);
  #endif
     uint8_t *page=m->base+data;output_w=w;output_h=h;
-    atomic_store((_Atomic uint64_t *)(void *)(page+32),output_full_at_start?pack_size(w,h):pack_size(1920,1080));
+    atomic_store((_Atomic uint64_t *)(void *)(page+32),ios_display_settings()?ios_output_requested():
+        output_full_at_start?pack_size(w,h):pack_size(1920,1080));
     atomic_store((_Atomic uint64_t *)(void *)(page+40),0);
     atomic_store(&output_page,page);   /* Publish initialized state to the HUD on the main thread. */
-    fprintf(stderr,"[totk] 1.4.3 output: %ux%u swapchain; starts %s, key 3 cycles MetalFX / native / off; display-config veneer +%#llx\n",w,h,output_full_at_start?"at requested resolution":"at 1920x1080",(unsigned long long)stub);
+    if(ios_display_settings()){
+        uint64_t selected=runtime_output_size_current();
+        fprintf(stderr,"[totk] experimental iOS display: %ux%u swapchain capacity, %ux%u active canvas; signed veneer +%#llx\n",
+                w,h,(unsigned)selected,(unsigned)(selected>>32),(unsigned long long)stub);
+    }else fprintf(stderr,"[totk] 1.4.3 output: %ux%u swapchain; starts %s, key 3 cycles MetalFX / native / off; display-config veneer +%#llx\n",w,h,output_full_at_start?"at requested resolution":"at 1920x1080",(unsigned long long)stub);
 }
 /* Render resolution (TOTK_RENDER_RES=<w>x<h>, e.g. 960x540) - the 1.4.3 port of game_patches.c's patch.
    1.4.3 keeps the same graphics-parameter entry (+0x30 of the mode entry: handheld 1280x720, docked 1600x900) and the
@@ -438,6 +461,7 @@ static int render_res(unsigned *w,unsigned *h){
 }
 static void patch_render_res(Module *m){
     unsigned w=1280,h=720;int set=render_res(&w,&h);
+    if(ios_display_settings()&&(w>1920||h>1080))runtime_fail("iOS scene exceeds the signed display profile capacity");
 #if !TARGET_OS_IPHONE
     if(!set)return;   /* Mac (and the iOS export): the game's own size unless asked */
 #endif
@@ -453,7 +477,10 @@ static void patch_render_res(Module *m){
                       sites[1].replacement,sites[2].replacement,sites[3].replacement};
 #if TARGET_OS_IPHONE
     uint32_t first;memcpy(&first,m->base+sites[0].off,4);
-    if(first==sites[0].original){fprintf(stderr,"[totk] 1.4.3 render resolution: the game's own (not patched at build)\n");return;}
+    if(first==sites[0].original){
+        if(ios_display_settings())runtime_fail("signed iOS display profile is missing its scene-resolution patch");
+        fprintf(stderr,"[totk] 1.4.3 render resolution: the game's own (not patched at build)\n");return;
+    }
     for(unsigned i=0;i<sizeof sites/sizeof *sites;i++){
         uint32_t got;memcpy(&got,m->base+sites[i].off,4);
         if(got!=want[i])runtime_fail("1.4.3 embedded render-resolution patch mismatch");
@@ -483,20 +510,20 @@ static void patch_render_res(Module *m){
    The size the render-resolution patch above chooses (TOTK_RENDER_RES) stays; this only stops the dynamic part. */
 static void patch_fixed_res(Module *m){
     const char *e=getenv("TOTK_FIXED_RES");
-    if(!e||!*e||!strcmp(e,"0"))return;
+    if(!ios_display_settings()&&(!e||!*e||!strcmp(e,"0")))return;
+    const uint64_t site=0x5848a8;const uint32_t original=0x2a1703e9,replacement=0x52a7f009;
 #if TARGET_OS_IPHONE
-    fprintf(stderr,"[totk] TOTK_FIXED_RES: not available in the embedded build\n");(void)m;
-#else
-    const uint64_t site=0x5848a8;const uint32_t original=0x2a1703e9,replacement=0x52a7f009;   /* mov w9, w23 -> mov w9, #0x3f800000 */
-    uint32_t word;memcpy(&word,m->base+site,4);
-    if(word!=original){
-        fprintf(stderr,"[totk] fixed resolution patch main+%#llx: found %08x, expected %08x\n",(unsigned long long)site,word,original);
-        runtime_fail("fixed resolution patch: main does not match 1.4.3");
-    }
-    memcpy(m->base+site,&replacement,4);
-    fprintf(stderr,"[totk] 1.4.3 fixed resolution (TOTK_FIXED_RES): the dynamic resolution controller's scale is held at 100 %% (1 instruction at main+%#llx)\n",(unsigned long long)site);
+    if(!ios_display_settings()){fprintf(stderr,"[totk] TOTK_FIXED_RES: not available in the stock embedded build\n");return;}
 #endif
+    uint32_t word;memcpy(&word,m->base+site,4);
+    if(word!=(TARGET_OS_IPHONE?replacement:original))runtime_fail("fixed resolution patch: main does not match 1.4.3");
+#if !TARGET_OS_IPHONE
+    memcpy(m->base+site,&replacement,4);
+#endif
+    fprintf(stderr,"[totk] 1.4.3 fixed resolution: dynamic scale held at 100 %% (%s instruction at main+%#llx)\n",
+            TARGET_OS_IPHONE?"verified embedded":"guarded",(unsigned long long)site);
 }
+
 int runtime_output_res_toggle(void){
     if(!output_page)return 0;
     _Atomic uint64_t *size=(_Atomic uint64_t *)(void *)(output_page+32);

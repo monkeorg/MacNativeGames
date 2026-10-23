@@ -1,10 +1,11 @@
 /* Other picture shapes on the Mac: key 4 cycles the game's 16:9 -> fitting the window / display (a 21:9 or 32:9 monitor, a
    MacBook's 16:10 in full screen below the notch) -> 21:9 -> 16:9. Fitting is skipped while the window is within 1% of
    16:9 or 21:9, where it would show the same. TOTK_ASPECT=32:9, 16:10, 3440x1440 or 2.39 takes the place of 21:9 and
-   starts on it; TOTK_ASPECT=display starts on fitting the window. Not on iPhone / iPad.
+   starts on it; TOTK_ASPECT=display starts on fitting the window. The opt-in iOS display profile validates signed stubs.
    The game keeps drawing into its 16:9 canvas, but with the camera's aspect ratio set to the other one, so the picture
    holds the other view squeezed into it; the present pass then stretches it over the window (nvn_mtl.m
-   present_stretch asks runtime_aspect_now), which restores the proportions on a screen of that shape.
+   present_stretch asks runtime_aspect_now), which restores the proportions on a screen of that shape. A native
+   output canvas at the requested aspect uses the same projection ratio without a presentation aspect change.
    The community's TOTK-Ultrawide mod for emulators (GPL; none of its code is used here) changes the camera parameter
    DefaultAspect (1.777778 in main's read-only data) and a viewport routine's width / height division. DefaultAspect is
    only copied when a camera is made, so it cannot follow a key; instead each place that hands an aspect ratio to the
@@ -97,7 +98,7 @@ int runtime_aspect_toggle(void) {
    reserves after main. */
 static inline void aspect_install(Module *m, const char *version, const uint64_t *sites, unsigned nsite, unsigned ncam,
                                   uint64_t stub_off, uint64_t vert_off, uint64_t data_off) {
-#if TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE && !defined(TOTK_IOS_DISPLAY_SETTINGS)
     (void)m; (void)version; (void)sites; (void)nsite; (void)ncam; (void)stub_off; (void)vert_off; (void)data_off;
 #else
     double req = aspect_requested();
@@ -111,24 +112,32 @@ static inline void aspect_install(Module *m, const char *version, const uint64_t
          with main at 9e8a514, and again on the latest build; only the UI effects above remain. Which pass read the
          stale value was never found; anything else that reads the camera's field of view (other cameras, a copy of
          fovy) has not been checked. */
+#if TARGET_OS_IPHONE
+    (void)ncam;
+    int vert = 0;   /* The signed iOS display profile contains plain projection stubs only. */
+#else
     int vert = vert_off && aspect_vert_wanted(getenv("TOTK_ASPECT_VERT"));
+#endif
     void *tanf_at = vert ? runtime_symbol("tanf") : NULL, *atanf_at = vert ? runtime_symbol("atanf") : NULL;
     if (vert && (!tanf_at || !atanf_at)) { fprintf(stderr, "[totk] aspect patch: the game's tanf / atanf not found, no Vert+\n"); vert = 0; }
     uint64_t page_end = (m->text_end + 0x3fff) & ~0x3fffULL;
     if (stub_off < m->text_end || stub_off + ASPECT_STUB * nsite > page_end) runtime_fail("aspect patch: no room in main's text padding");
     if (vert && (vert_off < m->text_end || vert_off + ASPECT_VSTUB * ncam > page_end)) runtime_fail("aspect patch: no room for the Vert+ stubs");
     if (data_off + ASPECT_ATANF_SLOT + 8 > m->size) runtime_fail("aspect patch: no data page after main");
+#if !TARGET_OS_IPHONE
     for (unsigned i = 0; i < ASPECT_STUB * nsite; i++) if (m->base[stub_off + i]) runtime_fail("aspect patch: text padding in use");
     for (unsigned i = 0; vert && i < ASPECT_VSTUB * ncam; i++) if (m->base[vert_off + i]) runtime_fail("aspect patch: text padding for Vert+ in use");
+#endif
     unsigned nvert = 0;
     for (unsigned i = 0; i < nsite; i++) {
-        uint32_t ins; memcpy(&ins, m->base + sites[i], 4);
+        uint64_t s = stub_off + ASPECT_STUB * i;
+        uint32_t ins; memcpy(&ins, m->base + (TARGET_OS_IPHONE ? s : sites[i]), 4);
         if (!aspect_site_ok(ins)) runtime_fail("aspect patch: the camera code does not match this game version");
         uint32_t code[74] = {0};
-        uint64_t s = stub_off + ASPECT_STUB * i;
         const char *err = aspect_stub(ins, s, sites[i], data_off, code);
         uint32_t jump = aspect_b(sites[i], s);
         if (err || !jump) runtime_fail(err ? err : "aspect patch: branch out of range");
+#if !TARGET_OS_IPHONE
         if (vert && i < ncam) {   /* Vert+: the fovy load before it, found from the projection register */
             uint32_t around[8], before[16]; memcpy(around, m->base + sites[i] - 16, sizeof around); memcpy(before, m->base + sites[i] - 64, sizeof before);
             int p = aspect_vert_reg(around), j = p >= 0 ? aspect_fovy_at(before, (unsigned)p) : -1;
@@ -145,6 +154,11 @@ static inline void aspect_install(Module *m, const char *version, const uint64_t
         }
         memcpy(m->base + s, code, ASPECT_STUB);
         memcpy(m->base + sites[i], &jump, 4);
+#else
+        uint32_t embedded; memcpy(&embedded,m->base+sites[i],4);
+        if(embedded!=jump || memcmp(m->base+s,code,ASPECT_STUB))
+            runtime_fail("embedded aspect patch mismatch");
+#endif
     }
     if (nvert) {
         uint64_t fa = (uint64_t)(uintptr_t)tanf_at, fb = (uint64_t)(uintptr_t)atanf_at;

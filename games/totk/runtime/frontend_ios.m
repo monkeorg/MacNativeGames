@@ -66,7 +66,14 @@ void runtime_warm_progress(uint64_t done,uint64_t total,uint64_t shaders,uint64_
  });
 }
 void runtime_warm_done(void){}
-uint64_t front_game_res(int docked){(void)docked;return (720ULL<<32)|1280;}
+uint64_t front_game_res(int docked){
+ (void)docked;
+#if defined(TOTK_GAME_V143) && defined(TOTK_IOS_DISPLAY_SETTINGS)
+ return runtime_output_size_current();
+#else
+ return (720ULL<<32)|1280;
+#endif
+}
 static _Atomic int appActive=1;
 int runtime_front_focus(void){return atomic_load(&appActive);}
 void mtl_app_active(int active);
@@ -100,6 +107,19 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  /* the 16:9 picture should get about want rows: a screen narrower than 16:9 (an iPad, about 4:3; 2026-10-17) holds it by
     width, so there the drawable is want*16/9 columns wide (1281x890 on a 2360x1640 iPad); an iPhone keeps want rows */
  if(want>0){double h=vw/vh<16.0/9.0?round(want*16.0/9.0*vh/vw):(double)want;if(h<vh){vw=round(vw*h/vh);vh=h;}}
+#if defined(TOTK_GAME_V143) && defined(TOTK_IOS_DISPLAY_SETTINGS)
+ /* Match the real game canvas; presentation still letterboxes 16:9 on a taller screen. */
+ uint64_t output=runtime_output_size_current();
+ double outputW=(unsigned)output,outputH=(unsigned)(output>>32);
+ const char *aspect=getenv("TOTK_ASPECT");
+ if(aspect&&!strcmp(aspect,"display")){
+  vw=outputW;vh=outputH;
+ }else{
+  // Retain the full view's aspect for letterboxing while the game canvas stays 16:9.
+  vh=round(outputW*host.bounds.size.height/host.bounds.size.width);vw=outputW;
+ }
+ runtime_aspect_view(vw,vh);
+#endif
  metalLayer.drawableSize=CGSizeMake(vw,vh);
  fprintf(stderr,"[totk] view drawable %.0fx%.0f (screen scale %.1f, TOTK_IOS_DRAWABLE_H=%ld)\n",vw,vh,s,want);
  bootOverlay=[[UIView alloc] initWithFrame:host.bounds];bootOverlay.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;

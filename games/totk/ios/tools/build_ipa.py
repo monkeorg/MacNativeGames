@@ -41,8 +41,10 @@ def main():
     p=argparse.ArgumentParser()
     p.add_argument('--tree',type=Path,required=True);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--version',choices=['v0','v112','v121','v143'],required=True);p.add_argument('--logs',type=Path,required=True)
+    p.add_argument('--display-settings',action='store_true',help='experimental v143 signed720/1080 scene/output and full-aspect profile')
     p.add_argument('--image-outside',action='store_true',help='leave romfs.bin out: the device keeps it in Documents/GameData');p.add_argument('--app-name',default='Tears of the Kingdom');p.add_argument('--bundle-id',default='org.macnativegames.totk')
     a=p.parse_args(); tree=a.tree.resolve(); ios=tree/'ios';gen=ios/'Gen';logs=a.logs.resolve(); out=a.out.resolve()
+    if a.display_settings and a.version!='v143': raise RuntimeError('--display-settings supports only TOTK1.4.3')
     if out.suffix.lower() not in ('.ipa','.app'): raise RuntimeError('iOS output path must end in .ipa (or .app: the unsigned folder)')
     env=dict(os.environ,DEVELOPER_DIR=developer_dir())
     sdk=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip()
@@ -58,6 +60,12 @@ def main():
     host=tree/('build/totk-native' if a.version=='v0' else f'build/totk-native-{a.version}')
     rewritten=tree/f'rewritten/{a.version}'; modules=gen/'modules';modules.mkdir(exist_ok=True)
     e=dict(env,TOTK_EXPORT_IOS=str(modules))
+    e.pop('TOTK_IOS_DISPLAY_SETTINGS',None)   # This signed-code capability belongs to the explicit build flag.
+    if a.display_settings:
+        # Patch only the verified host image before gen_embed seals its executable-section hashes.
+        e.update(TOTK_IOS_DISPLAY_SETTINGS='1',TOTK_RENDER_RES='1280x720',TOTK_OUTPUT_RES='1280x720',
+                 TOTK_FIXED_RES='1',TOTK_ASPECT='0')
+        e.pop('TOTK_ASPECT_VERT',None)
     run([host,rewritten,'export-ios'],tree,logs/'export-ios.log',e)
     flags=subprocess.check_output([sys.executable,ios/'tools/gen_embed.py',rewritten,gen/'embed.S','--text-dir',modules,'main','subsdk0','sdk'],text=True,env=env).strip()
     # The app's sources use version-specific patch and generated runtime tables.
@@ -65,6 +73,12 @@ def main():
     if a.version=='v143': project=project.replace('          - loader.c','          - loader.c\n          - game_patches.c')
     else: project=project.replace('          - loader.c','          - loader.c\n          - game_patches_v143.c')
     if a.version!='v0': project=project.replace('-I../build\n','-I../build -DTOTK_GAME_'+a.version.upper()+'=1\n')
+    if a.display_settings:
+        if project.count('-DTOTK_GAME_V143=1\n')!=1 or project.count('        MetalHudEnabled: true\n')!=1:
+            raise RuntimeError('cannot bind the signed display profile to this iOS project')
+        project=project.replace('-DTOTK_GAME_V143=1\n','-DTOTK_GAME_V143=1 -DTOTK_IOS_DISPLAY_SETTINGS=1\n')
+        project=project.replace('        MetalHudEnabled: true\n',
+                                '        MetalHudEnabled: true\n        TOTKIOSDisplaySettingsVersion: 1\n')
     # The home screen icon: the game's own, which the build took from its control data for the Mac app
     # (build/AppIcon.icns, scripts/extract_app_icon.py), as a single-size asset catalog. Without it the app had none.
     icon=tree/'build/AppIcon.icns'; catalog=gen/'Assets.xcassets'; shutil.rmtree(catalog,ignore_errors=True)

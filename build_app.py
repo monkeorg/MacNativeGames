@@ -1725,6 +1725,7 @@ def parse_args(argv):
     ap.add_argument('--update', type=Path, help='separate supported cumulative update NSP/NSZ; outputs the same single app (Breath of the Wild: the 1.9.0 update NSP, not for a card image)')
     ap.add_argument('--dlc', type=Path, action='append', metavar='DLC.nsp', help='Breath of the Wild 1.9.0 only: an add-on content (DLC) NSP; repeat for the second pack (01007EF00011F001, 01007EF00011F002); each is optional, and a pack left out is not in the app; 1.9.0 takes its packs from --dlc only, also when the game file is a card image')
     ap.add_argument('--platform', choices=('macos','ios'), default='macos', help='build a macOS app (default) or unsigned iPhone/iPad IPA')
+    ap.add_argument('--ios-display-settings', action='store_true', help='experimental TOTK1.4.3 signed iOS display settings profile')
     ap.add_argument('--ios-game-data', choices=('app', 'documents'), default='app',
                     help='iOS: carry the 17 GB RomFS image in the IPA (default), or leave it out for the app\'s Documents/GameData '
                          '(ios/tools/install_device.py --game-data copies it there once; later builds install in minutes)')
@@ -1895,6 +1896,8 @@ def main(argv):
             f'<folder>.backup-<date>-<time>, not deleted. Without the flag the build leaves the folder alone.')
     if update:
         version, update = identify_update(tree, update, keys, logs)
+    if args.ios_display_settings and (args.platform!='ios' or version!='v143'):
+        raise BuildError('--ios-display-settings requires --platform ios and TOTK1.4.3')
     step_code(tree, game, keys, env, logs, mod=None if update else code_mod)
     if update:
         step_code(tree, update, keys, env, logs, version=version,
@@ -1911,7 +1914,8 @@ def main(argv):
     if args.platform=='ios':
         run([py, 'ios/tools/build_ipa.py', '--tree', tree, '--out', out, '--version', version,
              '--logs', logs, '--app-name', IOS_APP_NAME, '--bundle-id', BUNDLE_ID,
-             *(['--image-outside'] if args.ios_game_data == 'documents' else [])], logs/'build-ipa.log', cwd=tree, env=env)
+             *(['--image-outside'] if args.ios_game_data == 'documents' else []),
+             *(['--display-settings'] if args.ios_display_settings else [])], logs/'build-ipa.log', cwd=tree, env=env)
         if not args.no_shader_reminder:
             # The iOS app never asks during play; while the device is connected, this Mac asks to send the shaders the
             # shared list lacks (ios/tools/shader_contrib_watch.py). Not essential: a failure only says so.
