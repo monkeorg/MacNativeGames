@@ -30,6 +30,7 @@ xcodebuild test-without-building \
 ```
 
 Coordinate device ownership before installation or execution. These tests launch and may terminate the installed app.
+Select individual tests. Run prelaunch tests before Play; transfer tests need their separate hash checks.
 The preference test restores the original language and leaves Apple Metal HUD on and the custom overlay off.
 The backup test preserves the active save. The Files export test publishes a uniquely named folder in TOTK Documents.
 The Files import test selects that same folder through On My iPad, then confirms import.
@@ -66,3 +67,31 @@ A later launch with `MTL_HUD_ENABLED=1` displayed the native HUD. The user then 
 The Play test enables the existing timing-only `DM_NVN_TSV` diagnostic in the launched app's environment.
 The optional existing-process touch test skips unless explicit normalized coordinates are supplied.
 Review a current screenshot before each such touch. Use it only for a known control; never select New Game.
+
+## Compact menu regression tests
+
+These tests require the updated app. Build and sign the small runner locally, then wait for device ownership before installation.
+
+| Test | Checks | App lifecycle |
+|---|---|---|
+| `test00CompactPrelaunchGlass` | Centered card, maximum 500-point width and 760-point height, landscape, screenshot | Launch |
+| `test01bDisplayPreferencesPersistWhenSupported` | Capability gate, 720/1080 choice, 16:9/full-display choice, persisted 1080/full display | Relaunch |
+| `test06aExistingGameMenuOpenCloseRestoresHitTesting` | Gear, compact 340-point card, input shield, restored touch hit testing after close | Activate existing game |
+| `test06bExistingGameMenuLiveHUDPersistence` | Full/FPS/Off runtime selection, native HUD switch, retained state after menu reopen | Activate existing game |
+
+The display preference test skips when the signed capability is absent or the screen is wider than supported.
+It leaves 1080/full-display selected when supported. It does not prove projection correctness or actual render dimensions.
+
+The live tests require an existing game process. They call `activate()`, never `launch()` or `terminate()`.
+The hit-testing test requires touch controls enabled. It verifies routing without a game-input tap.
+The HUD test leaves the custom overlay off, native HUD on, and the menu closed.
+Menu reopen checks use runtime state for the custom overlay and persisted defaults for the native switch.
+Screenshots provide separate evidence of native HUD visibility and the glass appearance.
+
+Stable accessibility identifiers required by the tests:
+
+- `TOTKPrelaunchCard` on the prelaunch glass card.
+- `TOTKGameMenuCard` on the live glass card.
+- `TOTKTouchControls` on the touch-control view.
+
+The new regression tests are prepared for the updated build. They have not run on a device yet.

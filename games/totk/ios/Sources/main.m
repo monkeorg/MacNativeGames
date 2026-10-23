@@ -13,6 +13,8 @@
 #import "touch_pad.h"
 #import "launcher.h"
 #import "launcher_settings.h"
+#import "game_menu.h"
+#import "mouse_input.h"
 
 int totk_host_main(int argc, char **argv);
 void runtime_ios_attach_layer(CAMetalLayer *layer, UIView *host);
@@ -42,8 +44,12 @@ void runtime_shortcut_help_toggle(void) {}
     BOOL metalHUD = TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults);
     ((CAMetalLayer *)self.gameView.layer).developerHUDProperties = @{ @"mode":metalHUD ? @"default" : @"disabled" };
     if (TOTKLauncherTouch(NSUserDefaults.standardUserDefaults)) {
-        TOTKTouchPad *pad=[[TOTKTouchPad alloc] initWithFrame:self.view.bounds];pad.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;[self.view addSubview:pad];
+        TOTKTouchPad *pad=[[TOTKTouchPad alloc] initWithFrame:self.view.bounds];pad.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+        pad.accessibilityIdentifier = @"TOTKTouchControls";
+        [self.view addSubview:pad];
     }
+    TOTKStartMouseInput(self);
+    TOTKAttachGameMenu(self);
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
@@ -84,6 +90,7 @@ void runtime_shortcut_help_toggle(void) {}
 }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (BOOL)prefersStatusBarHidden { return YES; }
+- (BOOL)prefersPointerLocked { return TOTKMouseInputEnabled(); }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
 @end
 
