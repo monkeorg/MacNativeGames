@@ -41,11 +41,13 @@ Checkout: `/Users/philipp/Developer/MacNativeGames`.
 
 Existing work: `/Users/philipp/Downloads/iPad-Feather-TOTK/TOTK_build`.
 
-Keep the original inputs, extracted data, generated modules, iOS dependencies, shader caches, and Xcode incremental cache. Prefer `.app` output rather than a separate large IPA. The redundant unsigned IPA and duplicate ZIP inputs were removed; consult the task folder README for retained paths. The historical `install-verified.py` assumes the removed IPA path and needs adjustment before reuse.
+Keep the original inputs, extracted data, generated modules, iOS dependencies, shader caches, and Xcode incremental cache. Prefer `.app` output rather than a separate large IPA. The redundant unsigned IPA and duplicate ZIP inputs were removed; consult the task folder README for retained paths. The private `install-verified.py` now accepts an explicit app path and defaults to `TOTK.launcher.app`. The candidate installation verified that route.
 
 The existing `--ios-game-data documents` build option can reduce repeated transfers after a verified one-time migration. Back up saves before migration. Preserve the current bundle identity and signing team; read their private local configuration rather than publishing it.
 
 Do not perform general laptop cleanup. Other work owns that scope.
+
+Use the connected physical iPad for UI acceptance. Do not boot or install simulator resources for this workflow. Keep automated Foundation tests on the Mac and reuse build caches. Use `gpt-6.1-sol` with Medium reasoning for delegated workers, as requested by the user.
 
 ## Codex goal prompt: first milestone
 

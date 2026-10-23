@@ -8,13 +8,19 @@
 #include <unistd.h>
 #include <math.h>
 #include "runtime.h"
+#include "fs_host.h"
 #include "dmsh_chain.h"
 #import "touch_pad.h"
+#import "launcher.h"
+#import "launcher_settings.h"
 
 int totk_host_main(int argc, char **argv);
 void runtime_ios_attach_layer(CAMetalLayer *layer, UIView *host);
 static char *host_argv[3];
 static NSString *g_no_game_data;   // set when there is no RomFS image to play from (didFinishLaunching)
+static BOOL g_game_started;
+static UIViewController *g_root_controller;
+static __weak UIWindow *g_active_window;
 static void *run_host(void *unused) { (void)unused; return (void *)(intptr_t)totk_host_main(3, host_argv); }
 /* The desktop keyboard-overlay shortcut has no counterpart on iOS. */
 void runtime_shortcut_help_toggle(void) {}
@@ -33,11 +39,15 @@ void runtime_shortcut_help_toggle(void) {}
     self.gameView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.gameView];
     runtime_ios_attach_layer((CAMetalLayer *)self.gameView.layer, self.gameView);
-    TOTKTouchPad *pad=[[TOTKTouchPad alloc] initWithFrame:self.view.bounds];pad.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;[self.view addSubview:pad];
+    BOOL metalHUD = TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults);
+    ((CAMetalLayer *)self.gameView.layer).developerHUDProperties = @{ @"mode":metalHUD ? @"default" : @"disabled" };
+    if (TOTKLauncherTouch(NSUserDefaults.standardUserDefaults)) {
+        TOTKTouchPad *pad=[[TOTKTouchPad alloc] initWithFrame:self.view.bounds];pad.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;[self.view addSubview:pad];
+    }
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    static BOOL started; if (started) return; started = YES;
+    if (g_game_started) return;
     if (g_no_game_data) {
         UILabel *say = [[UILabel alloc] initWithFrame:CGRectInset(self.view.bounds, 40, 40)];
         say.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
@@ -55,9 +65,22 @@ void runtime_shortcut_help_toggle(void) {}
     fprintf(stderr, "[totk-audio] audio session category=%s active=%d route=%s err=%s%s\n",
             audio.category.UTF8String ?: "?", (int)activated, audio.currentRoute.outputs.firstObject.portType.UTF8String ?: "?",
             catErr ? catErr.localizedDescription.UTF8String : "none", actErr ? actErr.localizedDescription.UTF8String : "");
-    pthread_attr_t attr; pthread_attr_init(&attr); pthread_attr_setstacksize(&attr, 64u << 20);
-    pthread_t thread; pthread_create(&thread, &attr, run_host, NULL);
-    pthread_detach(thread); pthread_attr_destroy(&attr);
+    pthread_attr_t attr;
+    int result = pthread_attr_init(&attr);
+    if (!result) {
+        result = pthread_attr_setstacksize(&attr, 64u << 20);
+        pthread_t thread;
+        if (!result) result = pthread_create(&thread, &attr, run_host, NULL);
+        if (!result) { g_game_started = YES; pthread_detach(thread); }
+        pthread_attr_destroy(&attr);
+    }
+    if (result) {
+        UILabel *label = [[UILabel alloc] initWithFrame:self.view.bounds];
+        label.text = @"Cannot start the game. Close and reopen TOTK to retry.";
+        label.textColor = UIColor.whiteColor; label.textAlignment = NSTextAlignmentCenter;
+        [self.view addSubview:label];
+        fprintf(stderr,"[totk] game thread creation failed: %d\n",result);
+    }
 }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (BOOL)prefersStatusBarHidden { return YES; }
@@ -72,7 +95,29 @@ void runtime_shortcut_help_toggle(void) {}
     (void)session; (void)options;
     if (![scene isKindOfClass:UIWindowScene.class]) return;
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
-    self.window.rootViewController = [TOTKGameController new]; [self.window makeKeyAndVisible];
+    g_active_window = self.window;
+    if (g_root_controller) {
+        self.window.rootViewController = g_root_controller;
+        [self.window makeKeyAndVisible]; return;
+    }
+    NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
+    uint64_t uid[2]; runtime_account_uid(uid);
+    NSString *name = [NSString stringWithFormat:@"%016llx%016llx",(unsigned long long)uid[1],(unsigned long long)uid[0]];
+    NSURL *root = [NSURL fileURLWithPath:docs isDirectory:YES];
+    TOTKSaveStore *store = [[TOTKSaveStore alloc] initWithActiveURL:[[root URLByAppendingPathComponent:@"save/save"] URLByAppendingPathComponent:name]
+        backupsURL:[root URLByAppendingPathComponent:@"SaveBackups"]];
+    TOTKLauncher *launcher = [[TOTKLauncher alloc] initWithStore:store unavailable:g_no_game_data play:^{
+        [NSUserDefaults.standardUserDefaults setBool:TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults) forKey:@"MetalHUDForceEnabled"];
+        NSString *lang = TOTKLauncherLanguage(NSUserDefaults.standardUserDefaults);
+        if (!getenv("TOTK_LANG") && lang.length) setenv("TOTK_LANG",lang.UTF8String,0);
+        NSInteger hud = TOTKLauncherHUD(NSUserDefaults.standardUserDefaults);
+        for (unsigned i=0;i<3 && fps_overlay_hud_mode()!=hud;i++) fps_overlay_toggle_hints();
+        g_root_controller = [TOTKGameController new];
+        g_active_window.rootViewController = g_root_controller;
+    }];
+    g_root_controller = [[UINavigationController alloc] initWithRootViewController:launcher];
+    self.window.rootViewController = g_root_controller;
+    [self.window makeKeyAndVisible];
 }
 @end
 
@@ -83,6 +128,7 @@ void runtime_shortcut_help_toggle(void) {}
    whose "ended" never came. Becoming active also turns the idle timer off again. */
 static BOOL g_audio_interrupted;
 static void audio_resume(int recreate, const char *why) {
+    if (!g_game_started) return;
     NSError *err = nil;
     if (![AVAudioSession.sharedInstance setActive:YES error:&err]) fprintf(stderr,"[totk-audio] audio session not active again (%s): %s\n",why,err.localizedDescription.UTF8String);
     g_audio_interrupted = NO; runtime_audio_output_restart(recreate);
@@ -114,6 +160,7 @@ static void audio_observe(void) {
     (void)options;
     // Controller input does not reset the idle timer; auto-lock would suspend the game mid-play or mid shader import.
     application.idleTimerDisabled = YES;
+    [NSUserDefaults.standardUserDefaults setBool:TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults) forKey:@"MetalHUDForceEnabled"];
     audio_observe();
     /* The Mac launcher passes the preferred language as TOTK_LOCALE (PR #97); "zh-Hans-CN" maps to zh-Hans in services.c. */
     NSString *preferred = NSLocale.preferredLanguages.firstObject;
@@ -151,8 +198,7 @@ static void audio_observe(void) {
     // Game language: the Settings app (Settings.bundle › TOTK_LANG) stores the choice in our defaults; empty means the
     // system language, which is what the runtime already follows. iOS 27 does not honour Info.plist LSEnvironment, so
     // the value must be applied here. overwrite=0 keeps devicectl --environment-variables winning when testing from the Mac.
-    NSString *lang = [NSUserDefaults.standardUserDefaults stringForKey:@"TOTK_LANG"];
-    if (lang.length>0&&lang.length<8) setenv("TOTK_LANG",lang.UTF8String,0);
+    // The launcher's validated language preference is applied immediately before Play.
     setenv("TOTK_ROMFS_PATCHES",[res stringByAppendingPathComponent:@"romfs-patches"].fileSystemRepresentation,1);
     setenv("TOTK_ROMFS_PATCHES_OUT",[res stringByAppendingPathComponent:@"romfs-patches-out"].fileSystemRepresentation,1);
     setenv("TOTK_SHARED_FONTS",[res stringByAppendingPathComponent:@"shared-fonts"].fileSystemRepresentation,1);

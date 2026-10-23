@@ -1,0 +1,23 @@
+name: DeviceLauncherTests
+options:
+  deploymentTarget:
+    iOS: "26.0"
+targets:
+  DeviceLauncherUI:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: UITests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.smartvelo.launcher-device-tests
+      GENERATE_INFOPLIST_FILE: YES
+      SWIFT_VERSION: "5.0"
+      CODE_SIGNING_ALLOWED: NO
+      TARGETED_DEVICE_FAMILY: "2"
+schemes:
+  DeviceLauncherTests:
+    build:
+      targets:
+        DeviceLauncherUI: all
+    test:
+      targets:
+        - DeviceLauncherUI
