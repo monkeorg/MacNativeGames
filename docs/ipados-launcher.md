@@ -4,6 +4,8 @@ The launcher appears before the game starts. Press **Play** after you choose set
 
 ## Preferences
 
+Tap a settings row to open its choices. Tap a choice to apply it.
+
 - **Graphics:** shows this build's 1280×720 game picture. The performance overlay can show all readings, FPS only, or nothing.
 - **Apple Metal HUD:** enables Apple’s native performance overlay for this development build. Apply the choice before Play.
 - **Controls:** Automatic keeps the existing touch behavior. Off requires a connected controller with an extended gamepad profile.

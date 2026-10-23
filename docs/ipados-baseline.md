@@ -16,7 +16,7 @@ Evidence review date: 2026-10-23. This record establishes a startup baseline. It
 | Current drawable | 1280×960 | Runtime `view drawable 1280x960`, line 1. |
 | Resolution patch | Game's own resolution; no build-time resolution patch | Runtime log, line 8. |
 | Shader state | Existing bundled shaders and pipeline archives; startup warm-up enabled | Runtime log, lines 6614–6623. Full scene warm-up completion is unverified. |
-| Save backup | 22 regular files, 9,562,585 bytes; no empty files or symbolic links | Local filesystem inspection. Backup restoration and physical-device save load remain unverified. |
+| Save backup | 22 regular files, 9,562,585 bytes; no empty files or symbolic links | Local filesystem inspection. Physical API export/import/restore preserves all 22 file hashes. Gameplay save load remains unverified. |
 
 The current 720-high game image and 960-high drawable are separate measurements. Neither establishes correct full-aspect projection or the roadmap's 1080-high target.
 
@@ -58,10 +58,10 @@ The log also describes a 120 Hz presentation cadence and an uncapped clock limit
 | Stage | Status | Remaining evidence |
 |---|---|---|
 | Source revision | Verified commit exists | Attest source revision and build options for the next tested app. |
-| Baseline build | Not checked in this review | Preserve a sanitized build result and exact tested revision. |
-| Installation | Not checked in this review | Preserve an installation result tied to the tested app. |
+| Launcher build | Physical-device build succeeded for `6d896fc` | Cached Xcode build; dedicated development signature verified. This is a candidate, not the original baseline binary. |
+| Installation | Candidate installed under the existing app identifier | Physical launch succeeds; all 22 original save-profile hashes match after installation. |
 | Runtime launch | Log establishes startup and first presentation | Repeat with the tested build and retain its sanitized log. |
-| Save backup | Local file count and byte total verified | Verify restore equality and load the save on the physical device. |
+| Save backup | Physical production API backup, export, import, and restore succeeded | All 22 profile hashes match afterward. External Files picker transfer and gameplay save load require separate verification. |
 | Gameplay and visual correctness | Unverified | Record the actual save, scene, controls, and observed image correctness privately. |
 | Gameplay frame times and FPS | Unverified | Capture rendered-frame intervals during a sustained session. |
 | Memory and thermal behavior | Unverified | Capture a synchronized 30-minute trace and report tool availability. |
