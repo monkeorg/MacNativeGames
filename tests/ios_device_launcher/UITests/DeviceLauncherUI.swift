@@ -9,9 +9,12 @@ final class DeviceLauncherUI: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication(bundleIdentifier: "com.smartvelo.totk")
-        if name.contains("test05ExistingGameTouch") {
+        if name.contains("test05ExistingGameTouch") || name.contains("test06") {
             XCTAssertNotEqual(app.state, .notRunning, "Keep the existing game process for this input")
             app.activate()
+            if name.contains("test06") {
+                XCTAssertFalse(app.navigationBars["Tears of the Kingdom"].exists, "Start the game before live menu tests")
+            }
             return
         }
         if name.contains("test04PlayAndNativeHUD") {
@@ -55,9 +58,48 @@ final class DeviceLauncherUI: XCTestCase {
         }
     }
 
+    private func expectHittable(_ element: XCUIElement) {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            element.exists && element.isHittable
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+    }
+
+    private func openGameMenu() {
+        let gear = app.buttons["Game menu"]
+        expectHittable(gear)
+        gear.tap()
+        expectHittable(app.buttons["Close game menu"])
+    }
+
+    private func closeGameMenu() {
+        app.buttons["Close game menu"].tap()
+        expectHittable(app.buttons["Game menu"])
+        XCTAssertFalse(app.segmentedControls["Game overlay"].exists)
+    }
+
+    private func setMetalHUD(_ enabled: Bool) {
+        let control = app.switches["Metal performance HUD"]
+        let value = enabled ? "1" : "0"
+        XCTAssertTrue(["0", "1"].contains(control.value as? String ?? ""))
+        if control.value as? String != value { control.tap() }
+        XCTAssertEqual(control.value as? String, value)
+    }
+
+    func test00CompactPrelaunchGlass() {
+        let card = app.otherElements["TOTKPrelaunchCard"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertLessThanOrEqual(card.frame.width, 501)
+        XCTAssertLessThanOrEqual(card.frame.height, 761)
+        XCTAssertEqual(card.frame.midX, app.windows.firstMatch.frame.midX, accuracy: 1)
+        XCTAssertLessThanOrEqual(app.tables.firstMatch.frame.width, 501)
+        XCTAssertGreaterThan(app.windows.firstMatch.frame.width, app.windows.firstMatch.frame.height)
+        record("Compact prelaunch glass card")
+    }
+
     func test01PreferencesLayoutAndLifecycle() {
         let table = app.tables.firstMatch
-        XCTAssertLessThanOrEqual(table.frame.width, 621)
+        XCTAssertLessThanOrEqual(table.frame.width, 501)
         XCTAssertGreaterThan(app.windows.firstMatch.frame.width, app.windows.firstMatch.frame.height)
         record("Prelaunch centered menu")
         let oldLanguage = cell("Game language").value as? String
@@ -84,6 +126,34 @@ final class DeviceLauncherUI: XCTestCase {
         app.activate()
         XCTAssertTrue(app.navigationBars["Tears of the Kingdom"].waitForExistence(timeout: 10))
         record("Preferences persist after relaunch and foreground")
+    }
+
+    func test01bDisplayPreferencesPersistWhenSupported() throws {
+        let resolution = cell("Render resolution")
+        let aspect = cell("Aspect ratio")
+        guard resolution.isEnabled && aspect.isEnabled else {
+            XCTAssertEqual(resolution.value as? String, "1280 × 720")
+            XCTAssertEqual(aspect.value as? String, "16:9")
+            throw XCTSkip("This signed build does not expose display settings")
+        }
+        let frame = app.windows.firstMatch.frame
+        guard max(frame.width, frame.height) / min(frame.width, frame.height) <= 16.0 / 9.0 else {
+            throw XCTSkip("Full display requires a supported screen aspect")
+        }
+        resolution.tap()
+        app.buttons["720 high"].tap()
+        XCTAssertEqual(cell("Render resolution").value as? String, "720 high")
+        cell("Render resolution").tap()
+        app.buttons["1080 high"].tap()
+        cell("Aspect ratio").tap()
+        app.buttons["16:9"].tap()
+        cell("Aspect ratio").tap()
+        app.buttons["Full display"].tap()
+        app.terminate()
+        app.launch()
+        XCTAssertEqual(cell("Render resolution").value as? String, "1080 high")
+        XCTAssertEqual(cell("Aspect ratio").value as? String, "Full display")
+        record("1080 full-display preferences persist")
     }
 
     func test02BackupOwnSave() {
@@ -181,5 +251,52 @@ final class DeviceLauncherUI: XCTestCase {
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { response.fulfill() }
         wait(for: [response], timeout: 15)
         record("Existing game after reviewed touch")
+    }
+
+    func test06aExistingGameMenuOpenCloseRestoresHitTesting() {
+        let touch = app.otherElements["TOTKTouchControls"]
+        expectHittable(touch)
+        openGameMenu()
+        let close = app.buttons["Close game menu"]
+        defer { if close.isHittable { close.tap() } }
+        let card = app.otherElements["TOTKGameMenuCard"]
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(card.frame.width, 341)
+        XCTAssertLessThan(card.frame.height, app.windows.firstMatch.frame.height)
+        XCTAssertTrue(app.segmentedControls["Game overlay"].exists)
+        XCTAssertTrue(app.switches["Metal performance HUD"].exists)
+        XCTAssertFalse(touch.isHittable)
+        record("Compact game glass card shields game input")
+        closeGameMenu()
+        expectHittable(touch)
+        record("Game menu closed and touch hit testing restored")
+    }
+
+    func test06bExistingGameMenuLiveHUDPersistence() {
+        openGameMenu()
+        let close = app.buttons["Close game menu"]
+        defer { if close.isHittable { close.tap() } }
+        for title in ["Full", "FPS", "Off"] {
+            let choice = app.segmentedControls["Game overlay"].buttons[title]
+            choice.tap()
+            XCTAssertTrue(choice.isSelected)
+            closeGameMenu()
+            openGameMenu()
+            XCTAssertTrue(app.segmentedControls["Game overlay"].buttons[title].isSelected)
+        }
+        setMetalHUD(true)
+        setMetalHUD(false)
+        record("Native HUD disabled live")
+        closeGameMenu()
+        openGameMenu()
+        XCTAssertEqual(app.switches["Metal performance HUD"].value as? String, "0")
+        setMetalHUD(true)
+        record("Native HUD enabled live")
+        closeGameMenu()
+        openGameMenu()
+        XCTAssertTrue(app.segmentedControls["Game overlay"].buttons["Off"].isSelected)
+        XCTAssertEqual(app.switches["Metal performance HUD"].value as? String, "1")
+        closeGameMenu()
+        record("Live HUD preferences retained after reopening menu")
     }
 }

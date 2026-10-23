@@ -1,21 +1,39 @@
 # iPad launcher and saves
 
-The launcher appears before the game starts. Press **Play** after you choose settings or manage saves. Close and reopen the app to return to the launcher.
+The compact Liquid Glass launcher appears before the game starts. Press **Play** after you choose settings or manage saves. Close and reopen the app to return to the launcher.
 
 ## Preferences
 
 Tap a settings row to open its choices. Tap a choice to apply it.
 
-- **Graphics:** shows this build's 1280×720 game picture. The performance overlay can show all readings, FPS only, or nothing.
-- **Apple Metal HUD:** selects Apple’s native performance overlay for this development build. Apply the choice before Play. Enable device-level support once as described below.
+- **Render resolution:** selects **720 high** or **1080 high** in a build with the signed display profile. The default is 720 high.
+- **Aspect ratio:** selects **16:9** or experimental **Full display** on supported displays. The default is 16:9.
+- **Performance overlay:** selects Full, FPS only, or Off.
+- **Apple Metal HUD:** selects Apple’s native performance overlay. Enable device-level support once as described below.
 - **Controls:** Automatic keeps the existing touch behavior. Off requires a connected controller with an extended gamepad profile.
 - **Language:** uses the same preference as the app's pane in iPad Settings. System follows the device language.
 
-Preferences persist between launches and apply before Play. Invalid stored values return to defaults. A developer-supplied `TOTK_LANG` environment value still takes precedence.
+Preferences persist between launches. Resolution, aspect ratio, controls, and language apply at Play. Invalid stored values return to defaults. A developer-supplied `TOTK_LANG` environment value still takes precedence.
 
-This milestone does not add resolution scaling, aspect patches, mouse input, or new MetalFX modes.
+Resolution and aspect controls require the TOTK 1.4.3 build option `--ios-display-settings`. It adds `TOTKIOSDisplaySettingsVersion = 1`, backed by the signed `TOTK_IOS_DISPLAY_SETTINGS` profile. Other builds disable these choices and retain 1280×720 at 16:9. A saved preference cannot add this capability.
+
+The height label refers to the requested game render and output canvas, not the Metal drawable or physical screen resolution. At 16:9, the choices request 1280×720 or 1920×1080. Full display uses the actual landscape aspect; a 4:3 display requests 960×720 or 1440×1080. Other display aspects produce different widths. Confirm actual render targets and drawable dimensions separately.
+
+**Full display is experimental.** It applies the existing camera-aspect patch. World-object markers and pixel-snapped UI positions have known limitations. The default preserves vertical field of view; a narrower aspect shows less at the sides. This is not a claim of complete graphics parity or stable native 60 FPS. See the [baseline protocol](ipados-baseline.md).
 
 On the tested iPad, the native HUD appeared with `MTL_HUD_ENABLED=1` supplied at process launch. The saved preference alone did not activate it. Enable **Settings → Developer → Graphics HUD → Show Graphics HUD** once. The user confirmed the in-app switch works after this device setting was enabled.
+
+## During gameplay
+
+Tap the floating **gear** or press **Escape** on a connected keyboard to open the Liquid Glass game menu. Use **Close menu**, the close button, or Escape to dismiss it.
+
+The menu does **not pause the game**. It blocks touch input to the game and releases mouse capture while open. Controller input can still reach the game.
+
+Change **Game overlay** between Full, FPS, and Off, or toggle **Metal performance HUD**, without a restart. These choices also persist. Resolution, aspect ratio, and language changes require a return to the launcher after an app restart.
+
+A connected mouse uses the existing Mac camera controls while the app has focus and the system grants pointer lock. The default bindings use left click to attack, right click to draw the bow, and middle click to target. Left click shoots while right click stays held. Mouse motion uses the existing sensitivity and decay behavior.
+
+The game menu releases mouse buttons and camera input. Dismissal restores the prior capture preference; the system decides whether to grant pointer lock again. Background, disconnect, and lock loss also release mouse input. Physical mouse behavior remains unverified.
 
 ## Save transfers
 
@@ -58,6 +76,15 @@ Run all repository tests with the existing build virtual environment. The save p
 python -m unittest discover -s tests
 ```
 
-Use the [physical-device UI runner](../tests/ios_device_launcher/README.md) against the installed app. It does not transfer the game or use a simulator. Physical Files import, backup restore, byte equality, and an existing-save load passed on implementation `2dc8c34`.
+Use the [physical-device UI runner](../tests/ios_device_launcher/README.md) against the installed app. It does not transfer the game or use a simulator.
 
-Apple reference: https://developer.apple.com/documentation/xcode/monitoring-your-metal-apps-graphics-performance
+| Evidence | State |
+|---|---|
+| Files import, backup restore, byte equality, and existing-save gameplay load | Passed physically on earlier implementation `2dc8c34`. |
+| New display-profile bundle | Build passed; this does not verify installation or gameplay. |
+| Liquid Glass launcher and live menu | Implemented and compiled; new physical UI checks pending. |
+| 1080-high and Full display | Physical graphics and gameplay checks pending. |
+| Mouse capture, direction, sensitivity, and menu release | Physical mouse checks pending. |
+| Sustained native 60 FPS | Unverified; requires the sustained benchmark. |
+
+Apple reference: [Monitor Metal graphics performance](https://developer.apple.com/documentation/xcode/monitoring-your-metal-apps-graphics-performance).
