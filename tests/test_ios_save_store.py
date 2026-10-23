@@ -44,6 +44,12 @@ class IOSSaveStoreTests(unittest.TestCase):
     def test_transfer_without_ancestor_directory_access(self):
         self.run_probe('sandbox_roundtrip')
 
+    def test_backup_failure_preserves_active_save(self):
+        self.run_probe('backup_refused')
+
+    def test_publish_failure_preserves_active_save_and_backup(self):
+        self.run_probe('publish_refused')
+
     def test_first_import_without_active_save(self):
         self.run_probe('first_import')
 

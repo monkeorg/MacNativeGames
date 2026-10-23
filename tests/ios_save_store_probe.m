@@ -98,6 +98,16 @@ static int settings(NSString *scenario, NSURL *root) {
     }
     return 0;
 }
+static BOOL applySandbox(const char *profile) {
+    char *error = NULL;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    int result = sandbox_init(profile,0,&error);
+    if (result) fprintf(stderr,"sandbox_init: %s\n",error ?: "unknown error");
+    if (error) sandbox_free_error(error);
+#pragma clang diagnostic pop
+    return result == 0;
+}
 static int probe(NSString *scenario, NSURL *root) {
     if ([scenario hasPrefix:@"settings_"]) return settings(scenario,root);
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -116,13 +126,7 @@ static int probe(NSString *scenario, NSURL *root) {
     CHECK([store backups:&error].count == 0);
     if ([scenario isEqual:@"sandbox_roundtrip"]) {
         // Apply after Foundation loads; a launch-time restriction prevents dyld from loading.
-        char *sandboxError = NULL;
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        int result = sandbox_init("(version 1)(allow default)(deny file-read-data (literal \"/\"))",0,&sandboxError);
-#pragma clang diagnostic pop
-        if (result) fprintf(stderr,"sandbox_init: %s\n",sandboxError ?: "unknown error");
-        CHECK(result == 0);
+        CHECK(applySandbox("(version 1)(allow default)(deny file-read-data (literal \"/\"))"));
         errno = 0;
         int ancestor = open("/",O_RDONLY | O_DIRECTORY);
         CHECK(ancestor < 0 && errno == EPERM);
@@ -131,7 +135,23 @@ static int probe(NSString *scenario, NSURL *root) {
         close(selected);
         scenario = @"roundtrip";
     }
-    if ([scenario isEqual:@"first_import"]) {
+    if ([scenario isEqual:@"backup_refused"] || [scenario isEqual:@"publish_refused"]) {
+        BOOL publish = [scenario isEqual:@"publish_refused"];
+        NSURL *restricted = publish ? active : backups;
+        NSString *policy = [NSString stringWithFormat:@"(version 1)(allow default)(deny %@ (%@ \"%@\"))",
+            publish ? @"file-write-unlink" : @"file-write-create",publish ? @"literal" : @"subpath",restricted.path];
+        CHECK(applySandbox(policy.UTF8String));
+        CHECK(![store importDirectory:source error:&error]);
+        CHECK(error);
+        CHECK([snapshot(active) isEqual:original]);
+        NSArray<NSURL *> *saved = [store backups:NULL];
+        CHECK(saved.count == (publish ? 1u : 0u));
+        if (publish) {
+            CHECK([error.localizedDescription isEqual:@"Cannot publish the save. Your previous save is unchanged."]);
+            CHECK([snapshot(saved.firstObject) isEqual:original]);
+        }
+        for (NSString *name in [fm contentsOfDirectoryAtPath:profile.path error:NULL]) CHECK(![name hasPrefix:@".import-"]);
+    } else if ([scenario isEqual:@"first_import"]) {
         CHECK([fm removeItemAtURL:active error:NULL]);
         CHECK([store importDirectory:source error:&error]);
         CHECK([snapshot(active) isEqual:snapshot(source)]);
