@@ -47,6 +47,8 @@ The existing `--ios-game-data documents` build option can reduce repeated transf
 
 Do not perform general laptop cleanup. Other work owns that scope.
 
+Use the connected physical iPad for UI acceptance. Do not boot or install simulator resources for this workflow. Keep automated Foundation tests on the Mac and reuse build caches. Use `gpt-6.1-sol` with Medium reasoning for delegated workers, as requested by the user.
+
 ## Codex goal prompt: first milestone
 
 Use the following text as the goal body in Codex. This document does not activate a goal.

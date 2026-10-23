@@ -1,0 +1,56 @@
+name: LauncherUITests
+options:
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  CODE_SIGNING_ALLOWED: NO
+  CLANG_ENABLE_OBJC_ARC: YES
+targets:
+  LauncherHarness:
+    type: application
+    platform: iOS
+    sources:
+      - Harness
+      - ../../games/totk/ios/Sources/launcher.m
+      - ../../games/totk/ios/Sources/launcher_settings.m
+      - ../../games/totk/ios/Sources/save_store.m
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: org.macnativegames.launcher-tests
+      HEADER_SEARCH_PATHS: $(SRCROOT)/../../games/totk/ios/Sources
+      TARGETED_DEVICE_FAMILY: "1,2"
+    info:
+      path: Harness/Info.plist
+      properties:
+        CFBundleDisplayName: Launcher Harness
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: HarnessScene
+    dependencies:
+      - sdk: GameController.framework
+      - sdk: UniformTypeIdentifiers.framework
+  LauncherUI:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: UITests
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: org.macnativegames.launcher-ui-tests
+      GENERATE_INFOPLIST_FILE: YES
+      SWIFT_VERSION: "5.0"
+    dependencies:
+      - target: LauncherHarness
+schemes:
+  LauncherUITests:
+    build:
+      targets:
+        LauncherHarness: all
+    test:
+      targets:
+        - LauncherUI
