@@ -51,5 +51,5 @@ This prevents a highlighted folder from being mistaken for the current folder in
 Physical evidence from 2026-10-23: preferences, lifecycle, centered layout, backup, and Files export passed.
 All 19 exported save files matched the private pre-transfer SHA256 snapshot.
 The initial import script selected enclosing Documents and exposed a production copy-stack overflow.
-The full 22-file profile remained unchanged, excluding the incomplete import staging directory.
+The full 22-file profile matched its immediate pre-transfer hashes, excluding the incomplete import staging directory.
 The corrected import script requires folder navigation confirmation. Its successful import result remains unverified.

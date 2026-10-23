@@ -136,3 +136,15 @@ Record visual defects, crashes, save-load failures, and input failures beside th
 Agree numerical stability thresholds before any claim of stable native 60 FPS. The 16.67 ms budget alone does not define acceptable percentile or thermal behavior.
 
 Issue #1 remains incomplete until the selected scenes, physical-device gameplay, sustained traces, memory, and thermal results are recorded.
+
+## Launcher candidate checks
+
+Implementation revision `2dc8c34` passed the cached iPad build and all 316 repository tests. Its dedicated signature and memory entitlement passed verification. Installation succeeded under the existing app identifier.
+
+Physical XCTest on the preceding candidate verified compact landscape layout, settings taps, preference persistence across relaunch, foreground return, backup, and Files export. All 19 exported files matched the immediate pre-transfer snapshot.
+
+An enclosing-folder import exposed recursive staging and a worker-stack overflow. The corrected copy shares one heap buffer and rejects destination overlap. All 13 focused tests pass, including the old crash on a 128 KiB worker and safe ancestor-folder refusal.
+
+After installation, all 22 profile hashes match the immediate pre-import snapshot. The account identity and all 12 slot files also match the older initial backup. Three cache-related files differ from that older backup; these comparisons use distinct baselines.
+
+The iPad currently rejects launch with `CoreDevice 10002 / SBMainWorkspace Locked`. The corrected Files import, exact crash-staging cleanup, Play, native Metal HUD display, save load, and sustained gameplay remain unverified.
