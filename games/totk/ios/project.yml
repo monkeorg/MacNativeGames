@@ -42,6 +42,7 @@ targets:
         UIViewControllerBasedStatusBarAppearance: false
         UIApplicationSupportsIndirectInputEvents: true
         GCSupportsControllerUserInteraction: true
+        MetalHudEnabled: true
         GCSupportedGameControllers:
           - ProfileName: ExtendedGamepad
         CADisableMinimumFrameDurationOnPhone: true

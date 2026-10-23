@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <sandbox.h>
 #include <errno.h>
+#include <pthread.h>
 
 #define CHECK(condition) do { if (!(condition)) { fprintf(stderr,"%s:%d: %s\n",__FILE__,__LINE__,#condition); return 1; } } while (0)
 
@@ -189,7 +190,9 @@ static int probe(NSString *scenario, NSURL *root) {
         CHECK(![store restore:source error:&error] && error);
         CHECK([snapshot(active) isEqual:original]);
     } else {
-        if ([scenario isEqual:@"empty"]) {
+        if ([scenario isEqual:@"ancestor_source"]) {
+            source = profile;
+        } else if ([scenario isEqual:@"empty"]) {
             CHECK([fm removeItemAtURL:source error:NULL]);
             CHECK([fm createDirectoryAtURL:source withIntermediateDirectories:NO attributes:nil error:NULL]);
         } else if ([scenario isEqual:@"incomplete"]) {
@@ -226,6 +229,9 @@ static int probe(NSString *scenario, NSURL *root) {
         } else CHECK(NO);
         CHECK(![store importDirectory:source error:&error]);
         CHECK(error);
+        if ([scenario isEqual:@"ancestor_source"]) {
+            CHECK([error.localizedDescription isEqual:@"Select the console save folder, not a folder containing this app's save storage."]);
+        }
         CHECK([snapshot(active) isEqual:original]);
         CHECK([store backups:NULL].count == 0);
         for (NSString *name in [fm contentsOfDirectoryAtPath:profile.path error:NULL]) CHECK(![name hasPrefix:@".import-"]);
@@ -233,10 +239,31 @@ static int probe(NSString *scenario, NSURL *root) {
     CHECK([[NSData dataWithContentsOfURL:child(profile,@"account.uid")] isEqual:[@"keep-account-identity" dataUsingEncoding:NSUTF8StringEncoding]]);
     return 0;
 }
+typedef struct { const char *root; int result; } SmallStackProbe;
+static void *smallStackRoundtrip(void *context) {
+    SmallStackProbe *run = context;
+    @autoreleasepool {
+        run->result = probe(@"roundtrip",[NSURL fileURLWithPath:[NSString stringWithUTF8String:run->root]]);
+    }
+    return NULL;
+}
+static int runSmallStackRoundtrip(const char *root) {
+    pthread_attr_t attributes;
+    pthread_t thread;
+    SmallStackProbe run = {root,1};
+    CHECK(pthread_attr_init(&attributes) == 0);
+    CHECK(pthread_attr_setstacksize(&attributes,128 * 1024) == 0);
+    fprintf(stderr,"roundtrip pthread stack: 131072 bytes\n");
+    CHECK(pthread_create(&thread,&attributes,smallStackRoundtrip,&run) == 0);
+    CHECK(pthread_attr_destroy(&attributes) == 0);
+    CHECK(pthread_join(thread,NULL) == 0);
+    return run.result;
+}
 int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc != 3) return 2;
-        int result = probe([NSString stringWithUTF8String:argv[1]], [NSURL fileURLWithPath:[NSString stringWithUTF8String:argv[2]]]);
+        int result = !strcmp(argv[1],"small_stack_roundtrip") ? runSmallStackRoundtrip(argv[2]) :
+            probe([NSString stringWithUTF8String:argv[1]], [NSURL fileURLWithPath:[NSString stringWithUTF8String:argv[2]]]);
         if (!result) puts("{\"status\":\"pass\"}");
         return result;
     }

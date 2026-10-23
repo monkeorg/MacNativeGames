@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdlib.h>
 
 static BOOL failure(NSError **error, NSString *message) {
     if (error) *error = [NSError errorWithDomain:@"TOTKSaveStore" code:1
@@ -28,9 +29,19 @@ static int openDirectory(NSURL *url) {
     return open(path.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY);
 }
 
-typedef struct { uint64_t bytes; unsigned entries; } CopyBudget;
+typedef struct {
+    uint64_t bytes;
+    unsigned entries;
+    dev_t destinationDevice;
+    ino_t destinationInode;
+    char *buffer;
+} CopyBudget;
 static BOOL copyDirectory(int source, int dest, unsigned depth, CopyBudget *budget, NSError **error) {
     if (depth > 12) return failure(error, @"The save has too many nested folders.");
+    struct stat directory;
+    if (fstat(source,&directory)) return failure(error,@"Cannot read the save folder.");
+    if (directory.st_dev == budget->destinationDevice && directory.st_ino == budget->destinationInode)
+        return failure(error,@"Select the console save folder, not a folder containing this app's save storage.");
     DIR *dir = fdopendir(dup(source));
     if (!dir) return failure(error, @"Cannot read the save folder.");
     BOOL ok = YES;
@@ -63,14 +74,14 @@ static BOOL copyDirectory(int source, int dest, unsigned depth, CopyBudget *budg
             }
             int output = openat(dest,name,O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,0600);
             ok = output >= 0;
-            char buffer[65536]; ssize_t count; uint64_t copied = 0;
-            while (ok && (count = read(input,buffer,sizeof buffer)) != 0) {
+            ssize_t count; uint64_t copied = 0;
+            while (ok && (count = read(input,budget->buffer,65536)) != 0) {
                 if (count < 0) { if (errno == EINTR) continue; ok = NO; break; }
                 copied += count;
                 if (copied > (uint64_t)st.st_size) { ok = NO; break; }
                 ssize_t offset = 0;
                 while (offset < count) {
-                    ssize_t written = write(output,buffer+offset,(size_t)(count-offset));
+                    ssize_t written = write(output,budget->buffer+offset,(size_t)(count-offset));
                     if (written < 0 && errno == EINTR) continue;
                     if (written <= 0) { ok = NO; break; }
                     offset += written;
@@ -97,8 +108,15 @@ static BOOL copyTree(NSURL *source, NSURL *target, NSError **error) {
         close(input); return NO;
     }
     int output = openDirectory(target);
-    CopyBudget budget = {0};
-    BOOL ok = output >= 0 && copyDirectory(input,output,0,&budget,error);
+    CopyBudget budget = {.buffer = malloc(65536)};
+    struct stat destination;
+    BOOL ok = output >= 0 && budget.buffer && !fstat(output,&destination);
+    if (ok) {
+        budget.destinationDevice = destination.st_dev;
+        budget.destinationInode = destination.st_ino;
+        ok = copyDirectory(input,output,0,&budget,error);
+    } else failure(error,@"Cannot prepare the save copy.");
+    free(budget.buffer);
     if (output >= 0) { if (ok && fsync(output)) ok = failure(error,@"Cannot finish the save copy."); close(output); }
     close(input);
     if (!ok) [fm removeItemAtURL:target error:nil];
