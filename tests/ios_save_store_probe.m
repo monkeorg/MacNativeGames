@@ -7,6 +7,7 @@
 #include <sandbox.h>
 #include <errno.h>
 #include <pthread.h>
+#include <math.h>
 
 #define CHECK(condition) do { if (!(condition)) { fprintf(stderr,"%s:%d: %s\n",__FILE__,__LINE__,#condition); return 1; } } while (0)
 
@@ -43,6 +44,55 @@ static NSDictionary *snapshot(NSURL *root) {
     }
     return files;
 }
+static int displaySizes(NSUserDefaults *defaults) {
+    NSDictionary *capable = @{@"TOTKIOSDisplaySettingsVersion":@1};
+    unsigned width = 7, height = 9;
+    BOOL full = YES;
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_ASPECT"];
+    CHECK(TOTKLauncherDisplaySize(defaults,capable,4,3,&width,&height,&full));
+    CHECK(width == 1280 && height == 720 && !full);
+    const struct { double viewW,viewH; NSInteger height; BOOL requestedFull; unsigned w,h; BOOL full; } cases[] = {
+        {4,3,1080,YES,1440,1080,YES},
+        {3,4,1080,YES,1440,1080,YES},
+        {2360,1640,1080,YES,1554,1080,YES},
+        {4,3,720,YES,960,720,YES},
+        {1920,1080,1080,YES,1920,1080,YES},
+        {2532,1170,1080,YES,1920,1080,NO},
+        {1170,2532,720,YES,1280,720,NO},
+        {1920,1080,720,NO,1280,720,NO},
+        {4,3,1080,NO,1920,1080,NO},
+        {1,1,1080,YES,1080,1080,YES}
+    };
+    for (unsigned i=0; i<sizeof cases/sizeof *cases; i++) {
+        [defaults setInteger:cases[i].height forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+        [defaults setObject:cases[i].requestedFull ? @"display" : @"16:9" forKey:@"TOTK_LAUNCHER_ASPECT"];
+        CHECK(TOTKLauncherDisplaySize(defaults,capable,cases[i].viewW,cases[i].viewH,&width,&height,&full));
+        CHECK(width == cases[i].w && height == cases[i].h && full == cases[i].full);
+        CHECK(width % 2 == 0 && height % 2 == 0 && width <= 1920 && height <= 1080);
+    }
+    width = 7; height = 9; full = YES;
+    CHECK(!TOTKLauncherDisplaySize(defaults,@{},4,3,&width,&height,&full));
+    CHECK(width == 7 && height == 9 && full);
+    const double invalid[] = {0,-1,NAN,INFINITY,-INFINITY};
+    for (unsigned i=0; i<sizeof invalid/sizeof *invalid; i++) {
+        CHECK(!TOTKLauncherDisplaySize(defaults,capable,invalid[i],3,&width,&height,&full));
+        CHECK(!TOTKLauncherDisplaySize(defaults,capable,4,invalid[i],&width,&height,&full));
+        CHECK(width == 7 && height == 9 && full);
+    }
+    CHECK(!TOTKLauncherDisplaySize(defaults,capable,4,3,NULL,&height,&full));
+    CHECK(!TOTKLauncherDisplaySize(defaults,capable,4,3,&width,NULL,&full));
+    CHECK(width == 7 && height == 9 && full);
+    CHECK(TOTKLauncherDisplaySize(defaults,capable,4,3,&width,&height,NULL));
+    CHECK(width == 1440 && height == 1080);
+    [defaults setObject:@"invalid" forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+    [defaults setObject:@"invalid" forKey:@"TOTK_LAUNCHER_ASPECT"];
+    CHECK(TOTKLauncherDisplaySize(defaults,capable,4,3,&width,&height,&full));
+    CHECK(width == 1280 && height == 720 && !full);
+    CHECK(![defaults objectForKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"]);
+    CHECK(![defaults objectForKey:@"TOTK_LAUNCHER_ASPECT"]);
+    return 0;
+}
 static int settings(NSString *scenario, NSURL *root) {
     NSString *suite = [@"org.macnativegames.save-probe." stringByAppendingString:[NSString stringWithFormat:@"%@.%@",root.URLByDeletingLastPathComponent.lastPathComponent,root.lastPathComponent]];
     NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:suite];
@@ -56,18 +106,27 @@ static int settings(NSString *scenario, NSURL *root) {
         [defaults setInteger:2 forKey:@"TOTK_LAUNCHER_HUD"];
         [defaults setBool:NO forKey:@"TOTK_LAUNCHER_TOUCH"];
         [defaults setBool:YES forKey:@"TOTK_LAUNCHER_METAL_HUD"];
+        [defaults setInteger:1080 forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+        [defaults setObject:@"display" forKey:@"TOTK_LAUNCHER_ASPECT"];
         CHECK([defaults synchronize]);
     } else if ([scenario isEqual:@"settings_read"]) {
         CHECK([TOTKLauncherLanguage(defaults) isEqual:@"de"]);
         CHECK(TOTKLauncherHUD(defaults) == 2);
         CHECK(!TOTKLauncherTouch(defaults));
         CHECK(TOTKLauncherMetalHUD(defaults));
+        CHECK(TOTKLauncherRenderHeight(defaults) == 1080);
+        CHECK([TOTKLauncherAspect(defaults) isEqual:@"display"]);
+        unsigned width = 0, height = 0; BOOL full = NO;
+        CHECK(TOTKLauncherDisplaySize(defaults,@{@"TOTKIOSDisplaySettingsVersion":@1},4,3,&width,&height,&full));
+        CHECK(width == 1440 && height == 1080 && full);
     } else {
         [defaults removePersistentDomainForName:suite];
         CHECK([TOTKLauncherLanguage(defaults) isEqual:@""]);
         CHECK(TOTKLauncherHUD(defaults) == 1);
         CHECK(TOTKLauncherTouch(defaults));
         CHECK(!TOTKLauncherMetalHUD(defaults));
+        CHECK(TOTKLauncherRenderHeight(defaults) == 720);
+        CHECK([TOTKLauncherAspect(defaults) isEqual:@"16:9"]);
         for (id value in @[@"invalid",@42,@[],@{},@0.5]) {
             [defaults setObject:value forKey:@"TOTK_LANG"];
             CHECK([TOTKLauncherLanguage(defaults) isEqual:@""]);
@@ -81,6 +140,12 @@ static int settings(NSString *scenario, NSURL *root) {
             [defaults setObject:value forKey:@"TOTK_LAUNCHER_METAL_HUD"];
             CHECK(!TOTKLauncherMetalHUD(defaults));
             CHECK(![defaults objectForKey:@"TOTK_LAUNCHER_METAL_HUD"]);
+            [defaults setObject:value forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+            CHECK(TOTKLauncherRenderHeight(defaults) == 720);
+            CHECK(![defaults objectForKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"]);
+            [defaults setObject:value forKey:@"TOTK_LAUNCHER_ASPECT"];
+            CHECK([TOTKLauncherAspect(defaults) isEqual:@"16:9"]);
+            CHECK(![defaults objectForKey:@"TOTK_LAUNCHER_ASPECT"]);
         }
         for (NSString *language in TOTKLanguages()) {
             [defaults setObject:language forKey:@"TOTK_LANG"];
@@ -94,6 +159,30 @@ static int settings(NSString *scenario, NSURL *root) {
             [defaults setObject:enabled forKey:@"TOTK_LAUNCHER_METAL_HUD"];
             CHECK(TOTKLauncherMetalHUD(defaults) == enabled.boolValue);
         }
+        for (NSNumber *height in @[@720,@1080]) {
+            [defaults setObject:height forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+            CHECK(TOTKLauncherRenderHeight(defaults) == height.integerValue);
+        }
+        for (NSString *aspect in @[@"16:9",@"display"]) {
+            [defaults setObject:aspect forKey:@"TOTK_LAUNCHER_ASPECT"];
+            CHECK([TOTKLauncherAspect(defaults) isEqual:aspect]);
+        }
+        for (id height in @[@0,@719,@721,@1081,@720.5,@"1080",@YES,@NO]) {
+            [defaults setObject:height forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+            CHECK(TOTKLauncherRenderHeight(defaults) == 720);
+            CHECK(![defaults objectForKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"]);
+        }
+        for (NSString *aspect in @[@"4:3",@"auto",@"DISPLAY",@""]) {
+            [defaults setObject:aspect forKey:@"TOTK_LAUNCHER_ASPECT"];
+            CHECK([TOTKLauncherAspect(defaults) isEqual:@"16:9"]);
+            CHECK(![defaults objectForKey:@"TOTK_LAUNCHER_ASPECT"]);
+        }
+        CHECK(!TOTKLauncherDisplaySettingsAvailable(@{}));
+        CHECK(TOTKLauncherDisplaySettingsAvailable(@{@"TOTKIOSDisplaySettingsVersion":@1}));
+        for (id version in @[@0,@2,@1.5,@YES,@NO,@"1",@[],@{},NSNull.null]) {
+            CHECK(!TOTKLauncherDisplaySettingsAvailable(@{@"TOTKIOSDisplaySettingsVersion":version}));
+        }
+        CHECK(displaySizes(defaults) == 0);
         [defaults removePersistentDomainForName:suite];
         CHECK([defaults synchronize]);
     }

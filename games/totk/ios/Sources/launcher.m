@@ -22,21 +22,36 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:[UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular]];
+    card.accessibilityIdentifier = @"TOTKPrelaunchCard";
+    card.translatesAutoresizingMaskIntoConstraints = NO;
+    card.layer.cornerRadius = 28;
+    card.clipsToBounds = YES;
+    [self.view addSubview:card];
     self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleInsetGrouped];
+    self.tableView.backgroundColor = UIColor.clearColor;
     self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
     self.tableView.dataSource = self;
     self.tableView.delegate = self;
-    [self.view addSubview:self.tableView];
+    [card.contentView addSubview:self.tableView];
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
-    NSLayoutConstraint *width = [self.tableView.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-24];
+    NSLayoutConstraint *width = [card.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-24];
     width.priority = UILayoutPriorityDefaultHigh;
+    NSLayoutConstraint *height = [card.heightAnchor constraintEqualToAnchor:safe.heightAnchor constant:-24];
+    height.priority = UILayoutPriorityDefaultHigh;
     [NSLayoutConstraint activateConstraints:@[
-        [self.tableView.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
-        [self.tableView.topAnchor constraintEqualToAnchor:safe.topAnchor],
-        [self.tableView.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
-        [self.tableView.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:12],
-        [self.tableView.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor constant:-12],
-        [self.tableView.widthAnchor constraintLessThanOrEqualToConstant:620], width
+        [card.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
+        [card.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor],
+        [card.topAnchor constraintGreaterThanOrEqualToAnchor:safe.topAnchor constant:12],
+        [card.bottomAnchor constraintLessThanOrEqualToAnchor:safe.bottomAnchor constant:-12],
+        [card.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:12],
+        [card.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor constant:-12],
+        [card.widthAnchor constraintLessThanOrEqualToConstant:500], width,
+        [card.heightAnchor constraintLessThanOrEqualToConstant:760], height,
+        [self.tableView.leadingAnchor constraintEqualToAnchor:card.contentView.leadingAnchor],
+        [self.tableView.trailingAnchor constraintEqualToAnchor:card.contentView.trailingAnchor],
+        [self.tableView.topAnchor constraintEqualToAnchor:card.contentView.topAnchor],
+        [self.tableView.bottomAnchor constraintEqualToAnchor:card.contentView.bottomAnchor],
     ]];
     self.tableView.allowsFocus = YES;
     self.tableView.remembersLastFocusedIndexPath = YES;
@@ -45,15 +60,22 @@
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return (NSInteger[]){1,3,1,4,1}[section];
+    (void)tableView; return (NSInteger[]){1,4,1,4,1}[section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return @[@"",@"Graphics",@"Controls",@"Saves",@"Language"][section];
 }
+- (BOOL)fullDisplayAvailable {
+    CGSize size = self.view.window ? self.view.window.bounds.size : self.view.bounds.size;
+    double shortSide = MIN(size.width,size.height), longSide = MAX(size.width,size.height);
+    return shortSide > 0 && longSide <= shortSide * 16.0 / 9.0;
+}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section == 0) return _unavailable ?: @"Choose settings and manage saves before Play. Reopen the app to return here.";
-    if (section == 1) return @"The current build renders at 1280 × 720. Further graphics modes are planned.";
+    if (section == 1) return TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary)
+        ? ([self fullDisplayAvailable] ? @"Changes apply at Play. Full display uses your screen’s aspect ratio." : @"Changes apply at Play. This display uses 16:9.")
+        : @"This build supports 1280 × 720 at 16:9.";
     if (section == 2) return @"Automatic hides touch buttons with a connected controller. Off requires a controller.";
     if (section == 3) return @"Select a folder containing complete slot_00–slot_05 saves. Imports and restores create a backup first.";
     return @"Language follows the existing Settings app preference. Changes apply when you press Play.";
@@ -61,18 +83,22 @@
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     (void)tableView;
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
+    cell.backgroundColor = [UIColor.secondarySystemGroupedBackgroundColor colorWithAlphaComponent:0.65];
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    NSArray *titles = @[@[@"Play"],@[@"Render resolution",@"Performance overlay",@"Apple Metal HUD"],@[@"Touch controls"],
+    NSArray *titles = @[@[@"Play"],@[@"Render resolution",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD"],@[@"Touch controls"],
         @[@"Import save folder",@"Export save folder",@"Back up save",@"Restore backup"],@[@"Game language"]];
     cell.textLabel.text = titles[path.section][path.row];
+    BOOL displaySettings = TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary);
     if (path.section == 1) {
-        if (path.row == 0) cell.detailTextLabel.text = @"1280 × 720";
-        else if (path.row == 1) cell.detailTextLabel.text = @{@0:@"Off",@1:@"Full",@2:@"FPS only"}[@(TOTKLauncherHUD(d))];
+        if (path.row == 0) cell.detailTextLabel.text = displaySettings
+            ? [NSString stringWithFormat:@"%ld high",(long)TOTKLauncherRenderHeight(d)] : @"1280 × 720";
+        else if (path.row == 1) cell.detailTextLabel.text = displaySettings && [self fullDisplayAvailable] && [TOTKLauncherAspect(d) isEqual:@"display"] ? @"Full display" : @"16:9";
+        else if (path.row == 2) cell.detailTextLabel.text = @{@0:@"Off",@1:@"Full",@2:@"FPS only"}[@(TOTKLauncherHUD(d))];
         else cell.detailTextLabel.text = TOTKLauncherMetalHUD(d) ? @"On" : @"Off";
     }
     if (path.section == 2) cell.detailTextLabel.text = TOTKLauncherTouch(d) ? @"Automatic" : @"Off";
     if (path.section == 4) cell.detailTextLabel.text = [self languageTitle:TOTKLauncherLanguage(d)];
-    BOOL disabled = _busy || _started || (path.section == 0 && _unavailable) || (path.section == 1 && path.row == 0);
+    BOOL disabled = _busy || _started || (path.section == 0 && _unavailable) || (path.section == 1 && path.row < 2 && !displaySettings);
     cell.userInteractionEnabled = !disabled;
     cell.textLabel.enabled = !disabled;
     cell.accessibilityLabel = cell.textLabel.text;
@@ -114,9 +140,20 @@
         if (!TOTKLauncherTouch(d) && !controller) { [self message:@"Enable touch controls or connect a compatible controller before Play."]; return; }
         if (![_store sealForPlay]) return;
         _started = YES; [self.tableView reloadData]; _play();
-    } else if (path.section == 1 && path.row == 1) {
-        [self choose:@[@"Full",@"FPS only",@"Off"] path:path selected:^(NSUInteger i) { [d setInteger:(NSInteger[]){1,2,0}[i] forKey:@"TOTK_LAUNCHER_HUD"]; }];
+    } else if (path.section == 1 && path.row < 2) {
+        if (!TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary)) return;
+        if (path.row == 0) {
+            [self choose:@[@"720 high",@"1080 high"] path:path selected:^(NSUInteger i) {
+                [d setInteger:(NSInteger[]){720,1080}[i] forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+            }];
+        } else {
+            [self choose:[self fullDisplayAvailable] ? @[@"16:9",@"Full display"] : @[@"16:9"] path:path selected:^(NSUInteger i) {
+                [d setObject:(@[@"16:9",@"display"])[i] forKey:@"TOTK_LAUNCHER_ASPECT"];
+            }];
+        }
     } else if (path.section == 1 && path.row == 2) {
+        [self choose:@[@"Full",@"FPS only",@"Off"] path:path selected:^(NSUInteger i) { [d setInteger:(NSInteger[]){1,2,0}[i] forKey:@"TOTK_LAUNCHER_HUD"]; }];
+    } else if (path.section == 1 && path.row == 3) {
         [self choose:@[@"On",@"Off"] path:path selected:^(NSUInteger i) { [d setBool:i == 0 forKey:@"TOTK_LAUNCHER_METAL_HUD"]; }];
     } else if (path.section == 2) {
         [self choose:@[@"Automatic",@"Off"] path:path selected:^(NSUInteger i) { [d setBool:i == 0 forKey:@"TOTK_LAUNCHER_TOUCH"]; }];
