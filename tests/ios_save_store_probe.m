@@ -8,6 +8,26 @@
 #include <errno.h>
 #include <pthread.h>
 #include <math.h>
+#include <dirent.h>
+
+/* save_store.o alone redirects readdir here. Remove an optional file between
+ * its directory fstat and enumeration, so a missing entry cannot look complete. */
+static BOOL changeDirectory, changedDirectory;
+static dev_t changingDevice;
+static ino_t changingInode;
+struct dirent *TOTKProbeReadDirectory(DIR *directory) {
+    struct stat st;
+    if (changeDirectory && !fstat(dirfd(directory),&st) &&
+        st.st_dev == changingDevice && st.st_ino == changingInode) {
+        changeDirectory = NO;
+        changedDirectory = unlinkat(dirfd(directory),"binary.bin",0) == 0;
+        /* Ensure a distinct timestamp even on a coarse-resolution volume. */
+        struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
+        times[1].tv_sec++;
+        if (futimens(dirfd(directory),times)) changedDirectory = NO;
+    }
+    return readdir(directory);
+}
 
 #define CHECK(condition) do { if (!(condition)) { fprintf(stderr,"%s:%d: %s\n",__FILE__,__LINE__,#condition); return 1; } } while (0)
 
@@ -225,7 +245,22 @@ static int probe(NSString *scenario, NSURL *root) {
         close(selected);
         scenario = @"roundtrip";
     }
-    if ([scenario isEqual:@"backup_refused"] || [scenario isEqual:@"publish_refused"]) {
+    if ([scenario isEqual:@"provider_read_refused"] || [scenario isEqual:@"export_read_refused"]) {
+        BOOL exporting = [scenario isEqual:@"export_read_refused"];
+        NSURL *restricted = child(exporting ? active : source,@"slot_03/caption.sav");
+        NSString *policy = [NSString stringWithFormat:@"(version 1)(allow default)(deny file-read-data (literal \"%@\"))",restricted.path];
+        CHECK(applySandbox(policy.UTF8String));
+        if (exporting) {
+            CHECK(![store exportToDirectory:output error:&error]);
+            CHECK(![fm fileExistsAtPath:child(output,@"TOTK Save").path]);
+        } else CHECK(![store importDirectory:source error:&error]);
+        CHECK(error);
+        /* Metadata remains readable; no active bytes are changed by either operation. */
+        CHECK([fm fileExistsAtPath:restricted.path]);
+        if (!exporting) CHECK([snapshot(active) isEqual:original]);
+        CHECK([store backups:NULL].count == 0);
+        for (NSString *name in [fm contentsOfDirectoryAtPath:profile.path error:NULL]) CHECK(![name hasPrefix:@".import-"]);
+    } else if ([scenario isEqual:@"backup_refused"] || [scenario isEqual:@"publish_refused"]) {
         BOOL publish = [scenario isEqual:@"publish_refused"];
         NSURL *restricted = publish ? active : backups;
         NSString *policy = [NSString stringWithFormat:@"(version 1)(allow default)(deny %@ (%@ \"%@\"))",
@@ -281,6 +316,12 @@ static int probe(NSString *scenario, NSURL *root) {
     } else {
         if ([scenario isEqual:@"ancestor_source"]) {
             source = profile;
+        } else if ([scenario isEqual:@"directory_changed"]) {
+            struct stat st;
+            CHECK(stat(source.fileSystemRepresentation,&st) == 0);
+            changingDevice = st.st_dev;
+            changingInode = st.st_ino;
+            changeDirectory = YES;
         } else if ([scenario isEqual:@"empty"]) {
             CHECK([fm removeItemAtURL:source error:NULL]);
             CHECK([fm createDirectoryAtURL:source withIntermediateDirectories:NO attributes:nil error:NULL]);
@@ -318,6 +359,7 @@ static int probe(NSString *scenario, NSURL *root) {
         } else CHECK(NO);
         CHECK(![store importDirectory:source error:&error]);
         CHECK(error);
+        if ([scenario isEqual:@"directory_changed"]) CHECK(changedDirectory);
         if ([scenario isEqual:@"ancestor_source"]) {
             CHECK([error.localizedDescription isEqual:@"Select the console save folder, not a folder containing this app's save storage."]);
         }
