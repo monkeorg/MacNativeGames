@@ -30,6 +30,24 @@ Mouse preferences use the existing `TOTK_MOUSE_SENSITIVITY` and `TOTK_MOUSE_INVE
 
 `TOTK_FACE_BUTTONS` retains its existing backend behavior: it affects Automatic detection; an explicit controller type chooses its own position/label convention. Decay, minimum decay, counterweight, gyro behavior, and all default bindings remain the shared runtime's existing settings.
 
+## Mac input feature inventory
+
+Implementation states below describe source availability. Every device-dependent path remains physically unverified in this continuation.
+
+| Mac feature | iPad state and source boundary |
+|---|---|
+| Extended controller buttons/sticks and face conventions | Implemented shared `runtime/gamepad.m` GameController path; persistent controller type and mappings added here. Actual accessory models, focus navigation and touchpad-click availability remain unverified. |
+| Extra controller support through IOKit/HID | Unavailable: `gamepad.m` compiles its IOKit/HID reader only under `TARGET_OS_OSX`. iPad depends on profiles exposed by GameController; a Mac-supported accessory is not automatically iPad-supported. |
+| Controller haptics and controller motion | Unavailable in the current iOS implementation: `runtime/gamepad_feedback.m` uses no-op attach/detach/quiet/rumble functions outside macOS; controller motion attachment is in the macOS branch. No haptic or controller-gyro selector is offered. This is distinct from mouse-generated motion in the shared backend. |
+| Relative mouse, buttons, capture and camera look | Implemented iOS adapter plus existing shared mouse-look/right-stick and synthetic-motion paths. Primary/middle and up to two auxiliary buttons are forwarded. Direction, sensitivity, gyro effect, pointer-lock behavior and real extra-button identity remain unverified physically. |
+| Mouse sensitivity, inversion and button mapping | Persistent pre-Play choices implemented here. Advanced decay/counterweight/minimum decay/mouse-gyro options remain developer environment settings; no new persistent advanced controls are claimed. |
+| Mapping modes and mouse enable shortcut | Default modes are preserved; custom in-app mappings use Hold. Advanced Tap/Toggle/Aim remain available through `TOTK_CONTROLS`. Mac key 7 is not wired as an iPad shortcut; iPad capture is requested during gameplay and released temporarily by the menu/focus policy. |
+| Keyboard movement and Mac shortcuts | Desktop NSEvent keyboard dispatch is unavailable in UIKit. The iPad currently wires Escape to the menu; it does not promise the desktop movement or keys 1–7. Game overlay choices are in the native menu; graphics shortcuts follow their separate acceptance gates. |
+| Game text entry | Unavailable: `runtime/frontend_ios.m:runtime_front_text_test` cancels game keyboard requests. Keyboard notifications release capture defensively; they do not implement the desktop entry bar. |
+| Touch visibility and interruption release | Implemented iOS Automatic/Off behavior and cancellation policy. Controller input can still reach gameplay while the live menu is open; the menu does not pause. Physical lifecycle acceptance remains pending. |
+
+Controller haptics/motion, desktop keyboard emulation and advanced persistent tuning are not silently included in the delivered preferences. The issue's inventory distinguishes these unavailable paths from its specifically requested sensitivity, inversion, mapping and touch controls. Any later expansion needs its own supported API path, source review and real accessory evidence; the current work does not claim complete Mac input parity.
+
 ## Requirement-to-code map
 
 | Requirement | Production implementation |

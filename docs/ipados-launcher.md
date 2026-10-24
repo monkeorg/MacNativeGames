@@ -11,9 +11,14 @@ Tap a settings row to open its choices. Tap a choice to apply it.
 - **Performance overlay:** selects Full, FPS only, or Off.
 - **Apple Metal HUD:** selects Apple’s native performance overlay. Enable device-level support once as described below.
 - **Controls:** Automatic keeps the existing touch behavior. Off requires a connected controller with an extended gamepad profile.
+- **Controller type:** Automatic, Xbox, PlayStation, or Switch selects the existing face-button convention.
+- **Mouse:** persistent sensitivity from 1–100 and vertical inversion reuse the existing mouse-look settings.
+- **Button mappings:** choose Default, a Switch button, or None for controller buttons and up to five mouse buttons. Custom bindings use hold behavior; Default retains existing modes, including bow/left-click fire.
 - **Language:** uses the same preference as the app's pane in iPad Settings. System follows the device language.
 
 Preferences persist between launches. Resolution, aspect ratio, controls, and language apply at Play. Invalid stored values return to defaults. A developer-supplied `TOTK_LANG` environment value still takes precedence.
+
+The new controller/mouse settings have been source-reviewed but are unbuilt and untested. See [Controls implementation and limits](ipados-controls.md) for environment precedence, optional auxiliary buttons and the later local acceptance steps. They do not apply live during gameplay.
 
 Resolution and aspect controls require the TOTK 1.4.3 build option `--ios-display-settings`. It adds `TOTKIOSDisplaySettingsVersion = 1`, backed by the signed `TOTK_IOS_DISPLAY_SETTINGS` profile. Other builds disable these choices and retain 1280×720 at 16:9. A saved preference cannot add this capability.
 

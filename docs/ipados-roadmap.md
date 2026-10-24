@@ -4,6 +4,8 @@ Target: TOTK 1.4.3 on an M4 iPad Pro, with a persistent pre-launch menu, save tr
 
 Roadmap: https://github.com/monkeorg/MacNativeGames/issues/9
 
+Current source delivery, requirement-to-code evidence and external blockers are recorded in [the full-roadmap status](ipados-roadmap-status.md). The latest continuation prohibits running tests or simulators; its new Controls source is unbuilt and untested. Follow the [ordered local verification checklist](ipados-acceptance.md) only in a later authorized validation session. Hardware acceptance remains open.
+
 ## Delivery sequence
 
 1. [Establish TOTK 1.4.3 iPad baseline and repeatable benchmark](https://github.com/monkeorg/MacNativeGames/issues/1)

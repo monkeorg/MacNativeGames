@@ -2,6 +2,8 @@
 
 Target: TOTK 1.4.3 on the existing M4 iPad. Cloud changes are recorded in [the audit](ipados-cloud-audit.md). Do not treat a successful build, install, drawable resize, HUD counter, or locked-device test block as functional acceptance.
 
+The [full-roadmap continuation](ipados-roadmap-status.md) prohibits executing tests or simulators. This is an ordered checklist for a later authorized local validation session, not permission to execute it now. Include the new [Controls source](ipados-controls.md), which has been reviewed but not built or tested.
+
 1. **Prepare privately.** Unlock the iPad, confirm device ownership, retain the previous signed app for rollback, and back up the current complete save/profile and account identity. Record the exact candidate commit and build options. Reuse local inputs, signing configuration and Xcode caches; preserve bundle identity/team. Build the candidate and run the full macOS tests, including all 16 Foundation save/preferences tests, before installation. No simulator is needed.
 2. **Install and verify preservation.** Compare every save/profile file with its immediate pre-install private SHA256 snapshot. Record installation separately from launch/gameplay. Stop and investigate any unexplained save or identity change before Play.
 3. **Launcher, before Play.** Check the centered landscape card, scrollable rows, touch/accessibility labels and connected-controller navigation. Change implemented preferences, relaunch, and check persistence, malformed-value recovery, language/System behavior and foreground return. Confirm unsupported display controls stay disabled. Test both Automatic touch and controller-required Off. Restore the intended settings before Play.
