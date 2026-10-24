@@ -32,6 +32,7 @@ int main(int argc,char **argv){
 #if TARGET_OS_IPHONE && defined(TOTK_IOS_DISPLAY_SETTINGS)
     word(&m,0xbdb578,0xd2800008|(1920<<5));word(&m,0xbdb584,0xf2c00008|(1080<<5));
     word(&m,0x3dcb28,branch(0x3dcb28,stub+16));
+    word(&m,0x3dcb2c,0xf9028663);word(&m,0x3dcb30,0xd001ac08);
     uint32_t output[]={adrp(9,(uintptr_t)m.base+stub+16,(uintptr_t)m.base+data),
         0xf9001533,0xf9401123,0xf9000a63,0xd360fc64,0xf9028663,branch(stub+40,0x3dcb30)};
     memcpy(m.base+stub+16,output,sizeof output);
@@ -51,6 +52,10 @@ int main(int argc,char **argv){
     for(unsigned i=0;i<2;i++)word(&m,projection[i],original);
 #endif
     if(!strcmp(argv[1],"bad_output"))word(&m,0xbdb578,0);
+    if(!strcmp(argv[1],"bad_output_preserved"))word(&m,0x3dcb2c,0);
+    if(!strcmp(argv[1],"bad_output_resume"))word(&m,0x3dcb30,0);
+    if(!strcmp(argv[1],"bad_output_veneer"))word(&m,stub+20,0xffffffff);
+    if(!strcmp(argv[1],"bad_aspect_veneer"))word(&m,stub+52,0xffffffff);
     if(!strcmp(argv[1],"bad_render"))word(&m,0x585e50,0);
     if(!strcmp(argv[1],"bad_fixed"))word(&m,0x5848a8,0);
     if(!strcmp(argv[1],"bad_aspect"))word(&m,projection[0],0);
@@ -76,6 +81,14 @@ int main(int argc,char **argv){
     float scene[2];memcpy(scene,m.base+data+16,sizeof scene);
     CHECK(scene[0]==(baseline?1280:1440)&&scene[1]==(baseline?720:1080));
     CHECK(baseline?runtime_aspect_now()==0:fabsf(runtime_aspect_now()-4.0f/3.0f)<0.00001f);
+    #if TARGET_OS_IPHONE
+    /* Keyboard commands cannot separate the fixed canvas, render size and projection. */
+    float aspect=runtime_aspect_now();
+    CHECK(!runtime_aspect_toggle());CHECK(!runtime_output_res_toggle());CHECK(!runtime_output_mode_cycle());
+    CHECK(runtime_aspect_now()==aspect);CHECK(runtime_output_size_current()==expected);
+    memcpy(scene,m.base+data+16,sizeof scene);
+    CHECK(scene[0]==(baseline?1280:1440)&&scene[1]==(baseline?720:1080));
+#endif
     CHECK(!munmap(m.base,m.size));
     puts("display profile pass");return 0;
 }

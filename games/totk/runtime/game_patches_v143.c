@@ -409,9 +409,10 @@ static void patch_output_res(Module *m){
  #else
     memcpy(m->base+stub,veneer,sizeof veneer);
  #endif
-    uint32_t words[]={0xd2800008|(w<<5),0xf2c00008|(h<<5),branch(0x3dcb28,stub)};
+    uint32_t words[]={0xd2800008|(w<<5),0xf2c00008|(h<<5),branch(0x3dcb28,stub),
+                      guards[3].original,guards[4].original};
  #if TARGET_OS_IPHONE
-    for(unsigned i=0;i<3;i++){uint32_t got;memcpy(&got,m->base+guards[i].off,4);if(got!=words[i])runtime_fail("1.4.3 embedded output patch mismatch");}
+    for(unsigned i=0;i<sizeof words/sizeof *words;i++){uint32_t got;memcpy(&got,m->base+guards[i].off,4);if(got!=words[i])runtime_fail("1.4.3 embedded output patch mismatch");}
  #else
     for(unsigned i=0;i<3;i++)memcpy(m->base+guards[i].off,words+i,4);
  #endif
@@ -525,6 +526,9 @@ static void patch_fixed_res(Module *m){
 }
 
 int runtime_output_res_toggle(void){
+#if TARGET_OS_IPHONE
+    return 0;   /* The launcher owns the signed canvas until the next process launch. */
+#endif
     if(!output_page)return 0;
     _Atomic uint64_t *size=(_Atomic uint64_t *)(void *)(output_page+32);
     int full=atomic_load(size)!=pack_size(output_w,output_h);
@@ -536,6 +540,9 @@ int runtime_output_res_toggle(void){
     return 1;
 }
 int runtime_output_mode_cycle(void){
+#if TARGET_OS_IPHONE
+    return 0;   /* Mac key 3 must not replace the launcher canvas or enable MetalFX. */
+#endif
     if(!output_page)return 0;
     extern int mfxup_output_enabled(void);extern void dm_gfx_set_flag(const char *,int);
     int full=atomic_load((_Atomic uint64_t *)(void *)(output_page+32))==pack_size(output_w,output_h);

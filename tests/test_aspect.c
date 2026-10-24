@@ -18,6 +18,7 @@ static int near(double a, double b) { return fabs(a - b) < 1e-4; }
 static void parsing(void) {
     CHECK(aspect_parse(NULL) == 0 && aspect_parse("") == 0 && aspect_parse("0") == 0, "unset");
     CHECK(near(aspect_parse("16:10"), 1.6), "16:10");
+    CHECK(near(aspect_parse("1440x1080"), 4.0 / 3), "iPad 1080-high 4:3");
     CHECK(near(aspect_parse("2560x1600"), 1.6), "2560x1600");
     CHECK(near(aspect_parse("1.6"), 1.6), "1.6");
     CHECK(near(aspect_parse("21:9"), 21.0 / 9), "21:9");
@@ -32,6 +33,7 @@ static void factors(void) {
     CHECK(aspect_effective(1920.0 / 1088) == 0, "within 1%% of 16:9");
     CHECK(aspect_effective(0) == 0 && aspect_effective(ASPECT_DISPLAY) == 0, "unset");
     CHECK(near(aspect_effective(1.6), 1.6), "16:10 kept");
+    CHECK(near(aspect_effective(4.0 / 3), 4.0 / 3), "iPad 4:3 needs an actual projection override");
     CHECK(!aspect_vert_wanted(NULL) && !aspect_vert_wanted("") && !aspect_vert_wanted("0") && !aspect_vert_wanted("yes"), "Vert+ off by default");
     CHECK(aspect_vert_wanted("1"), "TOTK_ASPECT_VERT=1 turns it on");
     CHECK(aspect_vert_factor(0) == 0 && aspect_vert_factor((float)(21.0 / 9)) == 0, "no Vert+ at 16:9 and wider");
@@ -204,8 +206,9 @@ static void run(void) {
     CHECK(!e1 && !e2 && j1[0] && j2[0], "stubs built");
     float *slot = (float *)(void *)(mem + data + ASPECT_DATA_SLOT), *kslot = (float *)(void *)(mem + data + ASPECT_VERT_SLOT);
     const float game = 16.0f / 9, fovy = 0.8f;
-    for (int c = 0; c < 3; c++) {
-        float ratio = c ? 1.6f : 0, k = c == 2 ? aspect_vert_factor(1.6f) : 0;
+    for (int c = 0; c < 5; c++) {
+        float ratio = c >= 3 ? 4.0f / 3 : c ? 1.6f : 0;
+        float k = c == 2 || c == 4 ? aspect_vert_factor(ratio) : 0;
         pthread_jit_write_protect_np(0); *slot = ratio; *kslot = k; pthread_jit_write_protect_np(1);
         uint64_t o[13];
         call(mem + site + 16, &game, o);   /* the aspect site */
@@ -216,8 +219,8 @@ static void run(void) {
         float want = k ? 2 * atanf(k * tanf(fovy / 2)) : fovy;
         CHECK(near(fl(o[11]), want), "case %d: fovy %f want %f", c, fl(o[11]), want);
         if (k) {   /* the 16:9 horizontal view kept: ratio * tan(fovy' / 2) equals 16/9 * tan(fovy / 2) */
-            CHECK(near(1.6 * tan(fl(o[11]) / 2), game * tan(fovy / 2)), "Vert+ keeps the horizontal view");
-            printf("16:10 Vert+: vertical view %.1f -> %.1f degrees\n", fovy * 180 / M_PI, fl(o[11]) * 180 / M_PI);
+            CHECK(near(ratio * tan(fl(o[11]) / 2), game * tan(fovy / 2)), "Vert+ keeps the horizontal view");
+            printf("%.4f Vert+: vertical view %.1f -> %.1f degrees\n", ratio, fovy * 180 / M_PI, fl(o[11]) * 180 / M_PI);
         }
     }
     munmap(mem, 0x8000);

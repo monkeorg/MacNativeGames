@@ -79,6 +79,9 @@ void runtime_aspect_view(double w, double h) {
 
 /* Key 4 (runtime/input.c). Returns 0 where it is not available (iPhone / iPad, other game versions). */
 int runtime_aspect_toggle(void) {
+#if TARGET_OS_IPHONE
+    return 0;   /* Keep the projection paired with the launcher-selected canvas. */
+#endif
     if (!g_aspect_slot) return 0;
     int step = aspect_next_step(atomic_load(&g_aspect_step), aspect_bits_float(atomic_load(&g_aspect_view)), g_aspect_wide);
     atomic_store(&g_aspect_step, step);
