@@ -150,6 +150,7 @@
     UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification, self.card);
 }
 - (void)closeMenu {
+    if (!((TOTKMenuView *)self.view).expanded) return;
     for (UIView *control in self.controlStates.keyEnumerator) {
         control.userInteractionEnabled = [[self.controlStates objectForKey:control] boolValue];
     }
