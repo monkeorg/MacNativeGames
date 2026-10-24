@@ -53,6 +53,7 @@ void runtime_shortcut_help_toggle(void) {}
 }
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+    TOTKMouseInputHostDidAppear();
     if (g_game_started) return;
     if (g_no_game_data) {
         UILabel *say = [[UILabel alloc] initWithFrame:CGRectInset(self.view.bounds, 40, 40)];
@@ -90,7 +91,7 @@ void runtime_shortcut_help_toggle(void) {}
 }
 - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
 - (BOOL)prefersStatusBarHidden { return YES; }
-- (BOOL)prefersPointerLocked { return TOTKMouseInputEnabled(); }
+- (BOOL)prefersPointerLocked { return TOTKMouseInputWantsPointerLock(); }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
 @end
 

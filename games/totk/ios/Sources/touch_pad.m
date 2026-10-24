@@ -33,9 +33,39 @@ static const NSTimeInterval kHideAfter = 3;   // seconds after the last finger l
         NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
         [center addObserver:self selector:@selector(controllersChanged:) name:GCControllerDidConnectNotification object:nil];
         [center addObserver:self selector:@selector(controllersChanged:) name:GCControllerDidDisconnectNotification object:nil];
+        [center addObserver:self selector:@selector(appWillResignActive:) name:UIApplicationWillResignActiveNotification object:nil];
+        [center addObserver:self selector:@selector(sceneWillDeactivate:) name:UISceneWillDeactivateNotification object:nil];
         [self controllersChanged:nil];
     }
     return self;
+}
+
+- (void)dealloc {
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+    [hideTimer invalidate];
+}
+
+// UIKit cancellation can arrive after the menu has disabled this view. Clear our own
+// tracking immediately, so an old finger cannot republish held input after dismissal.
+- (void)cancelInput {
+    [hideTimer invalidate]; hideTimer = nil;
+    [points removeAllObjects]; [leftOrigins removeAllObjects]; [rightOrigins removeAllObjects];
+    if (gamepad) concealed = YES;
+    [self updateState];
+}
+- (void)setUserInteractionEnabled:(BOOL)enabled {
+    if (!enabled) [self cancelInput];
+    [super setUserInteractionEnabled:enabled];
+}
+- (void)appWillResignActive:(NSNotification *)note {
+    (void)note; [self cancelInput];
+}
+- (void)sceneWillDeactivate:(NSNotification *)note {
+    if (note.object == self.window.windowScene) [self cancelInput];
+}
+- (void)willMoveToWindow:(UIWindow *)window {
+    if (!window) [self cancelInput];
+    [super willMoveToWindow:window];
 }
 
 - (void)controllersChanged:(NSNotification *)note {
@@ -50,7 +80,7 @@ static const NSTimeInterval kHideAfter = 3;   // seconds after the last finger l
 - (void)conceal {
     concealed = YES;
     // Fingers on the screen when it hides would otherwise hold their buttons and sticks.
-    [points removeAllObjects]; [leftOrigins removeAllObjects]; [rightOrigins removeAllObjects]; [self updateState];
+    [self cancelInput];
 }
 
 - (void)hideLater {
@@ -127,8 +157,12 @@ static void stick_axes(CGPoint from, CGPoint to, CGFloat radius, int32_t *x, int
 }
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    (void)event; concealed = NO; [hideTimer invalidate]; hideTimer = nil;
+    (void)event;
     for (UITouch *t in touches) {
+        // GCMouse handles relative pointer motion and buttons separately. A mouse
+        // click must never also become a virtual stick or on-screen button.
+        if (t.type == UITouchTypeIndirectPointer || t.type == UITouchTypeIndirect) continue;
+        concealed = NO; [hideTimer invalidate]; hideTimer = nil;
         CGPoint p = [t locationInView:self]; NSValue *v = [NSValue valueWithCGPoint:p]; [points setObject:v forKey:t];
         if ([self buttonAt:p]) continue;
         [(p.x < CGRectGetMidX(self.bounds) ? leftOrigins : rightOrigins) setObject:v forKey:t];
@@ -137,7 +171,9 @@ static void stick_axes(CGPoint from, CGPoint to, CGFloat radius, int32_t *x, int
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     (void)event;
-    for (UITouch *t in touches) [points setObject:[NSValue valueWithCGPoint:[t locationInView:self]] forKey:t];
+    for (UITouch *t in touches) {
+        if ([points objectForKey:t]) [points setObject:[NSValue valueWithCGPoint:[t locationInView:self]] forKey:t];
+    }
     [self updateState];
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {

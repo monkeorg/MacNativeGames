@@ -1,17 +1,24 @@
 #import "mouse_input.h"
+#include "mouse_capture.h"
 #import <GameController/GameController.h>
 #include "runtime.h"
 
 static __weak UIViewController *mouseHost;
-static BOOL mouseStarted, mouseEnabled, mouseForeground;
+static BOOL mouseStarted;
+static TOTKMouseCapture mouseCapture;
+
+BOOL TOTKMouseInputWantsPointerLock(void) {
+    return totk_mouse_wants_capture(&mouseCapture);
+}
 
 static BOOL mouse_ready(void) {
-    return mouseEnabled && mouseForeground && runtime_front_focus() &&
-        mouseHost.view.window.windowScene.pointerLockState.locked;
+    UIWindow *window = mouseHost.view.window;
+    return totk_mouse_accepts_input(&mouseCapture,
+        runtime_front_focus(), window.windowScene.pointerLockState.locked);
 }
 
 static BOOL mouse_prepare(void) {
-    if (!mouse_ready()) return NO;
+    if (!mouse_ready()) { runtime_mouse_release(); return NO; }
     if (!runtime_mouse_enabled()) runtime_mouse_toggle();
     return YES;
 }
@@ -39,12 +46,19 @@ static void attach_mouse(GCMouse *mouse) {
     }
 }
 
-BOOL TOTKMouseInputEnabled(void) { return mouseEnabled; }
+BOOL TOTKMouseInputEnabled(void) { return mouseCapture.requested; }
 
 void TOTKSetMouseInputEnabled(BOOL enabled) {
     NSCAssert(NSThread.isMainThread, @"Mouse UI state must change on the main thread");
-    mouseEnabled = enabled;
+    mouseCapture.requested = enabled;
     if (!enabled) runtime_mouse_release();
+    [mouseHost setNeedsUpdateOfPrefersPointerLocked];
+}
+
+void TOTKMouseInputHostDidAppear(void) {
+    UIWindow *window = mouseHost.view.window;
+    mouseCapture.key_window = window.isKeyWindow;
+    mouseCapture.active_scene = window.windowScene.activationState == UISceneActivationStateForegroundActive;
     [mouseHost setNeedsUpdateOfPrefersPointerLocked];
 }
 
@@ -53,7 +67,7 @@ void TOTKStartMouseInput(UIViewController *gameController) {
     mouseHost = gameController;
     if (mouseStarted) return;
     mouseStarted = YES;
-    mouseForeground = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
+    mouseCapture.foreground = UIApplication.sharedApplication.applicationState == UIApplicationStateActive;
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserverForName:GCMouseDidConnectNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
         attach_mouse(note.object);
@@ -67,10 +81,42 @@ void TOTKStartMouseInput(UIViewController *gameController) {
         runtime_mouse_release();
     }];
     [center addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-        (void)note; mouseForeground = NO; runtime_mouse_release();
+        (void)note; mouseCapture.foreground = NO; runtime_mouse_release();
+        [mouseHost setNeedsUpdateOfPrefersPointerLocked];
     }];
     [center addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-        (void)note; mouseForeground = YES;
+        (void)note; mouseCapture.foreground = YES;
+        [mouseHost setNeedsUpdateOfPrefersPointerLocked];
+    }];
+    [center addObserverForName:UISceneWillDeactivateNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        if (note.object != mouseHost.view.window.windowScene) return;
+        mouseCapture.active_scene = false;
+        runtime_mouse_release();
+        [mouseHost setNeedsUpdateOfPrefersPointerLocked];
+    }];
+    [center addObserverForName:UISceneDidActivateNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        if (note.object != mouseHost.view.window.windowScene) return;
+        mouseCapture.active_scene = true;
+        [mouseHost setNeedsUpdateOfPrefersPointerLocked];
+    }];
+    [center addObserverForName:UIWindowDidResignKeyNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        if (note.object != mouseHost.view.window) return;
+        mouseCapture.key_window = false;
+        runtime_mouse_release();
+        [mouseHost setNeedsUpdateOfPrefersPointerLocked];
+    }];
+    [center addObserverForName:UIWindowDidBecomeKeyNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        if (note.object != mouseHost.view.window) return;
+        mouseCapture.key_window = true;
+        [mouseHost setNeedsUpdateOfPrefersPointerLocked];
+    }];
+    [center addObserverForName:UIKeyboardWillShowNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        (void)note; mouseCapture.text_entry = YES; runtime_mouse_release();
+        [mouseHost setNeedsUpdateOfPrefersPointerLocked];
+    }];
+    [center addObserverForName:UIKeyboardDidHideNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        (void)note; mouseCapture.text_entry = NO;
+        [mouseHost setNeedsUpdateOfPrefersPointerLocked];
     }];
     [center addObserverForName:UIPointerLockStateDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
         if (note.userInfo[UIPointerLockStateSceneUserInfoKey] == mouseHost.view.window.windowScene && !mouse_ready()) runtime_mouse_release();
