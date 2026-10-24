@@ -23,6 +23,19 @@ static BOOL mouse_prepare(void) {
     return YES;
 }
 
+static NSArray *mouse_buttons(GCMouseInput *input) {
+    // Public GameController API, iPadOS 14+: optional extras are ordered by the
+    // device profile. The shared controller map has two auxiliary mouse slots.
+    NSArray<GCControllerButtonInput *> *extra = input.auxiliaryButtons;
+    return @[
+        input.leftButton ?: NSNull.null,
+        input.rightButton ?: NSNull.null,
+        input.middleButton ?: NSNull.null,
+        extra.count > 0 ? extra[0] : NSNull.null,
+        extra.count > 1 ? extra[1] : NSNull.null,
+    ];
+}
+
 static void attach_mouse(GCMouse *mouse) {
     mouse.handlerQueue = dispatch_get_main_queue();
     GCMouseInput *input = mouse.mouseInput;
@@ -30,11 +43,7 @@ static void attach_mouse(GCMouse *mouse) {
         (void)device;
         if (mouse_prepare()) runtime_mouse_move(dx, -dy);
     };
-    NSArray *buttons = @[
-        input.leftButton ?: NSNull.null,
-        input.rightButton ?: NSNull.null,
-        input.middleButton ?: NSNull.null,
-    ];
+    NSArray *buttons = mouse_buttons(input);
     for (NSUInteger i=0; i<buttons.count; i++) {
         if (buttons[i] == NSNull.null) continue;
         GCDeviceButtonInput *button = buttons[i];
@@ -75,9 +84,9 @@ void TOTKStartMouseInput(UIViewController *gameController) {
     [center addObserverForName:GCMouseDidDisconnectNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
         GCMouseInput *input = ((GCMouse *)note.object).mouseInput;
         input.mouseMovedHandler = nil;
-        input.leftButton.pressedChangedHandler = nil;
-        input.rightButton.pressedChangedHandler = nil;
-        input.middleButton.pressedChangedHandler = nil;
+        for (id button in mouse_buttons(input)) {
+            if (button != NSNull.null) ((GCControllerButtonInput *)button).pressedChangedHandler = nil;
+        }
         runtime_mouse_release();
     }];
     [center addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
