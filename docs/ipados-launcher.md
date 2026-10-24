@@ -33,6 +33,8 @@ Change **Game overlay** between Full, FPS, and Off, or toggle **Metal performanc
 
 A connected mouse uses the existing Mac camera controls while the app has focus and the system grants pointer lock. The default bindings use left click to attack, right click to draw the bow, and middle click to target. Left click shoots while right click stays held. Mouse motion uses the existing sensitivity and decay behavior.
 
+Menu opening, focus loss and touch-view removal clear tracked touch buttons and sticks. Late movement from canceled fingers is ignored; mouse clicks do not also operate the virtual touch pad. Mouse capture also releases for scene/key-window changes and keyboard entry. These paths still require the next Apple build and physical regression run.
+
 The game menu releases mouse buttons and camera input. Dismissal restores the prior capture preference; the system decides whether to grant pointer lock again. Background, disconnect, and lock loss also release mouse input. Physical mouse behavior remains unverified.
 
 ## Save transfers
@@ -86,5 +88,7 @@ Use the [physical-device UI runner](../tests/ios_device_launcher/README.md) agai
 | 1080-high and Full display | Physical graphics and gameplay checks pending. |
 | Mouse capture, direction, sensitivity, and menu release | Physical mouse checks pending. |
 | Sustained native 60 FPS | Unverified; requires the sustained benchmark. |
+
+The `3d7d6e8` checkpoint subsequently installed successfully; all 35 save-directory files matched their immediate pre-install SHA256 snapshot. New physical checks did not execute because the iPad was locked. See the [cloud continuation evidence](ipados-cloud-audit.md), [graphics inventory](ipados-graphics.md) and [next physical acceptance checklist](ipados-acceptance.md).
 
 Apple reference: [Monitor Metal graphics performance](https://developer.apple.com/documentation/xcode/monitoring-your-metal-apps-graphics-performance).
