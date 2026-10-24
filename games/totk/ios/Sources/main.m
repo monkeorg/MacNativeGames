@@ -115,6 +115,7 @@ void runtime_shortcut_help_toggle(void) {}
     TOTKSaveStore *store = [[TOTKSaveStore alloc] initWithActiveURL:[[root URLByAppendingPathComponent:@"save/save"] URLByAppendingPathComponent:name]
         backupsURL:[root URLByAppendingPathComponent:@"SaveBackups"]];
     TOTKLauncher *launcher = [[TOTKLauncher alloc] initWithStore:store unavailable:g_no_game_data play:^{
+        TOTKLauncherApplyControls(NSUserDefaults.standardUserDefaults);
         [NSUserDefaults.standardUserDefaults setBool:TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults) forKey:@"MetalHUDForceEnabled"];
         NSString *lang = TOTKLauncherLanguage(NSUserDefaults.standardUserDefaults);
         if (!getenv("TOTK_LANG") && lang.length) setenv("TOTK_LANG",lang.UTF8String,0);
