@@ -20,11 +20,26 @@ class IOSSaveStoreTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.root = Path(cls.temporary.name).resolve()
         cls.probe = cls.root / 'probe'
+        # Redirect only the production directory read for a deterministic mutation
+        # after its initial fstat. The probe wrapper otherwise calls real readdir.
+        # Include dirent first to preserve Darwin's readdir symbol aliases.
+        hook = cls.root / 'directory_hook.h'
+        hook.write_text('#include <dirent.h>\n'
+                        'struct dirent *TOTKProbeReadDirectory(DIR *);\n'
+                        '#define readdir TOTKProbeReadDirectory\n')
+        save_object = cls.root / 'save_store.o'
+        build_save = subprocess.run([
+            'xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
+            '-include', str(hook), '-c',
+            str(SOURCES / 'save_store.m'), '-o', str(save_object),
+        ], capture_output=True, text=True, timeout=120)
+        if build_save.returncode:
+            raise AssertionError(build_save.stderr)
         build = subprocess.run([
             'xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
             '-I', str(SOURCES),
             str(ROOT / 'tests/ios_save_store_probe.m'),
-            str(SOURCES / 'save_store.m'), str(SOURCES / 'launcher_settings.m'),
+            str(save_object), str(SOURCES / 'launcher_settings.m'),
             '-framework', 'Foundation', '-o', str(cls.probe),
         ], capture_output=True, text=True, timeout=120)
         if build.returncode:
@@ -55,6 +70,15 @@ class IOSSaveStoreTests(unittest.TestCase):
 
     def test_import_refuses_enclosing_profile_directory(self):
         self.run_probe('ancestor_source')
+
+    def test_directory_change_refuses_incomplete_transfer(self):
+        self.run_probe('directory_changed')
+
+    def test_provider_read_failure_preserves_active_save(self):
+        self.run_probe('provider_read_refused')
+
+    def test_export_read_failure_removes_partial_copy(self):
+        self.run_probe('export_read_refused')
 
     def test_first_import_without_active_save(self):
         self.run_probe('first_import')

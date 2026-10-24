@@ -96,6 +96,14 @@ static BOOL copyDirectory(int source, int dest, unsigned depth, CopyBudget *budg
         errno = 0;
     }
     if (!entry && errno) ok = failure(error, @"The save folder could not be read completely.");
+    /* A removed optional entry can evade both file checks and slot validation. */
+    struct stat finished;
+    if (ok && (fstat(source,&finished) || finished.st_nlink != directory.st_nlink ||
+        finished.st_mtimespec.tv_sec != directory.st_mtimespec.tv_sec ||
+        finished.st_mtimespec.tv_nsec != directory.st_mtimespec.tv_nsec ||
+        finished.st_ctimespec.tv_sec != directory.st_ctimespec.tv_sec ||
+        finished.st_ctimespec.tv_nsec != directory.st_ctimespec.tv_nsec))
+        ok = failure(error,@"The selected save changed during the transfer.");
     closedir(dir);
     return ok;
 }
