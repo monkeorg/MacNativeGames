@@ -12,23 +12,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@unittest.skipUnless(sys.platform == 'darwin' and shutil.which('xcrun'), 'requires macOS command line tools')
 class IOSDisplayTests(unittest.TestCase):
-    def test_export_and_device_patch_contracts(self):
+    def check_patch_contracts(self, profiles, compiler):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for device, profile in ((False, True), (True, True), (True, False)):
+            for device, profile in profiles:
                 with self.subTest(device=device, profile=profile):
                     (root / 'TargetConditionals.h').write_text(f'#undef TARGET_OS_IPHONE\n#define TARGET_OS_IPHONE {int(device)}\n')
                     binary = root / 'probe'
                     build = subprocess.run([
-                        'xcrun', 'clang', '-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
+                        *compiler, '-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
+                        *(['-Wno-misleading-indentation'] if sys.platform != 'darwin' else []),
                         '-Wno-unused-function', '-Wno-unused-parameter', '-Wno-sign-compare',
                         '-DTOTK_GAME_V143=1', *(['-DTOTK_IOS_DISPLAY_SETTINGS=1'] if profile else []), '-I', str(root),
-                        str(ROOT / 'tests/ios_display_probe.c'), '-o', str(binary),
+                        str(ROOT / 'tests/ios_display_probe.c'), '-lm', '-o', str(binary),
                     ], capture_output=True, text=True, timeout=60)
                     self.assertEqual(build.returncode, 0, build.stdout + build.stderr)
-                    scenarios = ('baseline', 'full', 'oversize', 'oversize_scene', 'bad_output', 'bad_render', 'bad_fixed', 'bad_aspect') if profile else ('stock',)
+                    scenarios = ('baseline', 'full', 'oversize', 'oversize_scene', 'bad_output', 'bad_render', 'bad_fixed', 'bad_aspect', 'bad_output_preserved', 'bad_output_resume', 'bad_output_veneer', 'bad_aspect_veneer') if profile else ('stock',)
                     for scenario in scenarios:
                         with self.subTest(scenario=scenario):
                             run = subprocess.run([str(binary), scenario], capture_output=True, text=True, timeout=20)
@@ -36,6 +36,16 @@ class IOSDisplayTests(unittest.TestCase):
                                              run.stdout + run.stderr)
                             if run.returncode == 0:
                                 self.assertIn('display profile pass', run.stdout)
+
+    def test_device_signed_patch_contracts(self):
+        compiler = shutil.which('cc')
+        if not compiler:
+            self.skipTest('A C compiler is required')
+        self.check_patch_contracts(((True, True), (True, False)), [compiler])
+
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('xcrun'), 'requires macOS command line tools')
+    def test_export_patch_contracts(self):
+        self.check_patch_contracts(((False, True),), ['xcrun', 'clang'])
 
 
 class IOSDisplayBuildGateTests(unittest.TestCase):
