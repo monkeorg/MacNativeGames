@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import struct
+import zlib
 import tempfile
 import unittest
 from unittest import mock
@@ -33,6 +35,15 @@ class CanopyBuildTests(unittest.TestCase):
         self.output = self.root / 'output'
         self.executed = []
 
+    @staticmethod
+    def synthetic_png(width, height):
+        # Entirely invented command-runner output; not an Apple/branding result.
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+        pixels = (b'\0' + b'\x22\x44\x66\xff' * width) * height
+        return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0)) +
+                chunk(b'IDAT', zlib.compress(pixels)) + chunk(b'IEND', b''))
+
     def fake_runner(self, command):
         self.executed.append(command)
         if command[-1] == '--show-sdk-path':
@@ -40,7 +51,20 @@ class CanopyBuildTests(unittest.TestCase):
         elif command[-1] == '--show-sdk-version':
             stdout = 'synthetic-sdk-version\n'
         elif command[-1] == '--version':
-            stdout = 'synthetic-clang-version\n'
+            stdout = 'synthetic-tool-version\n'
+        elif '--resampleHeightWidth' in command:
+            target = Path(command[command.index('--out') + 1])
+            target.write_bytes(self.synthetic_png(1024, 1024));stdout = ''
+        elif 'actool' in command and '--compile' in command:
+            app = Path(command[command.index('--compile') + 1])
+            (app / 'Assets.car').write_bytes(b'synthetic compiled catalog; not Apple evidence')
+            (app / 'AppIcon60x60@2x.png').write_bytes(self.synthetic_png(120, 120))
+            (app / 'AppIcon76x76@2x~ipad.png').write_bytes(self.synthetic_png(152, 152))
+            partial = Path(command[command.index('--output-partial-info-plist') + 1])
+            partial.write_bytes(plistlib.dumps({
+                'CFBundleIcons': {'CFBundlePrimaryIcon': {'CFBundleIconName': 'AppIcon', 'CFBundleIconFiles': ['AppIcon60x60']}},
+                'CFBundleIcons~ipad': {'CFBundlePrimaryIcon': {'CFBundleIconName': 'AppIcon', 'CFBundleIconFiles': ['AppIcon76x76']}}}))
+            stdout = ''
         else:
             stdout = ''
             target = Path(command[command.index('-o') + 1])
@@ -78,19 +102,97 @@ class CanopyBuildTests(unittest.TestCase):
         self.assertIn('pending', report['status'])
         self.assertEqual(report['provenance_review'], 'unreviewed build observation')
         app = self.output / 'Canopy.app'
-        self.assertEqual({p.name for p in app.iterdir()}, {'Canopy', 'Canopy.png', 'Info.plist'})
+        self.assertEqual({p.name for p in app.iterdir()}, {'Canopy', 'Canopy.png', 'Info.plist', 'Assets.car',
+                                                              'AppIcon60x60@2x.png', 'AppIcon76x76@2x~ipad.png'})
         self.assertEqual((app / 'Canopy.png').read_bytes(), (self.repo / builder.BRAND).read_bytes())
         info = plistlib.loads((app / 'Info.plist').read_bytes())
         self.assertEqual(info['CFBundleIdentifier'], 'org.monkeorg.canopy')
         self.assertEqual(info['MinimumOSVersion'], '16.0')
         self.assertEqual(info['UIApplicationSceneManifest'],
                          {'UIApplicationSupportsMultipleScenes': False})
-        self.assertNotIn('CFBundleIconFiles', info)
+        self.assertEqual(info['CFBundleIcons']['CFBundlePrimaryIcon']['CFBundleIconName'], 'AppIcon')
+        self.assertEqual(info['CFBundleIcons~ipad']['CFBundlePrimaryIcon']['CFBundleIconName'], 'AppIcon')
         self.assertEqual(json.loads((self.output / 'build-observation.json').read_text()), report)
-        self.assertEqual(len(report['commands']), len(builder.SOURCES) + 4)
+        self.assertEqual(len(report['commands']), len(builder.SOURCES) + 8)
         self.assertFalse(any(p.name.startswith('.canopy-stage-') for p in self.output.iterdir()))
-        self.assertEqual(report['output_files'][0]['sha256'],
-                         hashlib.sha256((app / 'Canopy').read_bytes()).hexdigest())
+        output_hashes = {row['path']: row['sha256'] for row in report['output_files']}
+        self.assertEqual(output_hashes['Canopy'], hashlib.sha256((app / 'Canopy').read_bytes()).hexdigest())
+        self.assertEqual({row['path'] for row in report['app_icon']['compiled_files']},
+                         {'Assets.car', 'AppIcon60x60@2x.png', 'AppIcon76x76@2x~ipad.png'})
+        self.assertEqual(report['app_icon']['source_dimensions'], [1254, 1254])
+        self.assertEqual(report['app_icon']['generated_dimensions'], [1024, 1024])
+        self.assertEqual(report['app_icon']['generated_sha256'], hashlib.sha256(self.synthetic_png(1024, 1024)).hexdigest())
+
+    def test_icon_plan_records_exact_tools_and_no_invented_generated_hash(self):
+        plan = builder.build_plan(self.repo)
+        self.assertEqual(plan['app_icon']['source_sha256'], builder.BRAND_SHA256)
+        self.assertEqual(plan['app_icon']['source_dimensions'], [1254, 1254])
+        self.assertEqual(plan['app_icon']['generated_dimensions'], [1024, 1024])
+        self.assertIsNone(plan['app_icon']['generated_sha256'])
+        self.assertEqual(plan['commands'][0][:4], ['/usr/bin/sips', '--resampleHeightWidth', '1024', '1024'])
+        self.assertEqual(plan['commands'][1][:4], ['xcrun', '--sdk', 'iphoneos', 'actool'])
+        self.assertIn('--output-partial-info-plist', plan['commands'][1])
+        self.assertIn('--app-icon', plan['commands'][1])
+        self.assertIn('launcher/src/mng_display.c', builder.SOURCES)
+        self.assertIn('launcher/include/mng_display.h', builder.HEADERS)
+
+    def test_wrong_derivative_geometry_prevents_asset_compilation_and_publication(self):
+        def wrong_size(command):
+            result = self.fake_runner(command)
+            if '--resampleHeightWidth' in command:
+                Path(command[command.index('--out') + 1]).write_bytes(self.synthetic_png(512, 512))
+            return result
+        with self.assertRaisesRegex(builder.BuildError, '1024x1024'):
+            builder.build(self.repo, self.output, runner=wrong_size)
+        self.assertFalse(any('actool' in c and '--compile' in c for c in self.executed))
+        self.assertFalse((self.output / 'Canopy.app').exists())
+
+    def test_asset_metadata_cannot_replace_bundle_identity(self):
+        def wrong_info(command):
+            result = self.fake_runner(command)
+            if 'actool' in command and '--compile' in command:
+                partial = Path(command[command.index('--output-partial-info-plist') + 1])
+                metadata = plistlib.loads(partial.read_bytes());metadata['CFBundleIdentifier'] = 'org.example.other'
+                partial.write_bytes(plistlib.dumps(metadata))
+            return result
+        with self.assertRaisesRegex(builder.BuildError, 'metadata keys'):
+            builder.build(self.repo, self.output, runner=wrong_info)
+        self.assertFalse((self.output / 'Canopy.app').exists())
+
+    def test_unlisted_asset_output_cannot_be_published(self):
+        def extra_output(command):
+            result = self.fake_runner(command)
+            if 'actool' in command and '--compile' in command:
+                (Path(command[command.index('--compile') + 1]) / 'unlisted.bin').write_bytes(b'extra')
+            return result
+        with self.assertRaisesRegex(builder.BuildError, 'unexpected application output'):
+            builder.build(self.repo, self.output, runner=extra_output)
+        self.assertFalse((self.output / 'Canopy.app').exists())
+
+    def test_generated_asset_inputs_and_outputs_remain_stable_through_compile(self):
+        for target in ('input', 'output'):
+            with self.subTest(target=target):
+                output = self.root / ('unstable-' + target)
+                def mutate(command):
+                    result = self.fake_runner(command)
+                    if '-c' in command:
+                        work = Path(command[command.index('-o') + 1]).parent
+                        path = work / ('Assets.xcassets/AppIcon.appiconset/Canopy-1024.png' if target == 'input' else 'Canopy.app/Assets.car')
+                        path.write_bytes(b'changed during compile')
+                    return result
+                with self.assertRaisesRegex(builder.BuildError, 'changed during build'):
+                    builder.build(self.repo, output, runner=mutate)
+                self.assertFalse((output / 'Canopy.app').exists())
+
+    def test_asset_compiler_failure_never_publishes_app(self):
+        def fail(command):
+            if 'actool' in command and '--compile' in command:
+                raise subprocess.CalledProcessError(1, command, stderr='synthetic asset failure')
+            return self.fake_runner(command)
+        with self.assertRaises(subprocess.CalledProcessError):
+            builder.build(self.repo, self.output, runner=fail)
+        self.assertFalse((self.output / 'Canopy.app').exists())
+        self.assertEqual((self.repo / builder.BRAND).read_bytes(), (ROOT / builder.BRAND).read_bytes())
 
     def test_existing_output_never_overwritten_or_compiled(self):
         self.output.mkdir()

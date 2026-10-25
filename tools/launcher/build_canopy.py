@@ -13,12 +13,14 @@ from pathlib import Path
 import plistlib
 import re
 import stat
+import struct
+import zlib
 import subprocess
 import sys
 import tempfile
 
 
-RECIPE = 'canopy-connected-host-arm64-ios16-v3'
+RECIPE = 'canopy-connected-host-arm64-ios16-icon-v4'
 BRAND = 'launcher/Resources/Branding/Canopy.png'
 BRAND_SHA256 = 'f7f596a192596aee546970b4db36068efb9b65932743bd3318353b6ea7a340d0'
 SOURCES = ('launcher/apple/Sources/CanopyApp.m',
@@ -144,12 +146,83 @@ def recipe_identity(repo):
             'source_note': 'Input hashes bind the actual files, including any uncommitted changes.'}
 
 
+def png_dimensions(data):
+    require(len(data) >= 33 and data[:8] == b'\x89PNG\r\n\x1a\n' and
+            data[8:16] == b'\x00\x00\x00\x0dIHDR' and
+            zlib.crc32(data[12:29]) == struct.unpack('>I', data[29:33])[0],
+            'invalid icon PNG header')
+    width, height = struct.unpack('>II', data[16:24])
+    require(0 < width <= 4096 and 0 < height <= 4096, 'icon PNG dimensions exceed bounds')
+    return [width, height]
+
+
+def catalog_root():
+    return b'{"info":{"author":"xcode","version":1}}\n'
+
+
+def icon_catalog():
+    return json.dumps({'images': [{'filename': 'Canopy-1024.png', 'idiom': 'universal',
+        'platform': 'ios', 'size': '1024x1024'}], 'info': {'author': 'xcode', 'version': 1}},
+        sort_keys=True, separators=(',', ':')).encode() + b'\n'
+
+
+def icon_commands(source_root, work):
+    catalog = work / 'Assets.xcassets'
+    return [['/usr/bin/sips', '--resampleHeightWidth', '1024', '1024', str(source_root / BRAND),
+             '--out', str(catalog / 'AppIcon.appiconset/Canopy-1024.png')],
+            ['xcrun', '--sdk', 'iphoneos', 'actool', '--compile', str(work / 'Canopy.app'),
+             '--app-icon', 'AppIcon', '--platform', 'iphoneos', '--minimum-deployment-target', '16.0',
+             '--target-device', 'iphone', '--target-device', 'ipad', '--development-region', 'en',
+             '--enable-on-demand-resources', 'NO', '--compress-pngs',
+             '--output-partial-info-plist', str(work / 'icon-info.plist'), str(catalog)]]
+
+
+def icon_metadata(path):
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 65536,
+            'missing or excessive asset compiler icon metadata')
+    try:
+        metadata = plistlib.loads(path.read_bytes())
+    except (ValueError, plistlib.InvalidFileException) as error:
+        raise BuildError('invalid asset compiler icon metadata') from error
+    require(isinstance(metadata, dict) and set(metadata) == {'CFBundleIcons', 'CFBundleIcons~ipad'},
+            'unexpected asset compiler metadata keys')
+    for value in metadata.values():
+        require(isinstance(value, dict) and set(value) == {'CFBundlePrimaryIcon'},
+                'unexpected asset compiler icon declaration')
+        primary = value['CFBundlePrimaryIcon']
+        require(isinstance(primary, dict) and set(primary) <= {'CFBundleIconFiles', 'CFBundleIconName', 'UIPrerenderedIcon'} and
+                primary.get('CFBundleIconName') == 'AppIcon' and isinstance(primary.get('CFBundleIconFiles'), list) and
+                0 < len(primary['CFBundleIconFiles']) <= 32 and
+                all(isinstance(name, str) and re.fullmatch(r'AppIcon[A-Za-z0-9_.@~-]{1,100}', name)
+                    for name in primary['CFBundleIconFiles']) and
+                ('UIPrerenderedIcon' not in primary or type(primary['UIPrerenderedIcon']) is bool),
+                'invalid asset compiler primary icon')
+    return metadata
+
+
+def icon_outputs(app):
+    result = {};total = 0
+    for path in app.iterdir():
+        if path.name in {'Canopy', 'Info.plist', 'Canopy.png'}:
+            continue
+        require(path.name == 'Assets.car' or re.fullmatch(r'AppIcon[A-Za-z0-9_.@~-]{1,100}\.png', path.name),
+                'unexpected application output')
+        require(path.is_file() and not path.is_symlink() and 0 < path.stat().st_size <= 64 << 20,
+                'invalid compiled icon output')
+        data = path.read_bytes();total += len(data)
+        require(total <= 128 << 20, 'compiled icon outputs exceed bounds')
+        result[path.name] = data
+    require(result.get('Assets.car') and any(name.endswith('.png') for name in result),
+            'asset compiler did not produce compiled app icons')
+    return result
+
+
 def commands(source_root, work, sdk):
     base = ['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64-apple-ios16.0',
             '-isysroot', sdk, '-O2', '-Wall', '-Wextra', '-fno-common',
             '-I', str(source_root / 'launcher/include'),
             '-I', str(source_root / 'launcher/apple/Sources')]
-    result, objects = [], []
+    result, objects = icon_commands(source_root, work), []
     for index, name in enumerate(SOURCES):
         obj = work / f'{index}.o'
         objects.append(str(obj))
@@ -173,15 +246,20 @@ def build_plan(repo, identifier='org.monkeorg.canopy'):
             'bundle_identifier': identifier, 'deployment_target': '16.0',
             'input_files': records(inputs), 'sdk': 'resolved with xcrun --sdk iphoneos',
             'commands': commands(Path('<source-snapshot>'), Path('<staging>'), '<iphoneos-sdk>'),
-            'resource': 'Canopy.png copied byte-for-byte; no icon asset catalog'}
+            'resource': 'Approved Canopy.png remains byte-for-byte; sips derives a staged 1024px icon for actool.',
+            'app_icon': {'status': 'planned; Apple image and asset tools not run',
+                         'source_sha256': BRAND_SHA256, 'source_dimensions': png_dimensions(inputs[BRAND]),
+                         'generated_dimensions': [1024, 1024], 'generated_sha256': None,
+                         'catalog_contents_sha256': hashlib.sha256(icon_catalog()).hexdigest(),
+                         'catalog_root_sha256': hashlib.sha256(catalog_root()).hexdigest()}}
 
 
 def run_command(command):
     return subprocess.run(command, check=True, capture_output=True, text=True)
 
 
-def plist(identifier):
-    return plistlib.dumps({'CFBundleIdentifier': identifier, 'CFBundleName': 'Canopy',
+def plist(identifier, icons=None):
+    info = {'CFBundleIdentifier': identifier, 'CFBundleName': 'Canopy',
         'CFBundleDisplayName': 'Canopy', 'CFBundleExecutable': 'Canopy',
         'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.1',
         'CFBundleVersion': '1', 'MinimumOSVersion': '16.0', 'LSRequiresIPhoneOS': True,
@@ -189,7 +267,10 @@ def plist(identifier):
         'UIApplicationSceneManifest': {'UIApplicationSupportsMultipleScenes': False},
         'UILaunchScreen': {}, 'UISupportedInterfaceOrientations':
         ['UIInterfaceOrientationPortrait', 'UIInterfaceOrientationLandscapeLeft',
-         'UIInterfaceOrientationLandscapeRight']}, sort_keys=True)
+         'UIInterfaceOrientationLandscapeRight']}
+    if icons:
+        info.update(icons)
+    return plistlib.dumps(info, sort_keys=True)
 
 
 def build(repo, output, identifier='org.monkeorg.canopy', runner=run_command):
@@ -201,6 +282,7 @@ def build(repo, output, identifier='org.monkeorg.canopy', runner=run_command):
     bundle_identifier(identifier)
     repo = Path(repo).resolve()
     inputs = capture_inputs(repo)
+    require(png_dimensions(inputs[BRAND]) == [1254, 1254], 'approved source icon geometry differs')
     output = Path(output).absolute()
     require(output.parent.is_dir(), 'output parent must already exist')
     require(not output.exists() and not output.is_symlink(), 'output already exists')
@@ -230,16 +312,43 @@ def build(repo, output, identifier='org.monkeorg.canopy', runner=run_command):
             observation['sdk_path'] = sdk
             observation['sdk_version'] = execute(['xcrun', '--sdk', 'iphoneos', '--show-sdk-version'])
             observation['clang_version'] = execute(['xcrun', '--sdk', 'iphoneos', 'clang', '--version'])
+            observation['sips_version'] = execute(['/usr/bin/sips', '--version'])
+            observation['actool_version'] = execute(['xcrun', '--sdk', 'iphoneos', 'actool', '--version'])
             app = work / 'Canopy.app'
             app.mkdir()
             (app / 'Info.plist').write_bytes(plist(identifier))
             (app / 'Canopy.png').write_bytes(inputs[BRAND])
+            catalog = work / 'Assets.xcassets/AppIcon.appiconset'
+            catalog.mkdir(parents=True)
+            (catalog.parent / 'Contents.json').write_bytes(catalog_root())
+            (catalog / 'Contents.json').write_bytes(icon_catalog())
+            generated = catalog / 'Canopy-1024.png'
+            generated_bytes = None;icons = None
             for command in commands(snapshot, work, sdk):
                 execute(command)
+                if '--resampleHeightWidth' in command:
+                    require(generated.is_file() and not generated.is_symlink() and generated.stat().st_size <= MAX_INPUT_BYTES,
+                            'missing or excessive generated icon')
+                    generated_bytes = generated.read_bytes()
+                    require(png_dimensions(generated_bytes) == [1024, 1024], 'generated icon must be 1024x1024')
+                elif 'actool' in command and '--compile' in command:
+                    icons = icon_metadata(work / 'icon-info.plist')
+                    (app / 'Info.plist').write_bytes(plist(identifier, icons))
+                    observation['app_icon'] = {'status': 'compiled by Apple asset tool; device appearance untested',
+                        'source_sha256': BRAND_SHA256, 'source_dimensions': png_dimensions(inputs[BRAND]),
+                        'generated_dimensions': png_dimensions(generated_bytes),
+                        'generated_sha256': hashlib.sha256(generated_bytes).hexdigest(),
+                        'catalog_contents_sha256': hashlib.sha256(icon_catalog()).hexdigest(),
+                        'catalog_root_sha256': hashlib.sha256(catalog_root()).hexdigest(),
+                        'compiled_files': records(icon_outputs(app))}
+            require(generated.read_bytes() == generated_bytes and (catalog / 'Contents.json').read_bytes() == icon_catalog() and
+                    (catalog.parent / 'Contents.json').read_bytes() == catalog_root(),
+                    'generated icon inputs changed during build')
             require(capture_inputs(repo) == inputs, 'repository inputs changed during build')
             require(capture_inputs(snapshot) == inputs, 'staged inputs changed during build')
-            require({p.name for p in app.iterdir()} == {'Canopy', 'Info.plist', 'Canopy.png'},
-                    'unexpected application output')
+            require(icons is not None, 'compiled icon metadata missing')
+            compiled_icons = icon_outputs(app)
+            require(records(compiled_icons) == observation['app_icon']['compiled_files'], 'compiled icons changed during build')
             output_files = {}
             for path in app.iterdir():
                 require(path.is_file() and not path.is_symlink(), 'invalid application output')
@@ -247,13 +356,13 @@ def build(repo, output, identifier='org.monkeorg.canopy', runner=run_command):
                 output_files[path.name] = data
             require(output_files['Canopy'], 'compiler produced empty executable')
             require(output_files['Canopy.png'] == inputs[BRAND], 'branding changed during build')
-            require(output_files['Info.plist'] == plist(identifier), 'application metadata changed during build')
+            require(output_files['Info.plist'] == plist(identifier, icons), 'application metadata changed during build')
             observation['output_files'] = records(output_files)
             observation['status'] = 'unsigned build produced; independent review and Apple acceptance pending'
             observation['limitations'] = [
                 'Build observation only; not independently reviewed provenance or content certification.',
                 'No signing, installation, device test or gameplay acceptance performed.',
-                'Canopy.png is an unchanged resource, not a compiled Apple app icon.']
+                'App icons are generated from approved branding; physical appearance and App Store acceptance untested.']
             app.rename(output / 'Canopy.app')
     except Exception:
         observation['status'] = 'failed; no artifact accepted'
