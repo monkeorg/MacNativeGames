@@ -26,6 +26,21 @@ seven traversal-wrapper loops whose recursive callees already have depth guards:
 436 checkpoints,79 formerly unbraced,83 raw sites (10 fixed/73 pending).
 Two independent source reviews; no tests, probes or builds; runtime stays off.
 
+**Later app corrections:** [#119 / `b136283`](https://github.com/monkeorg/MacNativeGames/pull/119)
+also resolves the current friendly/custom name for the session title without
+changing its runtime entry. [#120 / `6c06d9a`](https://github.com/monkeorg/MacNativeGames/pull/120)
+expires stale storage confirmations/resume intent across scene/background/navigation
+changes. [#122 / `2c3f23e`](https://github.com/monkeorg/MacNativeGames/pull/122)
+does the same for save dialogs and queued exports while keeping accepted Files
+export data until the exact picker finishes. Each lifecycle correction has two
+independent source reviews; all remain unbuilt/untested.
+
+Compiler drafts through [#121 / `5a95607`](https://github.com/monkeorg/MacNativeGames/pull/121)
+add checked interface offsets, recursive interface/packing guards and further
+iteration accounting: **457 checkpoints, 100 formerly unbraced, 62 raw sites
+(12 fixed, 50 pending)**. These counts are an inventory, not a safety percentage.
+Runtime translation remains disabled; source assessment continues.
+
 | Area | Current source | Remaining acceptance / work |
 |---|---|---|
 | 📚 Library & preparation | Multiple titles, versions, NSP/XCI and supported folders; updates/add-ons; selected-title verified reuse | Real private inputs, provider failures and large-library/device checks; preparation grants no execution capability |
@@ -81,8 +96,8 @@ bound to installed app metadata and a verified complete seed, has no cancellatio
 API, and grants no Canopy trust bypass. Both routes need their own Apple/device
 results. Neither removal fix has rerun evidence; the recorded red failure is
 not relabeled green. Bounded compiler source assessment continues across the
-73 input-dependent or unproven loop sites (83 raw including 10 fixed), other
-recursion and noexcept boundaries at #111.
+50 input-dependent or unproven loop sites (62 raw including 12 fixed), other
+recursion and noexcept boundaries at #121.
 This identifies coverage work, not a newly demonstrated broken app flow; it is
 not a claim that all cloud work is complete. There is no
 registered BOTW provider, active-save Apply or actual TOTK restart mechanism.

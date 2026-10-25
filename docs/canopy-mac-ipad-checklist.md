@@ -21,6 +21,14 @@ split is clarity cleanup, not a reproduced compiler failure; #77 compiled the ol
 form successfully. No new tests/probes run under this `/goal`; the steps below
 are the later authorized local handoff. A locked-iPad run executed no new-build checks.
 
+**Later local source starting point:** the dependent chain through #122,
+`feat/canopy-save-ui-intents` / `2c3f23e54c264cdda0cd78c1714e8c8b33b309e0`,
+includes the friendly library/session title fixes (#110/#119), storage UI intent
+correction (#120), save UI intent correction (#122) and compiler source through
+#121. Inspect the actual latest recovery cursor before checkout; cloud source
+work continues. None of these later changes inherits the earlier green CI.
+Both lifecycle corrections have two independent source reviews and no execution.
+
 | Order | Mac / iPad action | Evidence to retain locally |
 |---|---|---|
 | 1 · Mac source review | Use an isolated checkout of the exact dependent chain through #100. Preserve the working original TOTK checkout/app identity and separate Canopy `.canopy` identity. Review both source-fixed/unrun cohorts: #99 nonmutating retirement preflight and #100 interrupted shader-identity deletion recovery. | Exact revision/cohorts and source findings; no global complete claim and no old CI assigned to new source |
@@ -55,8 +63,8 @@ part of this handoff. Record exact revisions, unavailable checks and reproducibl
 failures. Source review and compilation never replace physical acceptance.
 
 Bounded compiler source assessment continues after the app snapshot: through
-#111 / `c6f1502`, Cross has 436 loop checkpoints and 83 raw sites (10 fixed,
-73 input-dependent or unproven). These later source-only drafts have independent
+#121 / `5a95607`, Cross has 457 loop checkpoints and 62 raw sites (12 fixed,
+50 input-dependent or unproven). These later source-only drafts have independent
 source reviews and still need actual build/execution validation; the runtime translator stays off. Other recursion,
 allocation and noexcept boundaries remain open. No new broken app flow has been
 demonstrated by that assessment, and it does not establish all cloud work complete.
@@ -65,3 +73,11 @@ For #110 / `73bb8db`, check a fresh friendly title before and after changing one
 setting and reloading the library. Other custom names must survive. An exact
 title-ID name intentionally takes the default label fallback; no metadata is
 rewritten by this correction. This source change has not been built or run.
+
+For #119, rename a game and check the session title without changing its runtime
+entry. For #120/#122, background or switch the owning scene and navigate away
+while export work, Files selection, storage/resume and destructive confirmations
+are pending. Old intent must not revive on return. Already accepted backend work
+must settle, and an accepted Files export must retain its data until the matching
+picker finishes. Check the full-screen picker presentation too. These are local
+acceptance steps, not executed results.
