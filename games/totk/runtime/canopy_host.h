@@ -2,7 +2,8 @@
 #ifndef CANOPY_TOTK_HOST_H
 #define CANOPY_TOTK_HOST_H
 #include <stdint.h>
-#define CANOPY_TOTK_HOST_ABI 1u
+#include "mng_display.h"
+#define CANOPY_TOTK_HOST_ABI 2u
 struct canopy_totk_start {
     const char *modules, *resources, *index_directory, *romfs_data, *active_saves, *identity, *cache;
     const char *shader_seed, *shader_cache;
@@ -10,6 +11,15 @@ struct canopy_totk_start {
     unsigned fps_limit;
     int taa_enabled, hud_mode;
     void *metal_layer, *host_view, *metal_device;
+    struct mng_display_config display;
+};
+struct canopy_totk_display {
+    uint32_t abi_version,size;
+    struct mng_display_profile profile;
+    /* Exact generated manifest pins; NULL for stock. Actual overlay members
+     * are verified by the native RomFS overlay consumer before use. */
+    const char *heap_manifest_sha256,*layout_manifest_sha256;
+    int (*read_state)(struct mng_display_state *);
 };
 struct canopy_totk_host {
     uint32_t abi_version, size;
@@ -37,6 +47,7 @@ struct canopy_totk_host {
     void (*set_focus)(int);
     /* Native Npad button layout; caller converts the portable router schema. */
     void (*input)(uint64_t,int32_t,int32_t,int32_t,int32_t,int);
+    struct canopy_totk_display display;
 };
 /* SINGLE USE, process-owned. No safe stop/join/relaunch exists yet. Focus
  * deactivation pauses GPU submission; it does not promise CPU suspension. */
@@ -45,5 +56,11 @@ const struct canopy_totk_host *totk_canopy_host_v1(void);
 /* Run before native graphics initialization. The cache identity uses safe math
  * and the pinned prepared translator outputs, never inherited experiment flags. */
 int canopy_host_pin_compile_environment(void);
+/* Called only after actual loader runtime_game_patches returns successfully.
+ * Signals checked patch execution, never a rendered frame or visual acceptance. */
+void canopy_host_game_patches_validated(void);
+/* Main-thread query; caller initializes state ABI/size. NOT_CONFIGURED does
+ * not become pending/validated merely because a callback ran. */
+int canopy_host_read_display_state(struct mng_display_state *);
 #endif
 #endif

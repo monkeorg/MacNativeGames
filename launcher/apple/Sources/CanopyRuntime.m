@@ -7,6 +7,11 @@
 #include "mng_players.h"
 #include "mng_crypto.h"
 #include "mng_romfs_runtime.h"
+#include <dirent.h>
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+#endif
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -39,6 +44,49 @@ static BOOL CRBoolean(id value) {
     return [value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value)==CFBooleanGetTypeID();
 }
 static NSString *CRString(const char *s) {return s ? [NSString stringWithUTF8String:s]:nil;}
+static NSString *CRDigest(const unsigned char digest[32]) {
+    char hex[65];for(unsigned i=0;i<32;i++)snprintf(hex+2*i,3,"%02x",digest[i]);return CRString(hex);
+}
+static BOOL CRDisplayHost(const struct canopy_totk_host *h) {
+    const struct canopy_totk_display *d=&h->display;
+    uint32_t flags=d->profile.flags;
+    if(d->abi_version!=MNG_DISPLAY_ABI || d->size!=sizeof(*d) ||
+       d->profile.abi!=MNG_DISPLAY_ABI || d->profile.size!=sizeof(d->profile) ||
+       (flags&~(MNG_DISPLAY_SCENE_1080|MNG_DISPLAY_FOUR_THREE)) ||
+       ((flags&MNG_DISPLAY_FOUR_THREE) && !(flags&MNG_DISPLAY_SCENE_1080)) || !d->read_state)return NO;
+    if(flags && ![CRString(h->game_version) isEqual:@"1.4.3"])return NO;
+    if(flags&MNG_DISPLAY_SCENE_1080) {if(!CRHex(CRString(d->heap_manifest_sha256),64))return NO;}
+    else if(d->heap_manifest_sha256)return NO;
+    if(flags&MNG_DISPLAY_FOUR_THREE) {if(!CRHex(CRString(d->layout_manifest_sha256),64))return NO;}
+    else if(d->layout_manifest_sha256)return NO;
+    return YES;
+}
+@protocol CRViewGeometry
+- (CGRect)bounds;
+@end
+static BOOL CRViewSize(id view,CGSize *size) {
+#if TARGET_OS_IPHONE
+    if(![view isKindOfClass:UIView.class])return NO;
+#else
+    if(![view respondsToSelector:@selector(bounds)])return NO;
+#endif
+    CGRect bounds=[(id<CRViewGeometry>)view bounds];
+    if(!isfinite(bounds.size.width) || !isfinite(bounds.size.height) || bounds.size.width<=0 || bounds.size.height<=0 ||
+       bounds.size.width>32768 || bounds.size.height>32768)return NO;
+    *size=bounds.size;return YES;
+}
+static BOOL CRDisplayResolve(const struct canopy_totk_host *host,NSDictionary *settings,CGSize size,struct mng_display_resolution *out) {
+    id height=settings[@"renderHeight"] ?: @720,aspect=settings[@"aspect"] ?: @"16:9";
+    if(!CRNumber(height) || ![@[@720,@1080] containsObject:height] || ![aspect isKindOfClass:NSString.class])return NO;
+    uint32_t requested=[aspect isEqual:@"display"]?MNG_DISPLAY_FULL:MNG_DISPLAY_16_9;
+    if(mng_display_resolve(&host->display.profile,[height unsignedIntValue],requested,size.width,size.height,out))return NO;
+    if(![aspect isEqual:@"display"] && ![aspect isEqual:@"16:9"])out->aspect_outcome=MNG_DISPLAY_UNSUPPORTED;
+    return YES;
+}
+static BOOL CRDisplaySame(const struct mng_display_config *a,const struct mng_display_config *b) {
+    return a->abi==b->abi && a->size==b->size && a->width==b->width && a->height==b->height && a->aspect==b->aspect &&
+        a->experimental==b->experimental && a->fixed_resolution==b->fixed_resolution;
+}
 static const struct canopy_totk_host *CRHost(void) {
     const struct canopy_totk_host *h=totk_canopy_host_v1();
     if(!h || h->abi_version!=CANOPY_TOTK_HOST_ABI || h->size!=sizeof(*h) || !h->title_id ||
@@ -46,7 +94,7 @@ static const struct canopy_totk_host *CRHost(void) {
        !CRHex(CRString(h->runtime_index_sha256),64) || !CRHex(CRString(h->shader_seed_manifest_sha256),64) ||
        !CRString(h->shader_chain).length || CRString(h->shader_chain).length>128 || !CRString(h->game_version).length ||
        !h->start || !h->fps_supported || !h->set_fps || !h->get_fps || !h->taa_supported || !h->set_taa || !h->get_taa ||
-       !h->get_hud || !h->cycle_hud || !h->clear_input || !h->set_focus || !h->input)return NULL;
+       !h->get_hud || !h->cycle_hud || !h->clear_input || !h->set_focus || !h->input || !CRDisplayHost(h))return NULL;
     return h;
 }
 static NSURL *CRTrustedDirectory(NSURL *url) {
@@ -144,6 +192,110 @@ static NSURL *CRIndex(int generation,NSURL *cache,NSString *expected,_Atomic int
     if(valid && fsync(directory))valid=NO;
     close(directory);return valid?url:nil;
 }
+static BOOL CRRelative(NSString *path) {
+    if(![path isKindOfClass:NSString.class] || !path.length || path.length>1024)return NO;
+    NSArray *parts=[path componentsSeparatedByString:@"/"];if(parts.count>8)return NO;
+    NSCharacterSet *bad=[[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"] invertedSet];
+    for(NSString *part in parts)if(!part.length || part.length>255 || [part isEqual:@"."] || [part isEqual:@".."] ||
+        [part rangeOfCharacterFromSet:bad].location!=NSNotFound)return NO;
+    return YES;
+}
+static int CROpenRelative(int root,NSString *path,BOOL directory) {
+    if(!CRRelative(path))return -1;
+    NSArray *parts=[path componentsSeparatedByString:@"/"];int fd=dup(root);
+    for(NSUInteger i=0;fd>=0 && i<parts.count;i++) {
+        BOOL dir=directory || i+1<parts.count;
+        int child=openat(fd,[parts[i] UTF8String],O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC|(dir?O_DIRECTORY:0));
+        close(fd);fd=child;
+    }
+    return fd;
+}
+static BOOL CRRangeHash(int fd,uint64_t offset,uint64_t size,NSString *expected,_Atomic int *cancelled) {
+    struct stat before,after;struct mng_sha256 *sha=NULL;unsigned char data[65536],digest[32];
+    BOOL valid=fd>=0 && !fstat(fd,&before) && S_ISREG(before.st_mode) && before.st_nlink==1 && before.st_size>=0 &&
+        offset<=(uint64_t)before.st_size && size<=(uint64_t)before.st_size-offset && !mng_sha256_init(&sha);
+    uint64_t done=0;
+    while(valid && done<size) {
+        if(CRCancelled(cancelled)){valid=NO;break;}
+        size_t count=(size_t)MIN((uint64_t)sizeof(data),size-done);
+        ssize_t n=pread(fd,data,count,(off_t)(offset+done));if(n<0 && errno==EINTR)continue;
+        if(n<=0 || mng_sha256_update(sha,data,(size_t)n)){valid=NO;break;}done+=(uint64_t)n;
+    }
+    if(valid)valid=!mng_sha256_final(sha,digest) && !fstat(fd,&after) && CRStatEqual(&before,&after);
+    mng_sha256_free(sha);if(!valid)return NO;
+    char hex[65];for(unsigned i=0;i<32;i++)snprintf(hex+2*i,3,"%02x",digest[i]);return [expected isEqual:CRString(hex)];
+}
+static NSData *CRManifest(int directory,NSString *expected,_Atomic int *cancelled) {
+    int fd=openat(directory,"manifest.tsv",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);struct stat before,after;
+    NSData *result=nil;
+    if(fd>=0 && !fstat(fd,&before) && S_ISREG(before.st_mode) && before.st_nlink==1 && before.st_size>0 && before.st_size<=(128<<10)) {
+        NSMutableData *data=[NSMutableData dataWithLength:(NSUInteger)before.st_size];size_t done=0;BOOL valid=YES;
+        while(done<data.length) {
+            if(CRCancelled(cancelled)){valid=NO;break;}
+            ssize_t n=pread(fd,(char *)data.mutableBytes+done,data.length-done,(off_t)done);
+            if(n<0 && errno==EINTR)continue;if(n<=0){valid=NO;break;}done+=(size_t)n;
+        }
+        if(valid && CRRangeHash(fd,0,(uint64_t)before.st_size,expected,cancelled) && !fstat(fd,&after) && CRStatEqual(&before,&after))result=data;
+    }
+    if(fd>=0)close(fd);return result;
+}
+struct CROverlayContext {void *rows;_Atomic int *cancelled;};
+static int CROverlayEntry(void *opaque,const char *path,uint64_t offset,uint64_t size) {
+    struct CROverlayContext *context=opaque;NSMutableDictionary *rows=(__bridge NSMutableDictionary *)context->rows;
+    NSMutableDictionary *row=rows[CRString(path)];if(row){row[@"offset"]=@(offset);row[@"originalSize"]=@(size);}return 0;
+}
+static int CROverlayCancelled(void *opaque) {return CRCancelled(((struct CROverlayContext *)opaque)->cancelled);}
+static BOOL CROverlayTree(int directory,NSString *prefix,NSSet *expected,NSUInteger depth,NSUInteger *count) {
+    if(depth>8)return NO;
+    int copy=openat(directory,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);DIR *stream=copy<0?NULL:fdopendir(copy);
+    if(!stream){if(copy>=0)close(copy);return NO;}BOOL valid=YES;struct dirent *entry;errno=0;
+    while((entry=readdir(stream))) {
+        if(!strcmp(entry->d_name,".") || !strcmp(entry->d_name,"..")){errno=0;continue;}
+        NSString *name=CRString(entry->d_name),*path=prefix.length?[prefix stringByAppendingFormat:@"/%@",name]:name;
+        struct stat st;if(!name || !CRRelative(path) || ++*count>1280 || fstatat(directory,entry->d_name,&st,AT_SYMLINK_NOFOLLOW)){valid=NO;break;}
+        if(S_ISDIR(st.st_mode)) {
+            BOOL known=NO;for(NSString *file in expected)if([file hasPrefix:[path stringByAppendingString:@"/"]]){known=YES;break;}
+            int child=known?openat(directory,entry->d_name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC):-1;
+            valid=child>=0 && CROverlayTree(child,path,expected,depth+1,count);if(child>=0)close(child);
+        } else valid=S_ISREG(st.st_mode) && st.st_nlink==1 && [expected containsObject:path];
+        if(!valid)break;errno=0;
+    }
+    if(!entry && errno)valid=NO;closedir(stream);return valid;
+}
+static BOOL CROverlay(int resources,int image,const char *manifestPath,NSString *pin,_Atomic int *cancelled) {
+    NSString *path=CRString(manifestPath);int directory=CROpenRelative(resources,path.stringByDeletingLastPathComponent,YES);
+    NSData *data=directory<0?nil:CRManifest(directory,pin,cancelled);BOOL valid=data!=nil;
+    const unsigned char *bytes=data.bytes;
+    for(NSUInteger i=0;valid && i<data.length;i++)if(bytes[i]!=9 && bytes[i]!=10 && (bytes[i]<32 || bytes[i]>126))valid=NO;
+    NSString *text=valid?[[NSString alloc] initWithData:data encoding:NSASCIIStringEncoding]:nil;
+    NSMutableDictionary *rows=[NSMutableDictionary new];NSMutableSet *aliases=[NSMutableSet new];uint64_t total=data.length;
+    for(NSString *line in [text componentsSeparatedByString:@"\n"]) {
+        if(!valid || CRCancelled(cancelled)){valid=NO;break;}if(!line.length || [line hasPrefix:@"#"])continue;
+        NSArray *fields=[line componentsSeparatedByString:@"\t"];
+        if(fields.count!=4 || rows.count>=128){valid=NO;break;}
+        NSString *name=fields[0],*amount=fields[1],*sha=fields[2],*original=fields[3];
+        if(!CRRelative(name) || [name.lowercaseString isEqual:@"manifest.tsv"] || [aliases containsObject:name.lowercaseString] ||
+           !amount.length || amount.length>9 || [amount rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location!=NSNotFound ||
+           !CRHex(sha,64) || !CRHex(original,64)){valid=NO;break;}
+        uint64_t size=amount.longLongValue;if(!size || size>(64u<<20) || total>(256u<<20)-size){valid=NO;break;}
+        total+=size;[aliases addObject:name.lowercaseString];rows[name]=[@{@"size":@(size),@"sha":sha,@"original":original} mutableCopy];
+    }
+    if(!rows.count)valid=NO;
+    struct CROverlayContext context={(__bridge void *)rows,cancelled};struct mng_romfs_callbacks callbacks={0};
+    callbacks.context=&context;callbacks.entry=CROverlayEntry;callbacks.cancelled=CROverlayCancelled;callbacks.canonical_name=CRCanonical;
+    struct mng_romfs_result indexed={0};if(valid)valid=mng_romfs_index_fd(image,&callbacks,&indexed)==MNG_ROMFS_OK;
+    for(NSString *name in rows) {
+        if(!valid || CRCancelled(cancelled)){valid=NO;break;}NSDictionary *row=rows[name];NSString *original=row[@"original"];
+        if(!row[@"offset"] || [row[@"originalSize"] unsignedLongLongValue]>(64u<<20) ||
+            !CRRangeHash(image,[row[@"offset"] unsignedLongLongValue],[row[@"originalSize"] unsignedLongLongValue],original,cancelled)){valid=NO;break;}
+        int fd=CROpenRelative(directory,name,NO);struct stat st;
+        valid=fd>=0 && !fstat(fd,&st) && st.st_size>=0 && (uint64_t)st.st_size==[row[@"size"] unsignedLongLongValue] &&
+            CRRangeHash(fd,0,(uint64_t)st.st_size,row[@"sha"],cancelled);if(fd>=0)close(fd);
+    }
+    NSMutableSet *expected=[NSMutableSet setWithArray:rows.allKeys];[expected addObject:@"manifest.tsv"];NSUInteger count=0;
+    if(valid)valid=CROverlayTree(directory,@"",expected,0,&count);
+    if(directory>=0)close(directory);return valid;
+}
 static uint64_t CRNativeButtons(uint64_t portable) {
     /* Portable: A B X Y L R ZL ZR plus minus Lstick Rstick up down left right.
      * Existing Npad: A B X Y Lstick Rstick L R ZL ZR plus minus left up right down. */
@@ -155,6 +307,10 @@ static uint64_t CRNativeButtons(uint64_t portable) {
 static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString *message) {
     return @{@"state":state,@"desiredValue":desired ?: NSNull.null,@"effectiveValue":effective ?: NSNull.null,@"message":message};
 }
+@interface CanopyRuntime ()
+- (NSString *)displayValidation;
+- (NSDictionary *)displayOutcomeForKey:(NSString *)key value:(id)value;
+@end
 @implementation CanopyRuntime {
     NSURL *_root;
     NSString *_state,*_titleID;
@@ -165,6 +321,10 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     BOOL _nativeEntryInvoked;
     _Atomic int _preflightCancelled;
     uint64_t _sequence,_timestamp,_deviceID;
+    struct mng_display_config _displayConfig;
+    CGSize _displayViewSize;
+    id _displayHostView;
+    NSDictionary *_displayDesired;
 }
 - (instancetype)initWithPreparedRootURL:(NSURL *)root {
     if((self=[super init])){_root=[root.URLByResolvingSymlinksInPath copy];_state=@"idle";_lease=-1;_settingStates=@{};atomic_init(&_preflightCancelled,0);}return self;
@@ -179,6 +339,11 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     NSMutableDictionary *metrics=[NSMutableDictionary dictionaryWithDictionary:_shaderLease.metrics ?: @{}];
     metrics[@"nativeEntryInvoked"]=@(_nativeEntryInvoked);
     if(_nativeEntryInvoked && ([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]))metrics[@"frameLimit"]=@(_host->get_fps());
+    if(_nativeEntryInvoked && _displayConfig.abi==MNG_DISPLAY_ABI) {
+        metrics[@"displayValidation"]=[self displayValidation];
+        metrics[@"displaySelectedWidth"]=@(_displayConfig.width);metrics[@"displaySelectedHeight"]=@(_displayConfig.height);
+        metrics[@"displayFixedResolution"]=_displayConfig.fixed_resolution?@YES:@NO;metrics[@"displayExperimental"]=_displayConfig.experimental?@YES:@NO;
+    }
     return [metrics copy];
 }
 + (NSDictionary *)trustedProfileForTitleID:(NSString *)titleID {
@@ -206,6 +371,10 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     if(![surface isKindOfClass:CAMetalLayer.class]) {
         if(error)*error=CRError(4,@"A native Metal presentation layer is required.");return NO;
     }
+    const struct canopy_totk_host *host=CRHost();CGSize viewSize;struct mng_display_resolution display={0};
+    if(!CRViewSize(view,&viewSize) || !CRDisplayResolve(host,settings,viewSize,&display)) {
+        if(error)*error=CRError(4,@"Native display preferences or oriented game view bounds are invalid.");return NO;
+    }
     CAMetalLayer *metalLayer=surface;
     id<MTLDevice> selectedDevice=metalLayer.device ?: MTLCreateSystemDefaultDevice();
     if(selectedDevice)metalLayer.device=selectedDevice;
@@ -218,15 +387,18 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         if(error)*error=CRError(4,@"Native save or identity path exceeds the host limit.");return NO;
     }
     _host=CRHost();_titleID=[titleID copy];_state=@"preparing";
-    _startupSettings=[[NSDictionary alloc] initWithDictionary:settings copyItems:YES];atomic_store(&_preflightCancelled,0);activeRuntime=self;
+    NSMutableDictionary *startup=[settings mutableCopy];
+    if(!startup[@"renderHeight"])startup[@"renderHeight"]=@720;if(!startup[@"aspect"])startup[@"aspect"]=@"16:9";
+    _startupSettings=[[NSDictionary alloc] initWithDictionary:startup copyItems:YES];atomic_store(&_preflightCancelled,0);activeRuntime=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         int root=CROpenDirectory(self->_root,YES),lease=-1;struct mng_store *store=NULL;
+        struct mng_store_verified_assets verified={0};
         NSString *preflightFailure=@"The prepared store could not be verified safely.";
         BOOL valid=root>=0 && mng_store_open(root,&store)==MNG_PREPARE_OK;
         if(valid) {
             mng_store_set_cancel_check(store,CRCancelled,&self->_preflightCancelled);
             preflightFailure=@"The prepared generation could not be verified or retained safely.";
-            valid=mng_store_pin(store,self->_host->title_id,generationID.UTF8String,&lease)==MNG_PREPARE_OK;
+            valid=mng_store_pin_verified_assets(store,self->_host->title_id,generationID.UTF8String,&verified,&lease)==MNG_PREPARE_OK;
         }
         mng_store_close(store);if(root>=0)close(root);
         NSURL *generation=[[[[self->_root URLByAppendingPathComponent:@"titles"] URLByAppendingPathComponent:titleID]
@@ -237,13 +409,25 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
             preflightFailure=@"Prepared asset or trusted resource directories could not be opened safely.";
             valid=gen>=0 && exefs>=0 && resources>=0;
         }
+        /* Facts are emitted only after the store fully hashes the generation and
+         * acquires its real shared lease. They are not a cross-launch cache. */
         if(valid) {
             preflightFailure=@"The original executable does not match the approved native profile.";
-            valid=CRHash(exefs,"main",CRString(self->_host->original_main_sha256),&self->_preflightCancelled);
+            valid=verified.main.present==1 && [CRDigest(verified.main.sha256) isEqual:CRString(self->_host->original_main_sha256)];
         }
         if(valid) {
             preflightFailure=@"The RomFS image does not match the approved native profile.";
-            valid=CRHash(gen,"romfs.bin",CRString(self->_host->romfs_sha256),&self->_preflightCancelled);
+            valid=verified.romfs.present==1 && [CRDigest(verified.romfs.sha256) isEqual:CRString(self->_host->romfs_sha256)];
+        }
+        if(valid && self->_host->display.profile.flags) {
+            preflightFailure=@"Compiled native display overlays do not match their pinned resources or source RomFS.";
+            int image=openat(gen,"romfs.bin",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+            valid=image>=0;
+            if(valid && (self->_host->display.profile.flags&MNG_DISPLAY_SCENE_1080))valid=CROverlay(resources,image,MNG_DISPLAY_HEAP_MANIFEST,
+                CRString(self->_host->display.heap_manifest_sha256),&self->_preflightCancelled);
+            if(valid && (self->_host->display.profile.flags&MNG_DISPLAY_FOUR_THREE))valid=CROverlay(resources,image,MNG_DISPLAY_LAYOUT_MANIFEST,
+                CRString(self->_host->display.layout_manifest_sha256),&self->_preflightCancelled);
+            if(image>=0)close(image);
         }
         int saveFD=CROpenDirectory(saves,YES),identityFD=CROpenDirectory(identity,YES),cacheFD=CROpenDirectory(cache,YES);
         if(saveFD<0 || identityFD<0 || cacheFD<0 || CRSameDirectory(saveFD,identityFD) ||
@@ -296,13 +480,24 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
                 close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;activeRuntime=nil;
                 completion(NO,CRError(4,@"The native graphics device changed during preparation. Retry startup."));return;
             }
+            CGSize currentViewSize;struct mng_display_resolution selected={0};
+            if(!CRViewSize(view,&currentViewSize) || !CRDisplayResolve(self->_host,desired,currentViewSize,&selected)) {
+                close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;activeRuntime=nil;
+                completion(NO,CRError(4,@"The native game view bounds are unavailable. Retry startup."));return;
+            }
+            self->_displayConfig=selected.config;self->_displayViewSize=currentViewSize;self->_displayHostView=view;
+            self->_displayDesired=@{@"renderHeight":desired[@"renderHeight"],@"aspect":desired[@"aspect"]};
             struct canopy_totk_start start={assets.fileSystemRepresentation,assets.fileSystemRepresentation,
                 indexDirectory.fileSystemRepresentation,generation.fileSystemRepresentation,saves.fileSystemRepresentation,
                 identity.fileSystemRepresentation,cache.fileSystemRepresentation,shaderLease.seedURL.fileSystemRepresentation,shaderLease.cacheURL.fileSystemRepresentation,
                 language.UTF8String,fps,taa,hud,
-                (__bridge void *)surface,(__bridge void *)view,(__bridge void *)selectedDevice};
+                (__bridge void *)surface,(__bridge void *)view,(__bridge void *)selectedDevice,selected.config};
             self->_nativeEntryInvoked=YES;self->_state=@"starting";
             if(self->_host->start(&start)){self->_state=@"failed";completion(NO,CRError(5,@"Native startup failed; this single-use process cannot safely relaunch."));return;}
+            NSString *validation=[self displayValidation];
+            if(![validation isEqual:@"pending"] && ![validation isEqual:@"patchesValidated"]) {
+                self->_state=@"failed";completion(NO,CRError(5,@"Native startup did not acknowledge its display configuration; safe teardown is unavailable."));return;
+            }
             self->_state=@"inputCaptured";[self applyDesiredSettings:desired];completion(YES,nil);
         });
     });
@@ -315,13 +510,46 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     }
     atomic_store(&_preflightCancelled,1);_state=@"cancelling";return YES;
 }
+- (NSString *)displayValidation {
+    struct mng_display_state state={0};state.abi=MNG_DISPLAY_ABI;state.size=sizeof(state);
+    if(!_host || !_nativeEntryInvoked || _host->display.read_state(&state) || state.abi!=MNG_DISPLAY_ABI || state.size!=sizeof(state) ||
+       state.validation>MNG_DISPLAY_PATCHES_VALIDATED)return @"unavailable";
+    if(state.validation==MNG_DISPLAY_NOT_CONFIGURED)return @"notConfigured";
+    if(!CRDisplaySame(&state.config,&_displayConfig) || mng_display_check(&_host->display.profile,&state.config,
+        _displayViewSize.width,_displayViewSize.height))return @"unavailable";
+    return state.validation==MNG_DISPLAY_PATCHES_VALIDATED?@"patchesValidated":@"pending";
+}
+- (NSDictionary *)displayOutcomeForKey:(NSString *)key value:(id)value {
+    BOOL height=[key isEqual:@"renderHeight"];id effective=height?@(_displayConfig.height):(_displayConfig.aspect==MNG_DISPLAY_FULL?@"4:3":@"16:9");
+    NSString *validation=[self displayValidation];CGSize size;struct mng_display_resolution desired={0};
+    if(!CRViewSize(_displayHostView,&size) || !CRDisplayResolve(_host,_displayDesired,size,&desired))
+        return CROutcome(@"rejected",value,effective,@"Invalid display request or game view bounds; the existing native target remains configured.");
+    uint32_t unsupported=height?desired.height_outcome:desired.aspect_outcome;
+    BOOL changed=height?desired.config.height!=_displayConfig.height:desired.config.aspect!=_displayConfig.aspect;
+    NSString *state=unsupported==MNG_DISPLAY_UNSUPPORTED?@"unsupported":changed?@"restartRequired":@"applied";
+    if([validation isEqual:@"unavailable"] || [validation isEqual:@"notConfigured"])state=@"rejected";
+    NSString *proof=[validation isEqual:@"patchesValidated"]?@"The native loader completed its checked patch path; no rendered-frame claim.":
+        [validation isEqual:@"pending"]?@"Native checked patches are pending; this is configuration only.":@"The native host has not acknowledged a matching display configuration.";
+    NSString *timing=[state isEqual:@"restartRequired"]?@"A different target requires a new process. ":
+        [state isEqual:@"unsupported"]?@"The requested setting is unavailable; the selected supported target remains in use. ":@"";
+    NSString *detail=_displayConfig.experimental?@" Experimental 4:3 retains the existing Vert+ UI/effect limitations.":
+        !_displayConfig.fixed_resolution?@" The stock scene may dynamically scale below the selected 720 target.":@"";
+    NSMutableDictionary *outcome=[CROutcome(state,value,effective,[NSString stringWithFormat:@"%@Selected scene/canvas target %ux%u. %@%@",timing,
+        _displayConfig.width,_displayConfig.height,proof,detail]) mutableCopy];
+    outcome[@"validation"]=validation;outcome[@"experimental"]=_displayConfig.experimental?@YES:@NO;return outcome;
+}
 - (NSDictionary *)applyDesiredSettings:(NSDictionary *)settings {
     NSAssert(NSThread.isMainThread,@"Runtime settings belong on main thread");
     NSMutableDictionary *states=[NSMutableDictionary dictionary];
+    NSMutableDictionary *displayDesired=[(_displayDesired ?: @{}) mutableCopy];
+    for(NSString *key in @[@"renderHeight",@"aspect"])if(settings[key])displayDesired[key]=settings[key];
+    _displayDesired=[displayDesired copy];
     BOOL active=_nativeEntryInvoked && ([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]);
     for(NSString *key in settings) {
         id value=settings[key];NSDictionary *outcome=CROutcome(@"unsupported",value,nil,@"The native host has no application hook for this setting.");
-        if(active && [key isEqual:@"fpsLimit"]) {
+        if(active && ([key isEqual:@"renderHeight"] || [key isEqual:@"aspect"])) {
+            outcome=[self displayOutcomeForKey:key value:value];
+        } else if(active && [key isEqual:@"fpsLimit"]) {
             if(!CRNumber(value) || ![@[@30,@40,@60] containsObject:value] || !_host->fps_supported([value unsignedIntValue]))outcome=CROutcome(@"rejected",value,@(_host->get_fps()),@"This frame limit is unavailable on the active native display profile.");
             else {_host->set_fps([value unsignedIntValue]);outcome=CROutcome(@"applied",value,@(_host->get_fps()),@"Native frame ceiling applied; this is not measured FPS.");}
         } else if(active && [key isEqual:@"taa"]) {
@@ -373,7 +601,13 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 }
 - (BOOL)tick:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
-    if([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"])return YES;
+    if([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]) {
+        NSMutableDictionary *states=[_settingStates mutableCopy];
+        for(NSString *key in @[@"renderHeight",@"aspect"])if(_displayDesired[key])states[key]=[self displayOutcomeForKey:key value:_displayDesired[key]];
+        _settingStates=[states copy];
+        if(![@[@"pending",@"patchesValidated"] containsObject:[self displayValidation]]) {if(error)*error=CRError(4,@"The native host returned an invalid display state.");return NO;}
+        return YES;
+    }
     if(error)*error=CRError(3,@"The native host has not started.");return NO;
 }
 - (BOOL)pause:(BOOL)paused error:(NSError **)error {

@@ -9,6 +9,7 @@ add_library(canopy_core STATIC src/mng_container.c src/mng_file.c
     src/mng_romfs.c src/mng_romfs_runtime.c src/mng_players.c src/mng_session.c)
 target_sources(canopy_core PRIVATE src/mng_addon.c src/mng_install.c src/mng_multiplayer.c)
 target_sources(canopy_core PRIVATE src/mng_input.c src/mng_keyboard.c src/mng_pointer.c src/mng_touch.c)
+target_sources(canopy_core PRIVATE src/mng_display.c)
 find_package(Threads REQUIRED)
 target_link_libraries(canopy_core PUBLIC Threads::Threads)
 if(NOT APPLE)

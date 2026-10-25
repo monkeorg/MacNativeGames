@@ -44,7 +44,7 @@ SOURCES = ('launcher/apple/Sources/CanopyApp.m',
            'launcher/src/mng_content.c', 'launcher/src/mng_bktr.c', 'launcher/src/mng_prepare.c', 'launcher/src/mng_store.c',
            'launcher/src/mng_folder.c',
            'launcher/src/mng_romfs.c', 'launcher/src/mng_romfs_runtime.c',
-           'launcher/src/mng_players.c', 'launcher/src/mng_session.c')
+           'launcher/src/mng_players.c', 'launcher/src/mng_session.c', 'launcher/src/mng_display.c')
 SOURCES += ('launcher/src/mng_addon.c', 'launcher/src/mng_install.c', 'launcher/src/mng_multiplayer.c',
             'launcher/src/mng_input.c', 'launcher/src/mng_keyboard.c',
             'launcher/src/mng_pointer.c', 'launcher/src/mng_touch.c',
@@ -74,7 +74,7 @@ HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
            'launcher/include/mng_content.h', 'launcher/include/mng_bktr.h', 'launcher/include/mng_prepare.h', 'launcher/include/mng_store.h',
            'launcher/include/mng_folder.h', 'launcher/src/mng_prepare_internal.h',
            'launcher/include/mng_romfs.h', 'launcher/include/mng_romfs_runtime.h',
-           'launcher/include/mng_players.h', 'launcher/include/mng_session.h')
+           'launcher/include/mng_players.h', 'launcher/include/mng_session.h', 'launcher/include/mng_display.h')
 HEADERS += ('launcher/include/mng_addon.h', 'launcher/include/mng_install.h', 'launcher/include/mng_multiplayer.h',
             'launcher/include/mng_input.h', 'launcher/include/mng_keyboard.h',
             'launcher/include/mng_pointer.h', 'launcher/include/mng_touch.h',

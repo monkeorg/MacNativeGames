@@ -13,7 +13,17 @@
 #include <string.h>
 #include <time.h>
 static void Check(BOOL value,const char *message) {if(!value){fprintf(stderr,"FAIL: %s\n",message);exit(1);}}
-static const char *resourcePath,*romfsHash,*indexHash,*manifestHash,*mode;
+@interface FixtureGameView : NSObject
+@property(nonatomic) CGRect bounds;
+@end
+@implementation FixtureGameView
+@end
+static const char *resourcePath,*romfsHash,*indexHash,*manifestHash,*heapHash,*layoutHash,*mode;
+static uint32_t displayFlags;
+static struct mng_display_config selectedDisplay;
+static uint32_t displayValidation=MNG_DISPLAY_NOT_CONFIGURED;
+static CGRect gameBounds;
+static BOOL malformedDisplayState;
 static unsigned starts,fps=60,clears,inputs;
 static uint64_t expectedButtons=1;
 static int32_t expectedLX=16384;
@@ -42,6 +52,9 @@ static int start(const struct canopy_totk_start *s) {
     Check([NSFileManager.defaultManager fileExistsAtPath:[@(s->shader_seed) stringByAppendingPathComponent:@"shader_map.tsv"]],"verified shader seed binding");
     Check([NSFileManager.defaultManager fileExistsAtPath:@(s->shader_cache)],"separate mutable shader cache");
     Check(PhysicalDirectory(s->shader_cache) && PhysicalDirectory(s->shader_seed),"native shader paths contain no linked components");
+    struct mng_display_profile profile={MNG_DISPLAY_ABI,sizeof(profile),displayFlags};
+    Check(!mng_display_check(&profile,&s->display,gameBounds.size.width,gameBounds.size.height),"actual native display config binding");
+    selectedDisplay=s->display;displayValidation=MNG_DISPLAY_PENDING;
     fps=s->fps_limit;taa=s->taa_enabled;hud=s->hud_mode;focus=0;starts++;
     return !strcmp(mode,"entry-failure") ? -1:0;
 }
@@ -58,18 +71,36 @@ static void set_focus(int value) {focus=value;}
 static void input(uint64_t buttons,int32_t lx,int32_t ly,int32_t rx,int32_t ry,int connected) {
     Check(buttons==expectedButtons && lx==expectedLX && !ly && !rx && !ry && connected==expectedConnected,"native player input");inputs++;
 }
+static int read_display(struct mng_display_state *state) {
+    Check(NSThread.isMainThread,"native display state thread");
+    if(!state || state->abi!=MNG_DISPLAY_ABI || state->size!=sizeof(*state))return -1;
+    *state=(struct mng_display_state){MNG_DISPLAY_ABI,sizeof(*state),displayValidation,selectedDisplay};
+    if(malformedDisplayState || !strcmp(mode,"display-bad-start-state"))state->size--;return 0;
+}
 const struct canopy_totk_host *totk_canopy_host_v1(void) {
     static struct canopy_totk_host host;
     if(!strcmp(mode,"unavailable"))return NULL;
-    host=(struct canopy_totk_host){1,sizeof(host),UINT64_C(0x0100123456780000),"original-fixture",
+    const char *version=displayFlags?"1.4.3":"original-fixture";
+    if(!strcmp(mode,"display-v121-flags"))version="1.2.1";
+    host=(struct canopy_totk_host){!strcmp(mode,"abi1")?1:CANOPY_TOTK_HOST_ABI,sizeof(host),UINT64_C(0x0100123456780000),version,
         !strcmp(mode,"wrong-main")?"0000000000000000000000000000000000000000000000000000000000000000":mainHash,
-        romfsHash,!strcmp(mode,"wrong-index")?"0000000000000000000000000000000000000000000000000000000000000000":indexHash,
-        resourcePath,manifestHash,"original-fixture-chain",start,fps_supported,set_fps,get_fps,taa_supported,set_taa,get_taa,get_hud,cycle_hud,clear,set_focus,input};
+        !strcmp(mode,"wrong-romfs")?"0000000000000000000000000000000000000000000000000000000000000000":romfsHash,!strcmp(mode,"wrong-index")?"0000000000000000000000000000000000000000000000000000000000000000":indexHash,
+        resourcePath,manifestHash,"original-fixture-chain",start,fps_supported,set_fps,get_fps,taa_supported,set_taa,get_taa,get_hud,cycle_hud,clear,set_focus,input,
+        {MNG_DISPLAY_ABI,sizeof(struct canopy_totk_display),{MNG_DISPLAY_ABI,sizeof(struct mng_display_profile),displayFlags},
+         displayFlags&MNG_DISPLAY_SCENE_1080?heapHash:NULL,displayFlags&MNG_DISPLAY_FOUR_THREE?layoutHash:NULL,read_display}};
+    if(!strcmp(mode,"display-bad-record"))host.display.size--;
+    if(!strcmp(mode,"display-bad-pin"))host.display.heap_manifest_sha256=NULL;
     return &host;
 }
 int main(int argc,char **argv) {
     @autoreleasepool {
-        Check(argc==10,"arguments");mode=argv[1];resourcePath=argv[4];romfsHash=argv[7];indexHash=argv[8];manifestHash=argv[9];
+        Check(argc==12,"arguments");mode=argv[1];resourcePath=argv[4];romfsHash=argv[7];indexHash=argv[8];manifestHash=argv[9];heapHash=argv[10];layoutHash=argv[11];
+        if(!strncmp(mode,"overlay-",8) || !strcmp(mode,"display-1080") || !strcmp(mode,"display-unknown-aspect") || !strcmp(mode,"display-bad-pin") || !strcmp(mode,"display-v121-flags"))displayFlags=MNG_DISPLAY_SCENE_1080;
+        if(!strncmp(mode,"display-full",12) || !strcmp(mode,"display-live"))displayFlags=MNG_DISPLAY_SCENE_1080|MNG_DISPLAY_FOUR_THREE;
+        if(!strcmp(mode,"display-bad-flags"))displayFlags=8;
+        gameBounds=CGRectMake(0,0,1024,576);
+        if(!strcmp(mode,"display-full") || !strcmp(mode,"display-live") || !strcmp(mode,"display-stock-fallback"))gameBounds=CGRectMake(0,0,1024,768);
+        if(!strcmp(mode,"display-full-fallback"))gameBounds=CGRectMake(0,0,1194,834);
         NSURL *root=[NSURL fileURLWithPath:@(argv[2]) isDirectory:YES];NSString *generation=@(argv[3]);
         NSURL *resources=[NSURL fileURLWithPath:@(resourcePath) isDirectory:YES];
         NSURL *profiles=[NSURL fileURLWithPath:@(argv[5]) isDirectory:YES];
@@ -78,7 +109,8 @@ int main(int argc,char **argv) {
         for(NSURL *url in @[saves,identity,cache])Check([NSFileManager.defaultManager createDirectoryAtURL:url
             withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:NULL],"private directories");
         id<MTLDevice> device=MTLCreateSystemDefaultDevice();
-        BOOL deviceDependent=!strcmp(mode,"success") || !strcmp(mode,"entry-failure") || !strcmp(mode,"cache-reuse") || !strcmp(mode,"actual-shader-device") || !strcmp(mode,"cache-parent-alias");
+        BOOL deviceDependent=!strcmp(mode,"success") || !strcmp(mode,"entry-failure") || !strcmp(mode,"cache-reuse") || !strcmp(mode,"actual-shader-device") || !strcmp(mode,"cache-parent-alias") || !strcmp(mode,"display-1080") || !strcmp(mode,"display-full") ||
+            !strcmp(mode,"display-full-fallback") || !strcmp(mode,"display-stock-fallback") || !strcmp(mode,"display-live") || !strcmp(mode,"display-bad-state") || !strcmp(mode,"display-bad-start-state") || !strcmp(mode,"display-unknown-aspect");
         if(!device && deviceDependent){puts("{\"status\":\"skip\",\"reason\":\"No actual native Metal device is available\"}");return 0;}
         if(!strcmp(mode,"actual-shader-device")) {
             NSError *shaderError=nil;
@@ -95,12 +127,16 @@ int main(int argc,char **argv) {
         }
         CAMetalLayer *layer=CAMetalLayer.layer;layer.device=device;
         CanopyRuntime *runtime=[[CanopyRuntime alloc] initWithPreparedRootURL:root];NSError *error=nil;
-        NSDictionary *settings=@{@"fpsLimit":@60,@"taa":@NO,@"hud":@1,@"language":@"en-US",@"aspect":@"16:9"};
+        BOOL high=!strcmp(mode,"display-1080") || !strcmp(mode,"display-full") || !strcmp(mode,"display-full-fallback") || !strcmp(mode,"display-stock-fallback");
+        BOOL full=!strcmp(mode,"display-full") || !strcmp(mode,"display-full-fallback") || !strcmp(mode,"display-stock-fallback");
+        NSDictionary *settings=@{@"fpsLimit":@60,@"taa":@NO,@"hud":@1,@"language":@"en-US",@"renderHeight":high?@1080:@720,@"aspect":!strcmp(mode,"display-unknown-aspect")?@"21:9":full?@"display":@"16:9"};
+        FixtureGameView *gameView=FixtureGameView.new;gameView.bounds=gameBounds;layer.bounds=gameBounds;
         __block BOOL completed=NO,started=NO;__block NSError *failure=nil;
         BOOL accepted=[runtime startTitleID:@"0100123456780000" generationID:generation hostAssetsURL:resources
-            activeSavesURL:saves identityURL:identity cacheURL:cache settings:settings graphicsSurface:layer hostView:NSObject.new
+            activeSavesURL:saves identityURL:identity cacheURL:cache settings:settings graphicsSurface:layer hostView:gameView
             error:&error completion:^(BOOL nativeStarted,NSError *e) {Check(NSThread.isMainThread,"completion owner");started=nativeStarted;failure=e;completed=YES;}];
-        if(!strcmp(mode,"unavailable")) {
+        if(!strcmp(mode,"unavailable") || !strcmp(mode,"abi1") || !strcmp(mode,"display-bad-record") || !strcmp(mode,"display-bad-flags") ||
+           !strcmp(mode,"display-bad-pin") || !strcmp(mode,"display-v121-flags")) {
             Check(!accepted && !runtime.nativeEntryInvoked && error!=nil,"unavailable host refusal");
         } else {
             Check(accepted && [runtime.state isEqual:@"preparing"],"async native preflight");
@@ -110,12 +146,34 @@ int main(int argc,char **argv) {
             Check(completed,"native completion timeout");
             if(deviceDependent && !runtime.nativeEntryInvoked && failure)
                 fprintf(stderr,"Native preflight refused: code=%ld message=%s\n",(long)failure.code,failure.localizedDescription.UTF8String);
-            if(!strcmp(mode,"wrong-main") || !strcmp(mode,"wrong-index") || !strcmp(mode,"corrupt-cache") || !strcmp(mode,"public-cache") || !strcmp(mode,"cache-leaf-symlink") || !strcmp(mode,"cancel")) {
+            if(!strncmp(mode,"overlay-",8) || !strcmp(mode,"wrong-romfs") || !strcmp(mode,"corrupt-main") || !strcmp(mode,"corrupt-romfs") || !strcmp(mode,"wrong-main") || !strcmp(mode,"wrong-index") || !strcmp(mode,"corrupt-cache") || !strcmp(mode,"public-cache") || !strcmp(mode,"cache-leaf-symlink") || !strcmp(mode,"cancel")) {
                 Check(!started && failure && !runtime.nativeEntryInvoked && starts==0,"pin mismatch reaches no native entry");
                 Check([runtime close:&error],"preflight refusal permits seal release");
-            } else if(!strcmp(mode,"entry-failure")) {
+            } else if(!strcmp(mode,"entry-failure") || !strcmp(mode,"display-bad-start-state")) {
                 Check(!started && failure && runtime.nativeEntryInvoked && starts==1,"native failure lifetime");
                 Check(![runtime close:&error],"failed entry does not promise teardown");
+            } else if(!strncmp(mode,"display-",8)) {
+                Check(started && !failure && runtime.nativeEntryInvoked && starts==1,"actual native display callback");
+                if(!strcmp(mode,"display-bad-state")) {
+                    malformedDisplayState=YES;
+                    Check(![runtime tick:&error] && error!=nil,"malformed native display state refusal");
+                    Check([runtime.settingStates[@"renderHeight"][@"state"] isEqual:@"rejected"],"malformed display state not applied");
+                } else {
+                    Check([runtime.settingStates[@"renderHeight"][@"validation"] isEqual:@"pending"],"startup configuration is not checked patch evidence");
+                    if(!strcmp(mode,"display-full"))Check(selectedDisplay.width==1440 && selectedDisplay.height==1080 && selectedDisplay.experimental,"experimental exact4:3 target");
+                    if(!strcmp(mode,"display-1080"))Check(selectedDisplay.width==1920 && selectedDisplay.height==1080 && !selectedDisplay.experimental,"1080 16:9 selected target");
+                    if(!strcmp(mode,"display-unknown-aspect"))Check([runtime.settingStates[@"aspect"][@"state"] isEqual:@"unsupported"] && selectedDisplay.aspect==MNG_DISPLAY_16_9,"unknown aspect explicit fallback");
+                    if(!strcmp(mode,"display-full-fallback"))Check([runtime.settingStates[@"aspect"][@"state"] isEqual:@"unsupported"] && selectedDisplay.width==1920 && selectedDisplay.aspect==MNG_DISPLAY_16_9,"non4:3 full aspect explicit fallback");
+                    if(!strcmp(mode,"display-stock-fallback"))Check([runtime.settingStates[@"renderHeight"][@"state"] isEqual:@"unsupported"] && [runtime.settingStates[@"aspect"][@"state"] isEqual:@"unsupported"] && selectedDisplay.height==720 && !selectedDisplay.fixed_resolution,"stock explicit fallback and dynamic scene distinction");
+                    if(!strcmp(mode,"display-live")) {
+                        NSDictionary *outcomes=[runtime applyDesiredSettings:@{@"renderHeight":@1080,@"aspect":@"display"}];
+                        Check([outcomes[@"renderHeight"][@"state"] isEqual:@"restartRequired"] && [outcomes[@"aspect"][@"state"] isEqual:@"restartRequired"],"live display target needs new process");
+                        Check([outcomes[@"renderHeight"][@"effectiveValue"] isEqual:@720] && [outcomes[@"aspect"][@"effectiveValue"] isEqual:@"16:9"] && selectedDisplay.width==1280 && selectedDisplay.height==720,"live display preserves selected target");
+                    }
+                    displayValidation=MNG_DISPLAY_PATCHES_VALIDATED;
+                    Check([runtime tick:&error] && [runtime.settingStates[@"renderHeight"][@"validation"] isEqual:@"patchesValidated"],"only native callback reports checked patches");
+                    Check([runtime.diagnosticMetrics[@"displayValidation"] isEqual:@"patchesValidated"],"display evidence diagnostics");
+                }
             } else {
                 Check(started && !failure && runtime.nativeEntryInvoked && starts==1,"actual native callback");
                 Check([runtime.state isEqual:@"inputCaptured"],"startup begins with input captured");

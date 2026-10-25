@@ -539,7 +539,14 @@ int main(int argc,char **argv) {
  need(pthread_key_create(&environment_key,environment_destroy)==0,"thread environment key");
  for(unsigned i=0;i<NM;i++)map_module(&modules[i],argv[1]);
  for(unsigned i=0;i<NM;i++)relocate(&modules[i]);
- for(unsigned i=0;i<NM;i++)if(!strcmp(modules[i].name,"main"))runtime_game_patches(&modules[i]);
+ for(unsigned i=0;i<NM;i++)if(!strcmp(modules[i].name,"main")){
+  runtime_game_patches(&modules[i]);
+#if defined(CANOPY_HOST_RUNTIME)
+  /* Actual checked patch path returned; not a rendered-frame assertion. */
+  void canopy_host_game_patches_validated(void);
+  canopy_host_game_patches_validated();
+#endif
+ }
 #if !TARGET_OS_IPHONE
  if(!strcmp(argv[2],"export-ios")){const char *out=getenv("TOTK_EXPORT_IOS");need(out!=NULL,"export-ios needs TOTK_EXPORT_IOS=<dir>");export_ios_text(argv[1],out);return 0;}
 #endif
