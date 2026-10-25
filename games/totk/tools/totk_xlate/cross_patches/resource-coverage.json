@@ -726,6 +726,16 @@
       "file": "spirv_glsl.cpp",
       "originalInventoryAnchor": "spirv_glsl.cpp:11736",
       "originalSourceLine": 11736
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:17264",
+      "originalSourceLine": 17264
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:17268",
+      "originalSourceLine": 17268
     }
   ],
   "explicitArithmetic": [
@@ -763,7 +773,8 @@
     "combined member-decoration traversal",
     "MSL declared type alignment member traversal",
     "GLSL flattened I/O struct-member emission",
-    "GLSL flattened struct-store member traversal"
+    "GLSL flattened struct-store member traversal",
+    "conditional GLSL zero-initialization eligibility member query"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
@@ -775,8 +786,8 @@
     "Parser direct raw-ID self-alias refusal before source lookup and Variant replacement for OpTypeArray/RuntimeArray/Pointer only; UntypedPointer and distinct-pointee forward resolution unchanged, not a global ID/redefinition validator"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 498,
-  "instrumentedOriginallyUnbracedLoops": 141,
+  "instrumentedLoopCheckpoints": 500,
+  "instrumentedOriginallyUnbracedLoops": 143,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -845,7 +856,7 @@
       "reason": "At most four iterations after checked patch0033: fill_composite_constant preflight rejects a selected non-array/non-Struct vector width>4 or fewer than width initializers before target mutation/fixed writes. The existing vector branch uses the same type.vecsize and no callback can change it before the loop. Matrix/array/Struct and caller validity remain separate; no checkpoint added."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 5,
+  "unbracedLoopsInputDependentOrUnprovenCount": 3,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:3676",
     "spirv_cross.cpp:3842",
@@ -856,8 +867,6 @@
     "spirv_glsl.cpp:4953",
     "spirv_glsl.cpp:6095",
     "spirv_glsl.cpp:9263",
-    "spirv_glsl.cpp:17264",
-    "spirv_glsl.cpp:17268",
     "spirv_glsl.cpp:20694",
     "spirv_glsl.cpp:20775",
     "spirv_glsl.cpp:20782",
@@ -869,7 +878,7 @@
     "spirv_msl.cpp:9256",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 21,
+  "unbracedLoopsNotInstrumentedCount": 19,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",
