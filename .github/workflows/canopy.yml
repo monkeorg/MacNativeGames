@@ -78,7 +78,9 @@ jobs:
         # Encrypted fixtures use invented keys; no game inputs are downloaded.
         run: python3 -m unittest discover -s tests -p 'test_canopy_*.py' -v
       - name: Build unsigned iPhoneOS Canopy host with Xcode
-        if: runner.os == 'macOS'
+        # Compilation provides independent evidence even when a native fixture
+        # failed. Subsequent archive/upload still require the job to be green.
+        if: always() && runner.os == 'macOS'
         run: python3 tools/launcher/build_canopy.py --out "$RUNNER_TEMP/canopy-unsigned"
       - name: Archive unsigned public host
         if: runner.os == 'macOS'

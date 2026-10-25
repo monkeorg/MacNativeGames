@@ -45,6 +45,7 @@ SOURCES = ('launcher/apple/Sources/CanopyApp.m',
            'launcher/src/mng_folder.c',
            'launcher/src/mng_romfs.c', 'launcher/src/mng_romfs_runtime.c',
            'launcher/src/mng_players.c', 'launcher/src/mng_session.c')
+SOURCES += ('launcher/src/mng_addon.c', 'launcher/src/mng_multiplayer.c')
 HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
            'launcher/apple/Sources/CanopyCatalog.h',
            'launcher/apple/Sources/CanopySettings.h',
@@ -69,6 +70,7 @@ HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
            'launcher/include/mng_folder.h', 'launcher/src/mng_prepare_internal.h',
            'launcher/include/mng_romfs.h', 'launcher/include/mng_romfs_runtime.h',
            'launcher/include/mng_players.h', 'launcher/include/mng_session.h')
+HEADERS += ('launcher/include/mng_addon.h', 'launcher/include/mng_multiplayer.h')
 INPUTS = SOURCES + HEADERS + (BRAND,)
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 
