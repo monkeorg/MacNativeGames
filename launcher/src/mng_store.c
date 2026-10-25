@@ -54,6 +54,7 @@ struct mng_store {
     struct mng_store_io_metrics metrics;
 };
 static int rename_exclusive(int from, const char *source, int to, const char *destination);
+static int recover_retirement(struct mng_store *s,uint64_t *completed_title,char completed_gen[65]);
 static int poll_cancel(struct mng_store *s) {
     if (!s) return 0;
     int state=atomic_load(&s->cancelled);
@@ -438,7 +439,7 @@ enum mng_prepare_status mng_store_open(int root_fd, struct mng_store **out) {
     s->lock=openat(s->root,".lock",O_RDWR|O_CREAT|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC,0600);
     if (s->lock<0 || regular(s->lock,0,NULL) || flock(s->lock,LOCK_EX|LOCK_NB)) goto bad;
     s->jobs=directory(s->root,"jobs",1); s->titles=directory(s->root,"titles",1);
-    if (s->jobs<0 || s->titles<0) goto bad;
+    if (s->jobs<0 || s->titles<0 || recover_retirement(s,NULL,NULL)) goto bad;
     *out=s; return MNG_PREPARE_OK;
 bad:
     mng_store_close(s); return MNG_PREPARE_IO;
@@ -881,25 +882,200 @@ static int remove_tree(int parent, const char *name, unsigned depth) {
     if (!bad) bad=unlinkat(parent,name,AT_REMOVEDIR) || fsync(parent);
     return bad ? -1:0;
 }
+/* One serialized removal intent, independent of generation receipts/identity.
+ * A missing lease is never authority: only the recorded retired inode may be
+ * completed without its lease, and then only when that directory is empty. */
+#define RETIRE_BYTES 144u
+static int retirement_dir(struct mng_store *s,int create) {
+    if(create&&mkdirat(s->root,".retirement",0700)&&errno!=EEXIST)return -1;
+    int fd=openat(s->root,".retirement",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    struct stat st;
+    if(fd>=0&&(fstat(fd,&st)||!S_ISDIR(st.st_mode)||st.st_uid!=geteuid()||(st.st_mode&077))) {close(fd);errno=EINVAL;return -1;}
+    /* An earlier mkdir may have returned IO at its root fsync. Every actual
+     * removal confirms that namespace link, including the EEXIST retry path. */
+    if(fd>=0&&create&&fsync(s->root)){close(fd);return -1;}
+    return fd;
+}
+static int retirement_digest(const unsigned char *data,unsigned char out[32]) {
+    struct mng_sha256 *hash=NULL;
+    int bad=mng_sha256_init(&hash)||mng_sha256_update(hash,data,112)||mng_sha256_final(hash,out);
+    mng_sha256_free(hash);return bad;
+}
+static int retirement_shape(int dir,unsigned *flags) {
+    int fd=directory_iterator(dir);DIR *stream=fd<0?NULL:fdopendir(fd);
+    if(!stream){if(fd>=0)close(fd);return -1;}
+    struct dirent *entry;unsigned found=0,count=0;int bad=0;errno=0;
+    while((entry=readdir(stream))) {
+        const char *name=entry->d_name;if(!strcmp(name,".")||!strcmp(name,"..")){errno=0;continue;}
+        struct stat st;unsigned bit=!strcmp(name,"intent.bin")?1:!strcmp(name,".intent.tmp")?2:!strcmp(name,"target")?4:0;
+        if(++count>3||!bit||(found&bit)||fstatat(dir,name,&st,AT_SYMLINK_NOFOLLOW)||st.st_uid!=geteuid()||(st.st_mode&077)) {bad=1;break;}
+        if(bit==4) {if(!S_ISDIR(st.st_mode)){bad=1;break;}}
+        else if(!S_ISREG(st.st_mode)||st.st_nlink!=1||st.st_size<0||(uint64_t)st.st_size>RETIRE_BYTES||
+                (bit==1&&(uint64_t)st.st_size!=RETIRE_BYTES)) {bad=1;break;}
+        found|=bit;errno=0;
+    }
+    if(!entry&&errno)bad=1;
+    closedir(stream);if(bad)return -1;*flags=found;return 0;
+}
+static int retirement_identity(int fd,uint64_t dev,uint64_t ino,int directory_expected) {
+    struct stat st;
+    return fstat(fd,&st)||st.st_uid!=geteuid()||(st.st_mode&077)||
+        (uint64_t)st.st_dev!=dev||(uint64_t)st.st_ino!=ino||
+        (directory_expected?!S_ISDIR(st.st_mode):(!S_ISREG(st.st_mode)||st.st_nlink!=1||st.st_size!=0));
+}
+static int retirement_unprotected(struct mng_store *s,uint64_t title,const char *gen,int *generations) {
+    int dir=title_directory(s,title,0);if(dir<0)return -1;
+    char current[65],previous[65];
+    if(pointer_read(dir,"current",current)||!strcmp(current,gen)){close(dir);return -2;}
+    if(pointer_read(dir,"previous",previous)) {
+        struct stat st;
+        if(!fstatat(dir,"previous",&st,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT){close(dir);return -1;}
+    } else if(!strcmp(previous,gen)){close(dir);return -2;}
+    int result=directory(dir,"generations",0);close(dir);
+    if(result<0)return -1;
+    *generations=result;return 0;
+}
+static int retirement_payloads(int target) {
+    int fd=directory_iterator(target);DIR *stream=fd<0?NULL:fdopendir(fd);
+    if(!stream){if(fd>=0)close(fd);return -1;}
+    size_t count=0;struct dirent *entry;int bad=0;errno=0;
+    while((entry=readdir(stream))) {
+        const char *name=entry->d_name;
+        if(!strcmp(name,".")||!strcmp(name,"..")){errno=0;continue;}
+        struct stat st;
+        if(++count>MNG_STORE_MAX_ASSETS+8||fstatat(target,name,&st,AT_SYMLINK_NOFOLLOW)){bad=1;break;}
+        if(!strcmp(name,".lease")) {errno=0;continue;}
+        if(S_ISDIR(st.st_mode)) {if(strcmp(name,"exefs")||remove_tree(target,name,1))bad=1;}
+        else if(safe_unlink(target,name))bad=1;
+        if(bad)break;
+        errno=0;
+    }
+    if(!entry&&errno)bad=1;
+    closedir(stream);return bad||fsync(target)?-1:0;
+}
+static int retirement_contents(int target,int lease_expected) {
+    int fd=directory_iterator(target);DIR *stream=fd<0?NULL:fdopendir(fd);
+    if(!stream){if(fd>=0)close(fd);return -1;}
+    int bad=0,lease_seen=0;struct dirent *entry;errno=0;
+    while((entry=readdir(stream))) {
+        const char *name=entry->d_name;
+        if(strcmp(name,".")&&strcmp(name,"..")) {
+            if(lease_expected&&!strcmp(name,".lease")&&!lease_seen)lease_seen=1;
+            else {bad=1;break;}
+        }
+        errno=0;
+    }
+    if(!entry&&errno)bad=1;
+    closedir(stream);return bad||(lease_expected&&!lease_seen)?-1:0;
+}
+static int recover_retirement(struct mng_store *s,uint64_t *completed_title,char completed_gen[65]) {
+    int retired=retirement_dir(s,0);
+    if(retired<0)return errno==ENOENT?0:-1;
+    unsigned flags=0;int target=-1,lease=-1,journal=-1,generations=-1,bad=1;
+    unsigned char data[RETIRE_BYTES],hash[32];struct stat intent_before={0},intent_after={0};char gen[65];uint64_t title=0;
+    if(retirement_shape(retired,&flags))goto done;
+    if(flags==0){bad=0;goto done;}
+    if(flags==2) { /* Reserved incomplete metadata; never payload authority. */
+        bad=safe_unlink(retired,".intent.tmp")||fsync(retired);goto done;
+    }
+    if(!(flags&1)||(flags&2))goto done;
+    journal=openat(retired,"intent.bin",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if(journal<0||regular(journal,RETIRE_BYTES,&intent_before)||intent_before.st_size!=RETIRE_BYTES||
+        intent_before.st_uid!=geteuid()||(intent_before.st_mode&077)||
+        read_all(journal,data,sizeof(data))||fstat(journal,&intent_after)||!same_snapshot(&intent_before,&intent_after)||
+        memcmp(data,"CNPYRM01",8)||retirement_digest(data,hash)||memcmp(hash,data+112,32))goto done;
+    title=get64(data+8);memcpy(gen,data+48,64);gen[64]=0;
+    if(!title||!hex_valid(gen,64)||!get64(data+24)||!get64(data+40)||retirement_unprotected(s,title,gen,&generations))goto done;
+    struct stat normal;
+    int canonical=fstatat(generations,gen,&normal,AT_SYMLINK_NOFOLLOW)==0;
+    if(!canonical&&errno!=ENOENT)goto done;
+    if(canonical&&(flags&4))goto done; /* Preserve replacement namespaces. */
+    if(canonical) {
+        target=openat(generations,gen,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+        if(target<0||retirement_identity(target,get64(data+16),get64(data+24),1))goto done;
+    } else if(flags&4) {
+        target=openat(retired,"target",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+        if(target<0||retirement_identity(target,get64(data+16),get64(data+24),1))goto done;
+    }
+    if(target>=0) {
+        lease=openat(target,".lease",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+        if(lease<0) {
+            if(canonical||errno!=ENOENT||retirement_contents(target,0))goto done;
+        } else if(retirement_identity(lease,get64(data+32),get64(data+40),0)||flock(lease,LOCK_EX|LOCK_NB))goto done;
+        struct stat retired_name;
+        if(canonical) {
+            if(fstatat(generations,gen,&retired_name,AT_SYMLINK_NOFOLLOW)||
+                (uint64_t)retired_name.st_dev!=get64(data+16)||(uint64_t)retired_name.st_ino!=get64(data+24)||
+                rename_exclusive(generations,gen,retired,"target"))goto done;
+        }
+        if(fstatat(retired,"target",&retired_name,AT_SYMLINK_NOFOLLOW)||
+            (uint64_t)retired_name.st_dev!=get64(data+16)||(uint64_t)retired_name.st_ino!=get64(data+24))goto done;
+        /* Confirm both sides of retirement before deleting any payload. */
+        if(fsync(generations)||fsync(retired))goto done;
+        if(lease>=0) {
+            if(retirement_payloads(target)||retirement_contents(target,1))goto done;
+            struct stat named;
+            if(fstatat(target,".lease",&named,AT_SYMLINK_NOFOLLOW)||
+                (uint64_t)named.st_dev!=get64(data+32)||(uint64_t)named.st_ino!=get64(data+40)||
+                safe_unlink(target,".lease")||fsync(target))goto done;
+        }
+        if(retirement_contents(target,0)||(lease<0&&fsync(target)))goto done;
+        struct stat named;
+        if(fstatat(retired,"target",&named,AT_SYMLINK_NOFOLLOW)||
+            (uint64_t)named.st_dev!=get64(data+16)||(uint64_t)named.st_ino!=get64(data+24)||
+            unlinkat(retired,"target",AT_REMOVEDIR))goto done;
+    }
+    if(fsync(retired))goto done;
+    struct stat named;
+    if(fstat(journal,&intent_after)||!same_snapshot(&intent_before,&intent_after)||
+        fstatat(retired,"intent.bin",&named,AT_SYMLINK_NOFOLLOW)||named.st_dev!=intent_before.st_dev||named.st_ino!=intent_before.st_ino||
+        safe_unlink(retired,"intent.bin")||fsync(retired))goto done;
+    if(completed_title)*completed_title=title;
+    if(completed_gen)memcpy(completed_gen,gen,65);
+    bad=0;
+ done:
+    if(journal>=0)close(journal);
+    if(lease>=0)close(lease);
+    if(target>=0)close(target);
+    if(generations>=0)close(generations);
+    close(retired);return bad?-1:0;
+}
+static int retirement_intent(int dir,uint64_t title,const char *gen,const struct stat *target,const struct stat *lease) {
+    unsigned flags=0;if(retirement_shape(dir,&flags)||flags)return -1;
+    unsigned char data[RETIRE_BYTES]={0};memcpy(data,"CNPYRM01",8);put64(data+8,title);
+    put64(data+16,(uint64_t)target->st_dev);put64(data+24,(uint64_t)target->st_ino);
+    put64(data+32,(uint64_t)lease->st_dev);put64(data+40,(uint64_t)lease->st_ino);memcpy(data+48,gen,64);
+    if(retirement_digest(data,data+112))return -1;
+    int fd=openat(dir,".intent.tmp",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(fd<0)return -1;
+    int bad=write_all(fd,data,sizeof(data))||fsync(fd);if(close(fd))bad=1;
+    if(!bad)bad=rename_exclusive(dir,".intent.tmp",dir,"intent.bin")||fsync(dir);
+    return bad?-1:0;
+}
 enum mng_prepare_status mng_store_discard_job(struct mng_store *s, const char *job_id) {
     if (!s || !hex_valid(job_id,32) || (s->job>=0 && !strcmp(job_id,s->job_id))) return MNG_PREPARE_INVALID;
     return remove_tree(s->jobs,job_id,0) ? MNG_PREPARE_IO:MNG_PREPARE_OK;
 }
 enum mng_prepare_status mng_store_remove_generation(struct mng_store *s, uint64_t title, const char *gen) {
     if (!s || !title || !hex_valid(gen,64)) return MNG_PREPARE_INVALID;
-    int dir=title_directory(s,title,0); if (dir<0) return MNG_PREPARE_IO;
-    char current[65], previous[65];
-    if (pointer_read(dir,"current",current) || !strcmp(current,gen) ||
-        (!pointer_read(dir,"previous",previous) && !strcmp(previous,gen))) { close(dir); return MNG_PREPARE_INVALID; }
-    if (pointer_read(dir,"previous",previous)) {
-        struct stat previous_stat;
-        if (!fstatat(dir,"previous",&previous_stat,AT_SYMLINK_NOFOLLOW) || errno!=ENOENT) { close(dir); return MNG_PREPARE_IO; }
-    }
-    int generations=directory(dir,"generations",0); close(dir); if (generations<0) return MNG_PREPARE_IO;
-    int target=directory(generations,gen,0); if (target<0) { close(generations); return MNG_PREPARE_IO; }
-    int lease=openat(target,".lease",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC); close(target);
-    int bad=lease<0 || regular(lease,0,NULL) || flock(lease,LOCK_EX|LOCK_NB);
-    if (!bad) bad=remove_tree(generations,gen,0);
-    if (lease>=0) close(lease);
-    close(generations); return bad ? MNG_PREPARE_IO:MNG_PREPARE_OK;
+    uint64_t completed=0;char recovered[65];
+    if(recover_retirement(s,&completed,recovered))return MNG_PREPARE_IO;
+    if(completed==title&&!strcmp(recovered,gen))return MNG_PREPARE_OK;
+    int generations=-1;
+    int protected=retirement_unprotected(s,title,gen,&generations);
+    if(protected)return protected==-2?MNG_PREPARE_INVALID:MNG_PREPARE_IO;
+    int target=openat(generations,gen,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    struct stat target_stat={0},lease_stat={0};
+    int lease=target<0?-1:openat(target,".lease",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    int bad=target<0||fstat(target,&target_stat)||target_stat.st_uid!=geteuid()||(target_stat.st_mode&077)||
+        lease<0||regular(lease,0,&lease_stat)||lease_stat.st_uid!=geteuid()||(lease_stat.st_mode&077)||flock(lease,LOCK_EX|LOCK_NB);
+    int retired=-1;
+    if(!bad) {retired=retirement_dir(s,1);bad=retired<0||retirement_intent(retired,title,gen,&target_stat,&lease_stat);}
+    if(retired>=0)close(retired);
+    if(lease>=0)close(lease);
+    if(target>=0)close(target);
+    close(generations);
+    /* Reacquire/check the genuine recorded lease immediately before retirement.
+     * The exclusive store lock stays held across intent and this recovery path. */
+    if(!bad)bad=recover_retirement(s,NULL,NULL);
+    return bad?MNG_PREPARE_IO:MNG_PREPARE_OK;
 }

@@ -108,6 +108,13 @@ enum mng_prepare_status mng_store_pin(struct mng_store *store,
 /* Bounded removal only within jobs or one title's generations. Generation
  * removal refuses both current and previous. Symlinked trees are refused. */
 enum mng_prepare_status mng_store_discard_job(struct mng_store *store, const char *job_id);
+/* Recoverable removal under the existing store lock: a durable checksummed
+ * intent binds directory/lease identities before exclusive retirement. Current,
+ * previous and genuinely pinned generations remain protected. Open resumes at
+ * most one recorded retirement; absent .retirement is not created for reads.
+ * IO may mean retirement already began; retry/close-and-reopen to reconcile.
+ * Missing-lease canonical directories and unknown/mismatched retired entries
+ * are preserved, never inferred to be disposable. No receipt identity changes. */
 enum mng_prepare_status mng_store_remove_generation(struct mng_store *store,
     uint64_t title_id, const char *generation_id);
 #endif
