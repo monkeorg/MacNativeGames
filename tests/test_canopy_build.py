@@ -20,7 +20,9 @@ class CanopyBuildTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        # macOS /var is a symlink to /private/var. Match the builder's required
+        # canonical output ancestry without weakening its symlink safeguard.
+        self.root = Path(self.temporary.name).resolve()
         self.repo = self.root / 'repo'
         self.repo.mkdir()
         for name in builder.INPUTS:
