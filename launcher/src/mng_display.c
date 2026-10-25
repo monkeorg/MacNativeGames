@@ -28,3 +28,13 @@ int mng_display_check(const struct mng_display_profile *profile,const struct mng
     return config->width==expected->width&&config->height==expected->height&&config->aspect==expected->aspect&&
         config->experimental==expected->experimental&&config->fixed_resolution==expected->fixed_resolution?0:-1;
 }
+
+int mng_display_presentation(const struct mng_display_profile *profile,const struct mng_display_config *config,
+    double sw,double sh,double cw,double ch,double anchor,struct mng_display_presentation *out) {
+    if(!out||mng_display_check(profile,config,sw,sh)||!isfinite(cw)||!isfinite(ch)||cw<=0||ch<=0||cw>32768||ch>32768||
+       !isfinite(anchor)||anchor<1||anchor>16384||floor(anchor)!=anchor)return -1;
+    if(config->aspect==MNG_DISPLAY_FULL && cw*3!=ch*4)return 1;
+    double height=round(anchor*ch/cw);
+    if(!isfinite(height)||height<1||height>16384)return -1;
+    struct mng_display_presentation result={(uint32_t)anchor,(uint32_t)height};*out=result;return 0;
+}

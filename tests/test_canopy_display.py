@@ -20,6 +20,10 @@ class CanopyDisplayTests(unittest.TestCase):
     def scenario(self,name):
         run=subprocess.run([str(self.probe),name],capture_output=True,text=True,timeout=10)
         self.assertEqual(run.returncode,0,run.stdout+run.stderr);self.assertEqual(run.stderr,'');self.assertEqual(json.loads(run.stdout)['status'],'pass')
+    def test_presentation_resize_preserves_scene_and_native_width(self):self.scenario('layout-wide')
+    def test_stock_presentation_retains_actual_width_not_scene_target(self):self.scenario('layout-stock')
+    def test_full_projection_rejects_incompatible_layout_then_allows_return(self):self.scenario('layout-full')
+    def test_invalid_presentation_and_unrepresentable_sizes_preserve_output(self):self.scenario('layout-invalid')
     def test_stock_v121_only_720_sixteen_nine(self):self.scenario('stock')
     def test_unsupported_stock_requests_have_explicit_fallback_outcomes(self):self.scenario('stock-fallback')
     def test_checked_scene_profile_1080_and_separate_four_three_capability(self):self.scenario('wide')
