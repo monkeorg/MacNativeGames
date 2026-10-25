@@ -90,6 +90,18 @@
       },
       "patch": "0007-readonly-ir-query-loop-checkpoints.patch",
       "sha256": "7ed8e4c3c3a097035d6dc2a735fd52cbf638cdfc4d8a8b8e689a03d2f33a715e"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "c4097b1762ecccb57cd569331fad9e8c980ff5e2c8857509209c2c12a7d54525",
+        "spirv_msl.cpp": "e82e6d8f146fc32c02eebdb7e7b369a7b7097369d2f37791a60b3812e50d2d4f"
+      },
+      "before": {
+        "spirv_glsl.cpp": "b36cd06bea5485d88f6b1c4d9601188d4a2c104280718720f2272e8fd8d29094",
+        "spirv_msl.cpp": "b4cc26a8ad667603be6dcdaf91a48653195463d26fbfaa98903856bcd155077c"
+      },
+      "patch": "0008-statement-emission-loop-checkpoints.patch",
+      "sha256": "d767f1fb23616fccff5c55947abca88ce708f1767b96479b2915a02f4a4e8594"
     }
   ],
   "schemaVersion": 1

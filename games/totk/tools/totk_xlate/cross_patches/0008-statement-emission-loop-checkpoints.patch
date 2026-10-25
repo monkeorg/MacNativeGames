@@ -1,0 +1,113 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -1216,7 +1216,10 @@
+ 				statement(&ext != &exts.front() ? "#elif" : "#if", " defined(", name, ")",
+ 				          (*extra_predicate != '\0' ? " && " : ""), extra_predicate);
+ 				for (const auto &e : extra_names)
++				{
++					canopy_cross_budget::step();
+ 					statement("#extension ", e, " : enable");
++				}
+ 				statement("#extension ", name, " : require");
+ 			}
+ 
+@@ -1231,7 +1234,10 @@
+ 	}
+ 
+ 	for (auto &header : header_lines)
++	{
++		canopy_cross_budget::step();
+ 		statement(header);
++	}
+ 
+ 	if (ir.is_library_module)
+ 	{
+@@ -3514,7 +3520,10 @@
+ 		statement("__pixel_local_inEXT _PLSIn");
+ 		begin_scope();
+ 		for (auto &input : pls_inputs)
++		{
++			canopy_cross_budget::step();
+ 			statement(pls_decl(input), ";");
++		}
+ 		end_scope_decl();
+ 		statement("");
+ 	}
+@@ -3524,7 +3533,10 @@
+ 		statement("__pixel_local_outEXT _PLSOut");
+ 		begin_scope();
+ 		for (auto &output : pls_outputs)
++		{
++			canopy_cross_budget::step();
+ 			statement(pls_decl(output), ";");
++		}
+ 		end_scope_decl();
+ 		statement("");
+ 	}
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -1629,7 +1629,10 @@
+ 			begin_scope();
+ 			uint32_t array_size = get_resource_array_size(type, var.self);
+ 			for (uint32_t i = 0; i < array_size; ++i)
++			{
++				canopy_cross_budget::step();
+ 				statement(name, "_", i, ",");
++			}
+ 			end_scope_decl();
+ 			statement_no_indent("");
+ 		}
+@@ -5915,7 +5918,10 @@
+ 	}
+ 
+ 	for (auto &pragma : pragma_lines)
++	{
++		canopy_cross_budget::step();
+ 		statement(pragma);
++	}
+ 
+ 	if (!pragma_lines.empty())
+ 		statement("");
+@@ -5924,14 +5930,20 @@
+ 	statement("#include <simd/simd.h>");
+ 
+ 	for (auto &header : header_lines)
++	{
++		canopy_cross_budget::step();
+ 		statement(header);
++	}
+ 
+ 	statement("");
+ 	statement("using namespace metal;");
+ 	statement("");
+ 
+ 	for (auto &td : typedef_lines)
++	{
++		canopy_cross_budget::step();
+ 		statement(td);
++	}
+ 
+ 	if (!typedef_lines.empty())
+ 		statement("");
+@@ -9910,7 +9922,10 @@
+ 				if (!type.array_size_literal.front())
+ 					SPIRV_CROSS_THROW("Cannot load array of clip-cull distances from spec constant array size.");
+ 				for (uint32_t i = 0; i < type.array[0]; i++)
++				{
++					canopy_cross_budget::step();
+ 					statement(to_expression(id), "[", i, "] = ", to_expression(ptr), "[", i, "];");
++				}
+ 			}
+ 			else
+ 			{
+@@ -11715,7 +11730,10 @@
+ 			else
+ 			{
+ 				for (uint32_t i = 0; i < array_size; i++)
++				{
++					canopy_cross_budget::step();
+ 					statement(to_expression(id_lhs), "[", i, "] = half(", to_expression(id_rhs), "[", i, "]);");
++				}
+ 			}
+ 			return true;
+ 		}
