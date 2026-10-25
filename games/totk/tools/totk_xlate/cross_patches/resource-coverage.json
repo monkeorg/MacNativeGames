@@ -514,7 +514,8 @@
   "explicitArithmetic": [
     "type-location vector-size narrowing, member-count addition and array-factor multiplication (caller location offsets and specialization evaluation excluded)",
     "MSL used-location spans and automatic builtin search advancement reserve the existing unknown-location sentinel (upstream caller offset arithmetic excluded)",
-    "eight interface base-offset/cursor additions in three MSL flattening methods and GLSL accumulated-member lookup refuse the unknown sentinel before arithmetic (other location math excluded)"
+    "eight interface base-offset/cursor additions in three MSL flattening methods and GLSL accumulated-member lookup refuse the unknown sentinel before arithmetic (other location math excluded)",
+    "existing 32-bit specialization opcodes: exact operand arity, bounded shifts, unsigned negate/sign-fill, int64 signed comparison/division/remainders and signed-division overflow refusal (not a full SPIR-V validator)"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
@@ -531,7 +532,8 @@
     "type-location member traversal",
     "MSL composite interface-member flattening",
     "MSL packable type parent/member marking",
-    "MSL workgroup type parent/member marking"
+    "MSL workgroup type parent/member marking",
+    "scalar specialization-operation evaluation"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",

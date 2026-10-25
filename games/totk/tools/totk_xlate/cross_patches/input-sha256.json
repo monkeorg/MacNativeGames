@@ -238,6 +238,16 @@
       },
       "patch": "0020-text-output-loop-checkpoints.patch",
       "sha256": "64fabf96fb0c0351a3eee5c3e790260b37a670a3590407667716326365dbd870"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "7f85a5f703ef4421928b5917f8a18ad11c3b01f89e1a85bc6404fa2a53cfbc9c"
+      },
+      "before": {
+        "spirv_cross.cpp": "7f5902ad0d5176f8a9ef6fbb434bcc30670e028f19bd0d51c2cc6b44231a404c"
+      },
+      "patch": "0021-specialization-evaluator-bounds.patch",
+      "sha256": "92948e54a24275640e5a22228545d8be3c8236736091cdc4131026b52aa06f32"
     }
   ],
   "schemaVersion": 1
