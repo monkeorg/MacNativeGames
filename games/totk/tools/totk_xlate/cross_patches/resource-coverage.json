@@ -464,6 +464,51 @@
       "file": "spirv_msl.cpp",
       "originalInventoryAnchor": "spirv_msl.cpp:2027",
       "originalSourceLine": 2027
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:3461",
+      "originalSourceLine": 3462
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:17577",
+      "originalSourceLine": 17577
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:19401",
+      "originalSourceLine": 19401
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:19415",
+      "originalSourceLine": 19415
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:19524",
+      "originalSourceLine": 19524
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:19694",
+      "originalSourceLine": 19696
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:12509",
+      "originalSourceLine": 12509
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:12771",
+      "originalSourceLine": 12771
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:13612",
+      "originalSourceLine": 13612
     }
   ],
   "explicitArithmetic": [
@@ -494,8 +539,8 @@
     "StringStream append/allocation/final copy"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 448,
-  "instrumentedOriginallyUnbracedLoops": 91,
+  "instrumentedLoopCheckpoints": 457,
+  "instrumentedOriginallyUnbracedLoops": 100,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -542,9 +587,13 @@
     {
       "originalInventoryAnchor": "spirv_msl.cpp:4265",
       "reason": "Zero iterations: outer if (is_builtin && is_active) dominates the inner is_block branch; is_active remains true before for (...; !is_active && i < mbr_cnt; ...). No intervening assignment or reference-taking call can change it. Original upstream logic retained, with no checkpoint added."
+    },
+    {
+      "originalInventoryAnchor": "spirv_glsl.cpp:792",
+      "reason": "Exactly two iterations: IntegerDotProduct::argument_type is the source-defined Id argument_type[2] array (spirv_glsl.hpp), traversed by range-for. Source unchanged; no checkpoint added."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 60,
+  "unbracedLoopsInputDependentOrUnprovenCount": 50,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:2746",
     "spirv_cross.cpp:3505",
@@ -562,7 +611,6 @@
     "spirv_glsl.cpp:2224",
     "spirv_glsl.cpp:3005",
     "spirv_glsl.cpp:3339",
-    "spirv_glsl.cpp:3461",
     "spirv_glsl.cpp:4161",
     "spirv_glsl.cpp:4433",
     "spirv_glsl.cpp:4953",
@@ -579,15 +627,10 @@
     "spirv_glsl.cpp:17150",
     "spirv_glsl.cpp:17264",
     "spirv_glsl.cpp:17268",
-    "spirv_glsl.cpp:17577",
     "spirv_glsl.cpp:18294",
     "spirv_glsl.cpp:18953",
     "spirv_glsl.cpp:19181",
-    "spirv_glsl.cpp:19401",
-    "spirv_glsl.cpp:19415",
-    "spirv_glsl.cpp:19524",
     "spirv_glsl.cpp:19565",
-    "spirv_glsl.cpp:19694",
     "spirv_glsl.cpp:19819",
     "spirv_glsl.cpp:20229",
     "spirv_glsl.cpp:20694",
@@ -605,10 +648,7 @@
     "spirv_msl.cpp:9159",
     "spirv_msl.cpp:9162",
     "spirv_msl.cpp:9256",
-    "spirv_msl.cpp:12509",
-    "spirv_msl.cpp:12771",
     "spirv_msl.cpp:13453",
-    "spirv_msl.cpp:13612",
     "spirv_msl.cpp:15136",
     "spirv_msl.cpp:15553",
     "spirv_msl.cpp:16481",
@@ -618,7 +658,7 @@
     "spirv_msl.cpp:19930",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 71,
+  "unbracedLoopsNotInstrumentedCount": 62,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",
