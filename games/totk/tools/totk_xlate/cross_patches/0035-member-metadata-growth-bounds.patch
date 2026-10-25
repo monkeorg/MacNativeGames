@@ -1,0 +1,92 @@
+--- a/spirv_cross_containers.hpp
++++ b/spirv_cross_containers.hpp
+@@ -206,6 +206,11 @@
+ class SmallVector : public VectorView<T>
+ {
+ public:
++	size_t capacity() const SPIRV_CROSS_NOEXCEPT
++	{
++		return buffer_capacity;
++	}
++
+ 	SmallVector() SPIRV_CROSS_NOEXCEPT
+ 	{
+ 		this->ptr = stack_storage.data();
+--- a/spirv_cross_parsed_ir.cpp
++++ b/spirv_cross_parsed_ir.cpp
+@@ -360,8 +360,46 @@
+ 		meta_needing_name_fixup.insert(id);
+ }
+ 
++// Annotations may precede type declarations. Bound member metadata storage,
++// not declared struct shape, before map insertion or noexcept vector growth.
++static void precharge_member_metadata_growth(const Meta *existing, uint32_t index)
++{
++	const uint64_t limit = UINT64_C(256) * 1024 * 1024;
++	const uint64_t size_limit = uint64_t((std::numeric_limits<size_t>::max)());
++	const uint64_t requested = uint64_t(index) + 1;
++	const uint64_t old_size = existing ? existing->members.size() : 0;
++	const uint64_t required = (std::max)(old_size, requested);
++	const uint64_t element_size = sizeof(Meta::Decoration);
++	if (required > 262144 || required > size_limit / element_size ||
++	    required > size_limit / 2 || required > limit / element_size)
++		throw canopy_cross_budget::failure{5};
++
++	const uint64_t added = required - old_size;
++	const uint64_t capacity = existing ? existing->members.capacity() : 0;
++	uint64_t bytes = 0, work = 1 + added;
++	if (required > capacity)
++	{
++		// Vector<Decoration> is the pinned SmallVector<T, 0>: no inline slots.
++		uint64_t target = capacity ? capacity : 1;
++		// required <= 262144; at most 18 doublings. No inventory credit.
++		while (target < required)
++		{
++			if (target > size_limit / 2 || target > (limit / element_size) / 2)
++				throw canopy_cross_budget::failure{5};
++			target *= 2;
++		}
++		if (target > size_limit / element_size || target > limit / element_size)
++			throw canopy_cross_budget::failure{5};
++		bytes = target * element_size; // The entire replacement allocation.
++		work += old_size; // reserve moves old rows; resize constructs added rows.
++	}
++	canopy_cross_budget::step(work, added, bytes);
++}
++
+ void ParsedIR::set_member_name(TypeID id, uint32_t index, const string &name)
+ {
++	auto existing = meta.find(id);
++	precharge_member_metadata_growth(existing == meta.end() ? nullptr : &existing->second, index);
+ 	auto &m = meta[id];
+ 	m.members.resize(max(m.members.size(), size_t(index) + 1));
+ 	m.members[index].alias = name;
+@@ -481,6 +519,8 @@
+ 
+ void ParsedIR::set_member_decoration(TypeID id, uint32_t index, Decoration decoration, uint32_t argument)
+ {
++	auto existing = meta.find(id);
++	precharge_member_metadata_growth(existing == meta.end() ? nullptr : &existing->second, index);
+ 	auto &m = meta[id];
+ 	m.members.resize(max(m.members.size(), size_t(index) + 1));
+ 	auto &dec = m.members[index];
+@@ -868,6 +908,8 @@
+ 
+ void ParsedIR::set_member_decoration_string(TypeID id, uint32_t index, Decoration decoration, const string &argument)
+ {
++	auto existing = meta.find(id);
++	precharge_member_metadata_growth(existing == meta.end() ? nullptr : &existing->second, index);
+ 	auto &m = meta[id];
+ 	m.members.resize(max(m.members.size(), size_t(index) + 1));
+ 	auto &dec = meta[id].members[index];
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -5469,6 +5469,8 @@
+ 		auto &members = type_meta->members;
+ 		if (index >= members.size())
+ 			return flags;
++		if (index >= type.member_types.size())
++			SPIRV_CROSS_THROW("Member decoration index exceeds the type member list.");
+ 		auto &dec = members[index];
+ 
+ 		flags.merge_or(dec.decoration_flags);
