@@ -260,6 +260,16 @@
       },
       "patch": "0022-expression-dependency-loop-checkpoints.patch",
       "sha256": "a34d4a13b319dec52d3a056c3882a43ebc509effba42db9de5c86c99f39ef7b2"
+    },
+    {
+      "after": {
+        "spirv_cross_parsed_ir.cpp": "01c57f8e4ec880a71b03622a40758a787449ef26ee6a314b1b5f3fbf72ded1b4"
+      },
+      "before": {
+        "spirv_cross_parsed_ir.cpp": "764fe5c9323d296c2177ef924451f8b88850d46b0bc98feb417c64cd7fb23b59"
+      },
+      "patch": "0023-null-constant-planning-bounds.patch",
+      "sha256": "528eacd233018c64884038195a6afda9c6228f0f559d18ec682bb8ecc41f7462"
     }
   ],
   "schemaVersion": 1

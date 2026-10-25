@@ -555,7 +555,8 @@
     "type-location vector-size narrowing, member-count addition and array-factor multiplication (caller location offsets and specialization evaluation excluded)",
     "MSL used-location spans and automatic builtin search advancement reserve the existing unknown-location sentinel (upstream caller offset arithmetic excluded)",
     "eight interface base-offset/cursor additions in three MSL flattening methods and GLSL accumulated-member lookup refuse the unknown sentinel before arithmetic (other location math excluded)",
-    "existing 32-bit specialization opcodes: exact operand arity, bounded shifts, unsigned negate/sign-fill, int64 signed comparison/division/remainders and signed-division overflow refusal (not a full SPIR-V validator)"
+    "existing 32-bit specialization opcodes: exact operand arity, bounded shifts, unsigned negate/sign-fill, int64 signed comparison/division/remainders and signed-division overflow refusal (not a full SPIR-V validator)",
+    "ParsedIR null-constant array/literal shape and member-count narrowing; uint64 logical slot-byte charge for both reference buffers"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
@@ -573,12 +574,14 @@
     "MSL composite interface-member flattening",
     "MSL packable type parent/member marking",
     "MSL workgroup type parent/member marking",
-    "scalar specialization-operation evaluation"
+    "scalar specialization-operation evaluation",
+    "ParsedIR null-constant parent/member construction"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
     "ObjectPool chunks",
-    "StringStream append/allocation/final copy"
+    "StringStream append/allocation/final copy",
+    "ParsedIR null-constant requested reference slots for temporary plus subconstants (logical charges before noexcept constructors, not actual capacity/heap guarantees)"
   ],
   "instrumentedBracedLoops": 357,
   "instrumentedLoopCheckpoints": 465,
