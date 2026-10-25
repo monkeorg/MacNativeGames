@@ -826,7 +826,8 @@
     "ParsedIR null-constant requested reference slots for temporary plus subconstants (logical charges before noexcept constructors, not actual capacity/heap guarantees)"
   ],
   "explicitOperandAdmission": [
-    "Parser closed source-access minimums for38 supported type/constant/Undef opcodes before dispatch after ignored trailing-op handling; conditional wide scalar literal second word and Float8 encoding checked before access. Extra/optional operands and aggregate/long-vector/replicated routes retained; not full grammar, ID, string, function/control-flow or image operand-mask validation."
+    "Parser closed source-access minimums for38 supported type/constant/Undef opcodes before dispatch after ignored trailing-op handling; conditional wide scalar literal second word and Float8 encoding checked before access. Extra/optional operands and aggregate/long-vector/replicated routes retained; not full grammar, ID, string, function/control-flow or image operand-mask validation.",
+    "Selected GLSL constant_op_expression CompositeExtract/Insert minimum argument counts2/3 and uint32 narrowing limit before indexed reads/subtraction; nested/final insert indices bounded by actual initializer list, Struct member-type read bounded after original array-first branch. Whole fixed-four default slots retained; not all constant-op or access-chain validation."
   ],
   "explicitOwnership": [
     "Parser direct raw-ID self-alias refusal before source lookup and Variant replacement for OpTypeArray/RuntimeArray/Pointer only; UntypedPointer and distinct-pointee forward resolution unchanged, not a global ID/redefinition validator"

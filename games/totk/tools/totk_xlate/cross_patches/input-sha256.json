@@ -508,6 +508,16 @@
       },
       "patch": "0045-array-length-dependency-depth-bounds.patch",
       "sha256": "e27a0abfd7a34cd104b00afe0f887e3614746e855db001f4009824031539ac57"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "2e1b1ed1fa52140e327778e410b52b6eefffdd1f7268f2e04d7eb50c66b864cc"
+      },
+      "before": {
+        "spirv_glsl.cpp": "4d1d9475781499d97928fb5ad99ddc4fd6e664fa13e11e468a3e4f6d722cd2a9"
+      },
+      "patch": "0046-specialization-composite-operand-index-bounds.patch",
+      "sha256": "7b1fbbc160c310406fe656d1a150bb49182ca8115c1030d9e1e9d0b5a3c67a78"
     }
   ],
   "schemaVersion": 1

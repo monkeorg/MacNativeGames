@@ -1,0 +1,52 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -6251,7 +6251,11 @@
+ 	if (is_array(type))
+ 		return type.parent_type;
+ 	if (type.basetype == SPIRType::Struct)
++	{
++		if (member_idx >= type.member_types.size())
++			SPIRV_CROSS_THROW("Specialization composite member exceeds the type member list.");
+ 		return type.member_types[member_idx];
++	}
+ 	if (is_matrix(type))
+ 		return type.parent_type;
+ 	if (is_vector(type))
+@@ -6399,6 +6403,9 @@
+ 
+ 	case OpCompositeExtract:
+ 	{
++		if (cop.arguments.size() < 2 ||
++		    cop.arguments.size() > (std::numeric_limits<uint32_t>::max)())
++			SPIRV_CROSS_THROW("Specialization composite extract has an invalid operand count.");
+ 		// Trivial vector extracts (of WorkGroupSize typically),
+ 		// punch through to the input spec constant if the composite is used as array size.
+ 		const auto *c = maybe_get<SPIRConstant>(cop.arguments[0]);
+@@ -6420,6 +6427,9 @@
+ 
+ 	case OpCompositeInsert:
+ 	{
++		if (cop.arguments.size() < 3 ||
++		    cop.arguments.size() > (std::numeric_limits<uint32_t>::max)())
++			SPIRV_CROSS_THROW("Specialization composite insert has an invalid operand count.");
+ 		SmallVector<ConstantID> new_init = get_composite_constant_ids(cop.arguments[1]);
+ 		uint32_t idx;
+ 		uint32_t target_id = cop.self;
+@@ -6429,6 +6439,8 @@
+ 		for (idx = 2; idx < cop.arguments.size() - 1; ++idx)
+ 		{
+ 		canopy_cross_budget::step();
++			if (cop.arguments[idx] >= new_init.size())
++				SPIRV_CROSS_THROW("Specialization composite insert exceeds the initializer list.");
+ 			uint32_t new_const = ir.increase_bound_by(1);
+ 			uint32_t old_const = new_init[cop.arguments[idx]];
+ 			new_init[cop.arguments[idx]] = new_const;
+@@ -6438,6 +6450,8 @@
+ 			target_type_id = get_composite_member_type(target_type_id, cop.arguments[idx]);
+ 		}
+ 		// Now replace the initializer with the one from this instruction.
++		if (cop.arguments[idx] >= new_init.size())
++			SPIRV_CROSS_THROW("Specialization composite insert exceeds the initializer list.");
+ 		new_init[cop.arguments[idx]] = cop.arguments[0];
+ 		set_composite_constant(target_id, target_type_id, new_init);
+ 		SPIRConstant tmp_const(cop.basetype);
