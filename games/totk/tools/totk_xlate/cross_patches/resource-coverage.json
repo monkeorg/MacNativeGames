@@ -304,6 +304,61 @@
       "file": "spirv_msl.cpp",
       "originalInventoryAnchor": "spirv_msl.cpp:11617",
       "originalSourceLine": 11617
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:12256",
+      "originalSourceLine": 12257
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:12264",
+      "originalSourceLine": 12264
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:12267",
+      "originalSourceLine": 12267
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:20485",
+      "originalSourceLine": 20485
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:20923",
+      "originalSourceLine": 20924
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:14577",
+      "originalSourceLine": 14577
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:14621",
+      "originalSourceLine": 14621
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:20989",
+      "originalSourceLine": 20990
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:20995",
+      "originalSourceLine": 20995
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:13765",
+      "originalSourceLine": 13767
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:13789",
+      "originalSourceLine": 13790
     }
   ],
   "explicitDepth": [
@@ -322,8 +377,8 @@
     "StringStream append/allocation/final copy"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 416,
-  "instrumentedOriginallyUnbracedLoops": 59,
+  "instrumentedLoopCheckpoints": 427,
+  "instrumentedOriginallyUnbracedLoops": 70,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -368,7 +423,7 @@
       "reason": "The source-defined contiguous implementation enum interval contains exactly 14 values."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 93,
+  "unbracedLoopsInputDependentOrUnprovenCount": 82,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:356",
     "spirv_cross.cpp:365",
@@ -410,9 +465,6 @@
     "spirv_glsl.cpp:11736",
     "spirv_glsl.cpp:12210",
     "spirv_glsl.cpp:12218",
-    "spirv_glsl.cpp:12256",
-    "spirv_glsl.cpp:12264",
-    "spirv_glsl.cpp:12267",
     "spirv_glsl.cpp:12277",
     "spirv_glsl.cpp:12280",
     "spirv_glsl.cpp:12282",
@@ -435,11 +487,9 @@
     "spirv_glsl.cpp:19694",
     "spirv_glsl.cpp:19819",
     "spirv_glsl.cpp:20229",
-    "spirv_glsl.cpp:20485",
     "spirv_glsl.cpp:20694",
     "spirv_glsl.cpp:20775",
     "spirv_glsl.cpp:20782",
-    "spirv_glsl.cpp:20923",
     "spirv_glsl.cpp:21007",
     "spirv_glsl.cpp:21016",
     "spirv_glsl.cpp:21251",
@@ -459,10 +509,6 @@
     "spirv_msl.cpp:12771",
     "spirv_msl.cpp:13453",
     "spirv_msl.cpp:13612",
-    "spirv_msl.cpp:13765",
-    "spirv_msl.cpp:13789",
-    "spirv_msl.cpp:14577",
-    "spirv_msl.cpp:14621",
     "spirv_msl.cpp:15136",
     "spirv_msl.cpp:15553",
     "spirv_msl.cpp:16481",
@@ -470,11 +516,9 @@
     "spirv_msl.cpp:17273",
     "spirv_msl.cpp:19225",
     "spirv_msl.cpp:19930",
-    "spirv_msl.cpp:20378",
-    "spirv_msl.cpp:20989",
-    "spirv_msl.cpp:20995"
+    "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 103,
+  "unbracedLoopsNotInstrumentedCount": 92,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",
