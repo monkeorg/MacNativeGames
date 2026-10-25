@@ -1,4 +1,11 @@
 {
+  "boundedAddedHelperLoopsExcluded": [
+    {
+      "function": "parser_type_vector_copy_bytes",
+      "patch": "0029-parser-type-copy-precharges.patch",
+      "reason": "A count precheck limits count to 256 MiB / sizeof(element), capacity starts at8 and doubles with checked arithmetic: at most25 iterations for sizeof(element)>=1. No checkpoint or original-loop inventory credit. Not a generic allocator/noexcept modification."
+    }
+  ],
   "boundedMacroWrappersExcluded": [
     {
       "originalInventoryAnchor": "spirv_msl.cpp:10085",
@@ -658,7 +665,8 @@
     "existing 32-bit specialization opcodes: exact operand arity, bounded shifts, unsigned negate/sign-fill, int64 signed comparison/division/remainders and signed-division overflow refusal (not a full SPIR-V validator)",
     "ParsedIR null-constant array/literal shape and member-count narrowing; uint64 logical slot-byte charge for both reference buffers",
     "two array-dimension query overloads reject empty/default narrowing and mismatched/indexed metadata before access (zero dimension values and existing default-spec evaluation preserved)",
-    "get_metal_resource_index only: dimension narrowing/product, remapped texture-plus-plane and four numeric cursor additions (exact UINT32_MAX and zero strides preserved; not full resource validity)"
+    "get_metal_resource_index only: dimension narrowing/product, remapped texture-plus-plane and four numeric cursor additions (exact UINT32_MAX and zero strides preserved; not full resource validity)",
+    "Parser type-copy precharges: four default-N8 SmallVector copied payload capacities, copied-element work and immediate array append growth; checked per-copy256MiB and cumulative existing budget before Variant/ObjectPool transitions, no allocator/noexcept changes"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
