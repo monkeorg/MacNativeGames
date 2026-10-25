@@ -8,6 +8,11 @@ BOOL TOTKLauncherMetalHUD(NSUserDefaults *defaults);
 NSInteger TOTKLauncherFPSLimit(NSUserDefaults *defaults);
 BOOL TOTKLauncherTAA(NSUserDefaults *defaults);
 NSInteger TOTKLauncherRenderHeight(NSUserDefaults *defaults);
+NSInteger TOTKLauncherSceneScale(NSUserDefaults *defaults);
+NSInteger TOTKLauncherCustomSceneHeight(NSUserDefaults *defaults);
+BOOL TOTKLauncherSpatialUpscaling(NSUserDefaults *defaults);
+BOOL TOTKLauncherSceneSize(NSUserDefaults *defaults, unsigned outputWidth, unsigned outputHeight,
+                           unsigned *width, unsigned *height);
 NSString *TOTKLauncherAspect(NSUserDefaults *defaults);
 BOOL TOTKLauncherDisplaySettingsAvailable(NSDictionary *info);
 /* Width and height are required; fullDisplay is optional. NO leaves outputs unchanged. */

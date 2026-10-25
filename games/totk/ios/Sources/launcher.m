@@ -21,6 +21,8 @@ static NSDictionary *startup_preferences(NSUserDefaults *defaults) {
     NSMutableDictionary *bindings = [NSMutableDictionary dictionary];
     for (NSString *button in TOTKLauncherControlButtons()) bindings[button] = TOTKLauncherControlBinding(defaults,button);
     return @{@"render":@(TOTKLauncherRenderHeight(defaults)), @"aspect":TOTKLauncherAspect(defaults),
+        @"scene":@{@"scale":@(TOTKLauncherSceneScale(defaults)),@"height":@(TOTKLauncherCustomSceneHeight(defaults))},
+        @"upscaling":@(TOTKLauncherSpatialUpscaling(defaults)),
         @"controller":TOTKLauncherControllerType(defaults),
         @"sensitivity":@(TOTKLauncherMouseSensitivity(defaults)), @"invert":@(TOTKLauncherMouseInvertY(defaults)),
         @"bindings":[bindings copy], @"language":TOTKLauncherLanguage(defaults)};
@@ -109,6 +111,56 @@ static void show_restart_required(UIViewController *controller) {
 }
 - (BOOL)prefersStatusBarHidden { return YES; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
+@end
+
+@interface TOTKSceneScale : UIViewController
+@property(nonatomic) NSInteger percent;
+@property(nonatomic) unsigned outputWidth, outputHeight;
+@property(nonatomic,strong) UISlider *slider;
+@property(nonatomic,strong) UILabel *summary;
+@property(nonatomic,copy) void (^saved)(NSInteger);
+@end
+@implementation TOTKSceneScale
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.title = @"Scene render scale";
+    self.view.backgroundColor = UIColor.systemGroupedBackgroundColor;
+    self.preferredContentSize = CGSizeMake(420,220);
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(cancel)];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(save)];
+    self.summary = [UILabel new]; self.summary.numberOfLines = 0;
+    self.summary.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    self.summary.accessibilityIdentifier = @"TOTKSceneScaleSummary";
+    self.slider = [UISlider new]; self.slider.minimumValue = 50; self.slider.maximumValue = 100; self.slider.value = self.percent;
+    self.slider.accessibilityLabel = @"Scene render scale";
+    self.slider.accessibilityIdentifier = @"TOTKSceneScaleSlider";
+    [self.slider addTarget:self action:@selector(changed) forControlEvents:UIControlEventValueChanged];
+    UILabel *hint = [UILabel new]; hint.numberOfLines = 0;
+    hint.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; hint.textColor = UIColor.secondaryLabelColor;
+    hint.text = @"Lower values reduce scene detail and GPU work. Output resolution stays unchanged. Changes require restart during play.";
+    UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[self.summary,self.slider,hint]];
+    stack.axis = UILayoutConstraintAxisVertical; stack.spacing = 16; stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:20],
+        [stack.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-20],
+        [stack.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:20],
+        [stack.bottomAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-20]
+    ]];
+    [self changed];
+}
+- (void)changed {
+    self.percent = lroundf(self.slider.value);
+    self.slider.accessibilityValue = [NSString stringWithFormat:@"%ld percent",(long)self.percent];
+    unsigned w = (unsigned)(2 * round(self.outputWidth * self.percent / 200.0));
+    unsigned h = (unsigned)(2 * round(self.outputHeight * self.percent / 200.0));
+    self.summary.text = [NSString stringWithFormat:@"%ld%% · scene %u × %u\nOutput %u × %u (requested)",(long)self.percent,w,h,self.outputWidth,self.outputHeight];
+}
+- (void)cancel { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (void)save {
+    NSInteger percent = self.percent; void (^saved)(NSInteger) = self.saved;
+    [self dismissViewControllerAnimated:YES completion:^{ if (saved) saved(percent); }];
+}
 @end
 
 @interface TOTKKeyboardMappings : UITableViewController
@@ -242,7 +294,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return (NSInteger[]){1,6,6,5,1}[section];
+    (void)tableView; return (NSInteger[]){1,8,6,5,1}[section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return @[@"",@"Graphics",@"Controls",@"Saves",@"Language"][section];
@@ -258,13 +310,19 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section == 0) return _inGame ? @"Adjust graphics and controls. The game stays active while this menu is open." : (_unavailable ?: @"Choose settings and manage saves before Play. Use the game menu to return to settings during play.");
-    if (_inGame && section == 1) return @"Frame rate and overlays apply live. TAA On requests temporal anti-aliasing; device support does not confirm frame application. Resolution and aspect require restart. 40 FPS requires a compatible display.";
+    if (section == 1) {
+        if (!TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary)) return @"This build supports 1280 × 720 at 16:9.";
+        CGSize size = self.view.window ? self.view.window.bounds.size : self.view.bounds.size;
+        unsigned ow=1280,oh=720,w=1280,h=720;
+        TOTKLauncherDisplaySize(NSUserDefaults.standardUserDefaults,NSBundle.mainBundle.infoDictionary,size.width,size.height,&ow,&oh,NULL);
+        TOTKLauncherSceneSize(NSUserDefaults.standardUserDefaults,ow,oh,&w,&h);
+        return [NSString stringWithFormat:@"Requested scene %u × %u → output %u × %u. %@ MetalFX spatial applies when the scene is smaller than the output; unsupported frames retain game scaling. Requests do not prove actual buffer dimensions or FPS.",w,h,ow,oh,
+            _inGame ? @"Output, scene scale, aspect and upscaling require restart. Frame rate, TAA and overlays apply live."
+                    : @"Changes apply at Play. Full display uses the iPad aspect ratio."];
+    }
     if (_inGame && section == 2) return @"Touch visibility and keyboard mappings apply live. Other control changes apply after an app restart.";
     if (_inGame && section == 3) return @"Save transfers, backups and restores are available before Play only. Reopen the app to manage saves safely.";
     if (_inGame && section == 4) return @"Language changes require an app restart.";
-    if (section == 1) return TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary)
-        ? ([self fullDisplayAvailable] ? @"Changes apply at Play. Full display uses your screen’s aspect ratio." : @"Changes apply at Play. This display uses 16:9.")
-        : @"This build supports 1280 × 720 at 16:9.";
     if (section == 2) return @"Automatic hides touch buttons with a controller. Off keeps the bottom-left menu button available for keyboard or controller use.";
     if (section == 3) return @"Select a folder containing complete slot_00–slot_05 saves. Imports and restores create a backup first.";
     return @"Language follows the existing Settings app preference. Changes apply when you press Play.";
@@ -274,7 +332,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.backgroundColor = [UIColor.secondarySystemGroupedBackgroundColor colorWithAlphaComponent:0.65];
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    NSArray *titles = @[@[@"Play"],@[@"Render resolution",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD",@"Target frame rate",@"Anti-aliasing (TAA)"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
+    NSArray *titles = @[@[@"Play"],@[@"Output resolution",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD",@"Target frame rate",@"Anti-aliasing (TAA)",@"Scene render scale",@"Upscaling"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
         @[@"Import save folder",@"Export save folder",@"Back up save",@"Restore backup",@"Edit this save"],@[@"Game language"]];
     cell.textLabel.text = _inGame && path.section == 0 ? @"Resume game" : titles[path.section][path.row];
     BOOL displaySettings = TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary);
@@ -288,7 +346,11 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             unsigned rate = _inGame ? runtime_ios_fps_limit() : (unsigned)TOTKLauncherFPSLimit(d);
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%u FPS%@",rate,runtime_ios_fps_limit_supported(rate) ? @"" : @" · unavailable"];
         }
-        else cell.detailTextLabel.text = runtime_ios_taa_supported() ? ((_inGame ? runtime_ios_taa_enabled() : TOTKLauncherTAA(d)) ? @"On (requested)" : @"Off") : @"Unavailable";
+        else if (path.row == 5) cell.detailTextLabel.text = runtime_ios_taa_supported() ? ((_inGame ? runtime_ios_taa_enabled() : TOTKLauncherTAA(d)) ? @"On (requested)" : @"Off") : @"Unavailable";
+        else if (path.row == 6) cell.detailTextLabel.text = TOTKLauncherCustomSceneHeight(d)
+            ? [NSString stringWithFormat:@"%ld high (capped at output)",(long)TOTKLauncherCustomSceneHeight(d)]
+            : [NSString stringWithFormat:@"%ld%% · %.2f× upscale",(long)TOTKLauncherSceneScale(d),100.0/TOTKLauncherSceneScale(d)];
+        else cell.detailTextLabel.text = runtime_ios_spatial_upscaling_supported() ? (TOTKLauncherSpatialUpscaling(d) ? @"MetalFX Spatial (requested)" : @"Game scaling") : @"Game scaling · MetalFX unavailable";
     }
     BOOL controlsOverride = NO;
     if (path.section == 2) {
@@ -303,7 +365,8 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     if (path.section == 4) cell.detailTextLabel.text = [self languageTitle:TOTKLauncherLanguage(d)];
     BOOL disabled = _busy || _started || controlsOverride || (_inGame && path.section == 3) || (path.section == 0 && _unavailable) || (path.section == 1 && path.row < 2 && !displaySettings) ||
         (path.section == 1 && path.row == 4 && !runtime_ios_fps_limit_supported(60)) ||
-        (path.section == 1 && path.row == 5 && !runtime_ios_taa_supported());
+        (path.section == 1 && path.row == 5 && !runtime_ios_taa_supported()) ||
+        (path.section == 1 && path.row >= 6 && !displaySettings);
     cell.userInteractionEnabled = !disabled;
     cell.textLabel.enabled = !disabled;
     cell.accessibilityLabel = cell.textLabel.text;
@@ -312,7 +375,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     if (_inGame && (path.section == 1 || path.section == 2 || path.section == 4)) {
         NSString *key = [self startupKeyForPath:path];
         BOOL pending = key && ![startup_preferences(d)[key] isEqual:_runningPreferences[key]];
-        setting_timing_hint(cell,(path.section == 1 && path.row >= 2) || (path.section == 2 && (path.row == 0 || path.row == 5)),pending);
+        setting_timing_hint(cell,(path.section == 1 && path.row >= 2 && path.row <= 5) || (path.section == 2 && (path.row == 0 || path.row == 5)),pending);
     } else if (path.section == 1 || path.section == 2 || path.section == 4) cell.accessibilityHint = @"Applies when you press Play.";
     else if (_inGame && path.section == 3) cell.accessibilityHint = @"Available before Play. Save your progress, close the app, and reopen it.";
     else if (path.section == 0) cell.accessibilityHint = _inGame ? @"Close settings and return to the active game." : @"Start the game with these settings.";
@@ -329,7 +392,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     CGFloat width = MAX(self.tableView.bounds.size.width,320);
     UILabel *label = [UILabel new];
     label.text = pending ? @"Restart required\nSave game progress before you close this app from the App Switcher and reopen it."
-        : @"Live changes apply immediately. Resolution, aspect, controller settings and language apply after an app restart.";
+        : @"Live changes apply immediately. Resolution, scene scale, upscaling, aspect, controller settings and language apply after an app restart.";
     label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     label.textColor = pending ? UIColor.systemOrangeColor : UIColor.secondaryLabelColor;
     label.numberOfLines = 0;
@@ -374,6 +437,8 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (NSString *)startupKeyForPath:(NSIndexPath *)path {
     if (path.section == 1 && path.row < 2) return @[@"render",@"aspect"][path.row];
+    if (path.section == 1 && path.row == 6) return @"scene";
+    if (path.section == 1 && path.row == 7) return @"upscaling";
     if (path.section == 2 && path.row > 0 && path.row < 5) return @[@"controller",@"sensitivity",@"invert",@"bindings"][path.row-1];
     return path.section == 4 ? @"language" : nil;
 }
@@ -416,7 +481,9 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     } else if (path.section == 1 && path.row < 2) {
         if (!TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary)) return;
         if (path.row == 0) {
-            [self choose:@[@"720 high",@"1080 high"] path:path selected:^(NSUInteger i) {
+            [self choose:@[@"720 high",@"1080 high",@"Custom…"] path:path selected:^(NSUInteger i) {
+                if (i == 2) { dispatch_async(dispatch_get_main_queue(),^{ [self changeOutputHeight:path]; }); return; }
+                [d removeObjectForKey:@"TOTK_LAUNCHER_CUSTOM_HEIGHT"];
                 [d setInteger:(NSInteger[]){720,1080}[i] forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
             }];
         } else {
@@ -451,6 +518,18 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             [d setBool:i == 1 forKey:@"TOTK_LAUNCHER_TAA"];
             if (self->_HUDChanged) self->_HUDChanged();
         }];
+    } else if (path.section == 1 && path.row == 6) {
+        [self choose:@[@"Slider…",@"1× (100%)",@"1.25× (80%)",@"1.5× (67%)",@"2× (50%)",@"Custom render height…"] path:path selected:^(NSUInteger i) {
+            if (i == 0 || i == 5) {
+                dispatch_async(dispatch_get_main_queue(),^{ if (i == 0) [self changeSceneScale:path]; else [self changeHeight:path scene:YES]; });
+                return;
+            }
+            [d removeObjectForKey:@"TOTK_LAUNCHER_CUSTOM_SCENE_HEIGHT"];
+            [d setInteger:(NSInteger[]){100,80,67,50}[i-1] forKey:@"TOTK_LAUNCHER_SCENE_SCALE"];
+        }];
+    } else if (path.section == 1 && path.row == 7) {
+        NSArray *choices = runtime_ios_spatial_upscaling_supported() ? @[@"Game scaling",@"MetalFX Spatial"] : @[@"Game scaling"];
+        [self choose:choices path:path selected:^(NSUInteger i) { [d setBool:i == 1 forKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"]; }];
     } else if (path.section == 2) {
         if (path.row == 0) {
             [self choose:@[@"Automatic",@"Off"] path:path selected:^(NSUInteger i) { [self setTouchChoice:i]; }];
@@ -489,6 +568,65 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             [self choose:[backups valueForKey:@"lastPathComponent"] path:path selected:^(NSUInteger i) { [self confirmImport:backups[i] restore:YES]; }];
         } else [self editSaveAtPath:path];
     }
+}
+- (void)changeSceneScale:(NSIndexPath *)path {
+    TOTKSceneScale *scale = [TOTKSceneScale new];
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    CGSize viewSize = self.view.window ? self.view.window.bounds.size : self.view.bounds.size;
+    unsigned w = 1280, h = 720;
+    TOTKLauncherDisplaySize(defaults,NSBundle.mainBundle.infoDictionary,viewSize.width,viewSize.height,&w,&h,NULL);
+    scale.outputWidth = w; scale.outputHeight = h; scale.percent = TOTKLauncherSceneScale(defaults);
+    scale.saved = ^(NSInteger percent) {
+        id previous = startup_preferences(defaults)[@"scene"];
+        [defaults removeObjectForKey:@"TOTK_LAUNCHER_CUSTOM_SCENE_HEIGHT"];
+        [defaults setInteger:percent forKey:@"TOTK_LAUNCHER_SCENE_SCALE"];
+        [self.tableView reloadData]; [self refreshRestartFooter];
+        [self startupSettingChangedAtPath:path previousValue:previous];
+    };
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:scale];
+    nav.modalPresentationStyle = UIModalPresentationPopover; nav.preferredContentSize = CGSizeMake(420,280);
+    nav.popoverPresentationController.sourceView = self.tableView;
+    nav.popoverPresentationController.sourceRect = [self.tableView rectForRowAtIndexPath:path];
+    void (^present)(void) = ^{ [self presentViewController:nav animated:YES completion:nil]; };
+    if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:present]; else present();
+}
+- (void)changeOutputHeight:(NSIndexPath *)path { [self changeHeight:path scene:NO]; }
+- (void)changeHeight:(NSIndexPath *)path scene:(BOOL)scene {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *key = scene ? @"TOTK_LAUNCHER_CUSTOM_SCENE_HEIGHT" : @"TOTK_LAUNCHER_CUSTOM_HEIGHT";
+    NSInteger minimum = scene ? 180 : 360;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:scene ? @"Custom render height" : @"Custom output height"
+        message:scene ? @"Enter an even height from 180 to 1080. Width follows the output aspect ratio. Rendering is capped at output size."
+                      : @"Enter a height from 360 to 1080 in steps of 6 for exact 4:3 dimensions. Width follows the selected iPad or 16:9 aspect ratio. The signed canvas limit is 1920 × 1080."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.keyboardType = UIKeyboardTypeNumberPad;
+        field.text = [NSString stringWithFormat:@"%ld",(long)(scene ? (TOTKLauncherCustomSceneHeight(defaults) ?: TOTKLauncherRenderHeight(defaults)) : TOTKLauncherRenderHeight(defaults))];
+        field.accessibilityLabel = scene ? @"Render height" : @"Output height";
+    }];
+    BOOL (^valid)(NSString *) = ^BOOL(NSString *text) {
+        if (!text.length || text.length > 4 || [text rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location != NSNotFound) return NO;
+        NSInteger value = text.integerValue; return value >= minimum && value <= 1080 && value % (scene ? 2 : 6) == 0;
+    };
+    __weak UIAlertController *weakAlert = alert;
+    UIAlertAction *save = [UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action; NSString *text = weakAlert.textFields.firstObject.text;
+        if (!valid(text)) return;
+        NSString *startupKey = [self startupKeyForPath:path];
+        id previous = startup_preferences(defaults)[startupKey];
+        [defaults setInteger:text.integerValue forKey:key];
+        [self.tableView reloadData]; [self refreshRestartFooter];
+        [self startupSettingChangedAtPath:path previousValue:previous];
+    }];
+    save.enabled = valid(alert.textFields.firstObject.text);
+    __weak UIAlertAction *weakSave = save;
+    [alert.textFields.firstObject addAction:[UIAction actionWithHandler:^(UIAction *action) {
+        weakSave.enabled = valid(((UITextField *)action.sender).text);
+    }] forControlEvents:UIControlEventEditingChanged];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:save];
+    void (^present)(void) = ^{ [self presentViewController:alert animated:YES completion:nil]; };
+    if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:present]; else present();
 }
 - (void)changeMouseSensitivity {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Mouse sensitivity" message:@"Enter a whole number from 1 to 100. Default is 50. Applies at the next game start." preferredStyle:UIAlertControllerStyleAlert];

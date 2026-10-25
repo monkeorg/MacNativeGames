@@ -174,7 +174,7 @@ final class DeviceLauncherUI: XCTestCase {
     }
 
     func test01bDisplayPreferencesPersistWhenSupported() throws {
-        let resolution = cell("Render resolution")
+        let resolution = cell("Output resolution")
         let aspect = cell("Aspect ratio")
         guard resolution.isEnabled && aspect.isEnabled else {
             XCTAssertEqual(resolution.value as? String, "1280 × 720")
@@ -187,8 +187,8 @@ final class DeviceLauncherUI: XCTestCase {
         }
         resolution.tap()
         app.buttons["720 high"].tap()
-        XCTAssertEqual(cell("Render resolution").value as? String, "720 high")
-        cell("Render resolution").tap()
+        XCTAssertEqual(cell("Output resolution").value as? String, "720 high")
+        cell("Output resolution").tap()
         app.buttons["1080 high"].tap()
         cell("Aspect ratio").tap()
         app.buttons["16:9"].tap()
@@ -196,7 +196,7 @@ final class DeviceLauncherUI: XCTestCase {
         app.buttons["Full display"].tap()
         app.terminate()
         app.launch()
-        XCTAssertEqual(cell("Render resolution").value as? String, "1080 high")
+        XCTAssertEqual(cell("Output resolution").value as? String, "1080 high")
         XCTAssertEqual(cell("Aspect ratio").value as? String, "Full display")
         record("1080 full-display preferences persist")
     }
@@ -411,7 +411,7 @@ final class DeviceLauncherUI: XCTestCase {
         XCTAssertLessThanOrEqual(app.tables.firstMatch.frame.width, 961)
         XCTAssertFalse(touch.isHittable)
         XCTAssertFalse(app.cells["Play"].exists)
-        for title in ["Render resolution", "Aspect ratio", "Performance overlay", "Apple Metal HUD",
+        for title in ["Output resolution", "Aspect ratio", "Performance overlay", "Apple Metal HUD",
                       "Touch controls", "Controller type", "Mouse sensitivity", "Invert mouse Y", "Button mappings"] {
             XCTAssertTrue(cell(title).exists)
         }

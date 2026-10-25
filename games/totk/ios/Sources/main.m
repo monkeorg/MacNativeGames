@@ -138,11 +138,20 @@ void runtime_shortcut_help_toggle(void) {}
                 setenv("TOTK_ROMFS_PATCHES",layout.fileSystemRepresentation,1);
                 setenv("TOTK_UI_SQUEEZE","0",1);   // Layout roots already correct the 4:3 UI proportions.
             }
-            char size[32], drawableHeight[16];
+            unsigned sceneWidth, sceneHeight;
+            if (!TOTKLauncherSceneSize(NSUserDefaults.standardUserDefaults,width,height,&sceneWidth,&sceneHeight)) {
+                sceneWidth = width; sceneHeight = height;
+            }
+            char size[32], sceneSize[32], drawableHeight[16];
             snprintf(size,sizeof size,"%ux%u",width,height);
+            snprintf(sceneSize,sizeof sceneSize,"%ux%u",sceneWidth,sceneHeight);
             snprintf(drawableHeight,sizeof drawableHeight,"%u",height);
-            setenv("TOTK_RENDER_RES",size,0);
+            setenv("TOTK_RENDER_RES",sceneSize,0);
             setenv("TOTK_OUTPUT_RES",size,0);
+            BOOL spatial = TOTKLauncherSpatialUpscaling(NSUserDefaults.standardUserDefaults) && runtime_ios_spatial_upscaling_supported();
+            setenv("TOTK_MFX_UPSCALE",spatial ? "1" : "0",0);
+            fprintf(stderr,"[totk] requested scene %s -> output %s; MetalFX spatial %s (application requires renderer confirmation)\n",
+                getenv("TOTK_RENDER_RES"),getenv("TOTK_OUTPUT_RES"),getenv("TOTK_MFX_UPSCALE"));
             setenv("TOTK_ASPECT",fullDisplay ? "display" : "0",0);
             setenv("TOTK_IOS_DRAWABLE_H",drawableHeight,0);
         }

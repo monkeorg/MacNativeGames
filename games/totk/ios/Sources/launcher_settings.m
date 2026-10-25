@@ -38,6 +38,11 @@ BOOL TOTKLauncherTAA(NSUserDefaults *defaults) {
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_TAA"]; return NO;
 }
 NSInteger TOTKLauncherRenderHeight(NSUserDefaults *defaults) {
+    id custom = [defaults objectForKey:@"TOTK_LAUNCHER_CUSTOM_HEIGHT"];
+    if ([custom isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)custom) != CFBooleanGetTypeID() &&
+        isfinite([custom doubleValue]) && [custom doubleValue] == [custom integerValue] &&
+        [custom integerValue] >= 360 && [custom integerValue] <= 1080 && [custom integerValue] % 6 == 0) return [custom integerValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_CUSTOM_HEIGHT"];
     id value = [defaults objectForKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
     if ([value isKindOfClass:NSNumber.class] && [@[@720,@1080] containsObject:value]) return [value integerValue];
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"]; return 720;
@@ -46,6 +51,35 @@ NSString *TOTKLauncherAspect(NSUserDefaults *defaults) {
     id value = [defaults objectForKey:@"TOTK_LAUNCHER_ASPECT"];
     if ([value isKindOfClass:NSString.class] && [@[@"16:9",@"display"] containsObject:value]) return value;
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_ASPECT"]; return @"16:9";
+}
+NSInteger TOTKLauncherSceneScale(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_SCENE_SCALE"];
+    if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        isfinite([value doubleValue]) && [value doubleValue] == [value integerValue] &&
+        [value integerValue] >= 50 && [value integerValue] <= 100) return [value integerValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_SCENE_SCALE"]; return 100;
+}
+BOOL TOTKLauncherSpatialUpscaling(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"];
+    if ([value isKindOfClass:NSNumber.class] && [@[@0,@1] containsObject:value]) return [value boolValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"]; return NO;
+}
+NSInteger TOTKLauncherCustomSceneHeight(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_CUSTOM_SCENE_HEIGHT"];
+    if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        isfinite([value doubleValue]) && [value doubleValue] == [value integerValue] &&
+        [value integerValue] >= 180 && [value integerValue] <= 1080 && [value integerValue] % 2 == 0) return [value integerValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_CUSTOM_SCENE_HEIGHT"]; return 0;
+}
+BOOL TOTKLauncherSceneSize(NSUserDefaults *defaults, unsigned outputWidth, unsigned outputHeight,
+                           unsigned *width, unsigned *height) {
+    if (!width || !height || outputWidth < 128 || outputHeight < 128 || outputWidth > 1920 || outputHeight > 1080) return NO;
+    double scale = TOTKLauncherSceneScale(defaults) / 100.0;
+    NSInteger custom = TOTKLauncherCustomSceneHeight(defaults);
+    if (custom) scale = fmin((double)custom / outputHeight,1.0);
+    *width = (unsigned)(2 * round(outputWidth * scale / 2));
+    *height = (unsigned)(2 * round(outputHeight * scale / 2));
+    return YES;
 }
 BOOL TOTKLauncherDisplaySettingsAvailable(NSDictionary *info) {
     id value = info[@"TOTKIOSDisplaySettingsVersion"];

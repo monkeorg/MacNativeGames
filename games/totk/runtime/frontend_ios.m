@@ -84,6 +84,10 @@ int runtime_ios_taa_supported(void){
  id<MTLDevice> device=metalLayer.device ?: MTLCreateSystemDefaultDevice();
  return device && [MTLFXTemporalScalerDescriptor supportsMetal4FX:device];
 }
+int runtime_ios_spatial_upscaling_supported(void){
+ id<MTLDevice> device=metalLayer.device ?: MTLCreateSystemDefaultDevice();
+ return device && [MTLFXSpatialScalerDescriptor supportsMetal4FX:device];
+}
 void runtime_ios_set_taa_enabled(int enabled){
  if((enabled!=0&&enabled!=1)||(enabled&&!runtime_ios_taa_supported()))return;
  taa_set_enabled(enabled);

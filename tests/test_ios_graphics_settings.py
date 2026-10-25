@@ -39,3 +39,6 @@ class IOSGraphicsSettingsTests(unittest.TestCase):
         suite = 'TOTKGraphicsProbe.' + uuid.uuid4().hex
         self.run_probe('write', suite)
         self.run_probe('read', suite)
+
+    def test_scene_output_dimensions_and_signed_capacity(self):
+        self.run_probe('dimensions', 'TOTKGraphicsProbe.' + uuid.uuid4().hex)
