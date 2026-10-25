@@ -6,6 +6,7 @@
 #import "CanopySessionController.h"
 #import "CanopyRuntime.h"
 #import "CanopySaveStore.h"
+#import "CanopyProfiles.h"
 #import "CanopyStorageController.h"
 #import "CanopyDiagnosticsController.h"
 #import "CanopyAddonsController.h"
@@ -57,19 +58,19 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 
 @interface CanopySaveController : UITableViewController <UIDocumentPickerDelegate>
-- (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue;
+- (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue profileName:(NSString *)name;
 @end
 @implementation CanopySaveController {
     CanopySaveStore *_store;
     dispatch_queue_t _queue;
     NSArray *_backups;
-    NSString *_status;
+    NSString *_status,*_profileName;
     BOOL _busy, _importPicker, _rawImportPicker, _exportPicker, _cancelRequested;
     NSFileCoordinator *_coordinator;
     NSURL *_temporaryExport;
 }
-- (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue {
-    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) { _store = store; _queue = queue; _backups = @[]; }
+- (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue profileName:(NSString *)name {
+    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) { _store = store; _queue = queue; _profileName=[name copy]; _backups = @[]; }
     return self;
 }
 - (void)viewDidLoad {
@@ -109,7 +110,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 2; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 0 ? 5 : MAX((NSInteger)_backups.count,1); }
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return section == 0 ? @"This title • default profile" : @"Stored backups"; }
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return section == 0 ? [@"This title • " stringByAppendingString:_profileName] : @"Stored backups"; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView; (void)section;
     NSString *explanation = @"Canopy exports preserve opaque bytes in a versioned format. External Canopy exports and raw folders additionally require the actual trusted title-format validator; hashes alone are not a format check. Unknown titles cannot import external saves. Semantic editing is unavailable. Account identity is never exported or replaced. Transfers are locked while a native session may write saves.";
@@ -375,8 +376,11 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     CanopySettings *_settings;
     CanopySaveStore *_saves;
     dispatch_queue_t _saveQueue;
-    BOOL _saveLoading;
-    NSString *_saveError;
+    BOOL _saveLoading,_profileNeedsReload;
+    NSString *_saveError,*_profileID,*_profileName;
+    CanopyProfiles *_profiles;
+    NSDictionary *_profileSnapshot;
+    NSUInteger _profileEpoch;
 }
 - (instancetype)initWithEntry:(NSDictionary *)entry settings:(CanopySettings *)settings {
     if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) { _entry = [entry copy]; _settings = settings; }
@@ -386,28 +390,116 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     [super viewDidLoad]; self.title = _entry[@"displayName"];
     self.tableView.rowHeight = UITableViewAutomaticDimension; self.tableView.estimatedRowHeight = 70;
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Rename" style:UIBarButtonItemStylePlain target:self action:@selector(rename)];
-    if (!self.settingStates) [self loadSaveStore];
+    NSURL *support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    _profiles=[[CanopyProfiles alloc] initWithDirectoryURL:[[support URLByAppendingPathComponent:@"Canopy" isDirectory:YES] URLByAppendingPathComponent:@"Metadata" isDirectory:YES]];
+    if(!self.settingStates)[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(profileBackground:) name:UIApplicationDidEnterBackgroundNotification object:nil];
 }
-- (void)loadSaveStore {
-    if (_saveLoading || _saves || self.settingStates) return;
-    _saveLoading = YES; _saveError = nil;
-    if (!_saveQueue) _saveQueue = dispatch_queue_create("org.monkeorg.canopy.save-profile",DISPATCH_QUEUE_SERIAL);
-    NSURL *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
-    NSURL *profiles = [[support URLByAppendingPathComponent:@"Canopy" isDirectory:YES] URLByAppendingPathComponent:@"Profiles" isDirectory:YES];
-    NSString *title = _entry[@"titleID"];
-    dispatch_async(_saveQueue, ^{
-        NSError *error = nil;
-        // This is a trusted native format selection, never a validator name
-        // supplied by a manifest or a display label. fs_host.c defines this ID.
-        CanopySaveValidator validator = nil;
-        if ([title isEqualToString:@"0100f2c0115b6000"]) validator = ^BOOL(NSURL *directory, NSError **validationError) { return TOTKSaveValidateDirectory(directory,validationError); };
-        CanopySaveStore *store = [[CanopySaveStore alloc] initWithRootURL:profiles titleID:title profileID:@"default" externalValidator:validator error:&error];
-        dispatch_async(dispatch_get_main_queue(), ^{ self->_saveLoading = NO; self->_saves = store; self->_saveError = error.localizedDescription; [self.tableView reloadData]; });
-    });
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (BOOL)profileAvailable {
+    return !self.settingStates && !_saveLoading && !_saves.sealed &&
+        ![CanopySessionController nativeSessionOwnsProcess] &&
+        UIApplication.sharedApplication.applicationState==UIApplicationStateActive &&
+        self.navigationController.topViewController==self;
 }
+- (void)loadSaveStore { if(!_saves)[self openProfile:nil]; }
+- (void)openProfile:(NSString *)requested {
+    if(![self profileAvailable])return;
+    _saveLoading=YES;_saveError=nil;NSUInteger epoch=++_profileEpoch;
+    if(!_saveQueue)_saveQueue=dispatch_queue_create("org.monkeorg.canopy.save-profile",DISPATCH_QUEUE_SERIAL);
+    NSURL *support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *root=[[support URLByAppendingPathComponent:@"Canopy" isDirectory:YES] URLByAppendingPathComponent:@"Profiles" isDirectory:YES];
+    NSString *title=_entry[@"titleID"],*oldID=_profileID;CanopySaveStore *old=_saves;
+    dispatch_async(_saveQueue,^{@autoreleasepool {
+        NSError *error=nil;NSDictionary *snapshot=[self->_profiles snapshotForTitleID:title error:&error];
+        NSString *identifier=requested ?: snapshot[@"selectedID"],*name=nil;
+        for(NSDictionary *row in snapshot[@"profiles"])if([row[@"identifier"] isEqual:identifier])name=row[@"displayName"];
+        CanopySaveValidator validator=nil;
+        if([title isEqualToString:@"0100f2c0115b6000"])validator=^BOOL(NSURL *directory,NSError **failure){return TOTKSaveValidateDirectory(directory,failure);};
+        CanopySaveStore *candidate=nil;
+        if(name)candidate=[identifier isEqual:oldID] ? old : [[CanopySaveStore alloc] initWithRootURL:root titleID:title profileID:identifier externalValidator:validator error:&error];
+        dispatch_async(dispatch_get_main_queue(),^{
+            self->_saveLoading=NO;
+            if(epoch!=self->_profileEpoch || ![self profileAvailable]) {
+                self->_saveError=@"Profile opening was canceled. The previous live profile remains selected.";[self.tableView reloadData];return;
+            }
+            NSError *failure=error;
+            NSString *expected=requested ? oldID ?: @"default" : snapshot[@"selectedID"];
+            // This bounded local commit and store swap run together on main;
+            // native startup cannot interleave. fsync wall time is not bounded.
+            BOOL committed=candidate && [self->_profiles selectProfileID:identifier titleID:title expectedSelection:expected error:&failure];
+            if(committed) {
+                self->_saves=candidate;self->_profileID=[identifier copy];self->_profileName=[name copy];
+                NSMutableDictionary *selected=[snapshot mutableCopy];selected[@"selectedID"]=identifier;self->_profileSnapshot=[selected copy];
+                self->_profileNeedsReload=NO;self->_saveError=nil;
+            } else {
+                self->_profileNeedsReload=YES;self->_saveError=failure.localizedDescription ?: @"This profile could not be opened or selected. Existing saves and the previous live profile were preserved. Reload profile selection before Play.";
+            }
+            [self.tableView reloadData];
+        });
+    }});[self.tableView reloadData];
+}
+- (void)chooseSaveProfile {
+    if(![self profileAvailable]||self.presentedViewController)return;
+    NSUInteger epoch=++_profileEpoch;
+    UIAlertController *menu=[UIAlertController alertControllerWithTitle:@"Save profile" message:@"Profiles isolate this title's saves, backups and local account identity. Switching is available only before native startup. Existing profile bytes are never copied or converted." preferredStyle:UIAlertControllerStyleActionSheet];
+    NSCountedSet *names=[NSCountedSet new];
+    for(NSDictionary *row in _profileSnapshot[@"profiles"])[names addObject:[row[@"displayName"] precomposedStringWithCanonicalMapping].lowercaseString];
+    NSMutableSet *used=[NSMutableSet new];
+    for(NSDictionary *row in _profileSnapshot[@"profiles"]) {
+        NSString *identifier=row[@"identifier"];
+        NSString *name=row[@"displayName"],*key=name.precomposedStringWithCanonicalMapping.lowercaseString;
+        NSString *display=name;
+        if([names countForObject:key]>1) {
+            NSString *shortID=[identifier isEqual:@"default"]?@"default":[identifier substringToIndex:8];
+            display=[NSString stringWithFormat:@"%@ • %@",name,shortID];
+            if([used containsObject:display])display=[display stringByAppendingFormat:@" (%lu)",(unsigned long)used.count+1];
+        }
+        [used addObject:display];
+        NSString *label=[NSString stringWithFormat:@"%@%@",[identifier isEqual:_profileID]?@"✓ ":@"",display];
+        [menu addAction:[UIAlertAction actionWithTitle:label style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            (void)action;if(epoch!=self->_profileEpoch || ![self profileAvailable])return;
+            NSUInteger next=++self->_profileEpoch;
+            [self dismissViewControllerAnimated:YES completion:^{if(next==self->_profileEpoch)[self openProfile:identifier];}];
+        }]];
+    }
+    [menu addAction:[UIAlertAction actionWithTitle:@"Reload persisted selection" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        (void)action;if(epoch!=self->_profileEpoch || ![self profileAvailable])return;
+        NSUInteger next=++self->_profileEpoch;
+        [self dismissViewControllerAnimated:YES completion:^{if(next==self->_profileEpoch)[self openProfile:nil];}];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Create empty profile" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        (void)action;if(epoch!=self->_profileEpoch || ![self profileAvailable])return;
+        NSUInteger next=++self->_profileEpoch;
+        [self dismissViewControllerAnimated:YES completion:^{if(next==self->_profileEpoch)[self askProfileName];}];
+    }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){(void)action;if(epoch==self->_profileEpoch)++self->_profileEpoch;}]];
+    menu.popoverPresentationController.sourceView=self.tableView;menu.popoverPresentationController.sourceRect=[self.tableView rectForRowAtIndexPath:[NSIndexPath indexPathForRow:3 inSection:3]];
+    [self presentViewController:menu animated:YES completion:nil];
+}
+- (void)askProfileName {
+    if(![self profileAvailable]||self.presentedViewController)return;NSUInteger epoch=++_profileEpoch;
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Create empty profile" message:@"Choose a local label. This creates no account bytes and copies no saves. The existing reviewed runtime initializes an empty profile's local identity only when it starts." preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field){field.placeholder=@"Profile name";field.autocorrectionType=UITextAutocorrectionTypeNo;}];
+    __weak UIAlertController *weak=alert;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){(void)action;if(epoch==self->_profileEpoch)++self->_profileEpoch;}]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Create" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        (void)action;if(epoch!=self->_profileEpoch || ![self profileAvailable])return;
+        NSUInteger next=++self->_profileEpoch;
+        NSError *error=nil;NSString *identifier=[self->_profiles createProfileWithName:weak.textFields.firstObject.text ?: @"" titleID:self->_entry[@"titleID"] error:&error];
+        if(!identifier){self->_profileNeedsReload=YES;self->_saveError=error.localizedDescription;[self.tableView reloadData];return;}
+        [self dismissViewControllerAnimated:YES completion:^{if(next==self->_profileEpoch)[self openProfile:identifier];}];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+- (void)profileBackground:(NSNotification *)notification {
+    (void)notification;++_profileEpoch;
+    if(self.presentedViewController)[self dismissViewControllerAnimated:NO completion:nil];
+}
+- (void)viewDidAppear:(BOOL)animated {[super viewDidAppear:animated];if(!_saves&&!_saveLoading&&!self.settingStates)[self loadSaveStore];}
+- (void)viewWillDisappear:(BOOL)animated {[super viewWillDisappear:animated];if(self.isMovingFromParentViewController||self.isBeingDismissed)++_profileEpoch;}
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 2 ? 7 : section < 3 ? 6 : section == 3 ? 3 : 1; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 2 ? 7 : section < 3 ? 6 : section == 3 ? 4 : 1; }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Prepared assets",@"Graphics preferences",@"Control preferences",@"Saves & native session",@"Language"][(NSUInteger)section]; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
@@ -435,6 +527,11 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         UITableViewCell *cell = GamesCell(tableView,titles[(NSUInteger)path.row],details[(NSUInteger)path.row]); cell.selectionStyle = UITableViewCellSelectionStyleNone; return cell;
     }
     if (path.section == 3) {
+        if(path.row==3) {
+            UITableViewCell *cell=GamesCell(tableView,@"Save profile",_saveLoading ? @"Opening the actual private profile…" : _profileName ?: @"Reload profile selection");
+            if(!self.settingStates&&!_saveLoading&&!_saves.sealed&&![CanopySessionController nativeSessionOwnsProcess])cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+            else {cell.selectionStyle=UITableViewCellSelectionStyleNone;cell.textLabel.textColor=UIColor.secondaryLabelColor;}return cell;
+        }
         if(path.row==2) {
             UITableViewCell *cell=GamesCell(tableView,@"Add-ons",@"Install and manage isolated prepared content. Activation requires a reviewed native host binding.");
             if(!self.settingStates && !_saves.sealed && ![CanopySessionController nativeSessionOwnsProcess])cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
@@ -447,7 +544,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         if (path.row == 1 && trusted) detail = @"Real native host integration • device acceptance remains separate";
         if (self.settingStates || _saves.sealed) { detail = path.row == 0 ? @"Locked while the native host may write saves" : @"Native host owns this profile; close the app before another session"; if (path.row == 1) title = @"Native session owns this profile"; }
         UITableViewCell *cell = GamesCell(tableView,title,detail);
-        BOOL enabled = !self.settingStates && !_saveLoading && !_saves.sealed && (path.row == 0 || (trusted && _saves && !_saves.recoveryRequired));
+        BOOL enabled = !self.settingStates && !_saveLoading && !_profileNeedsReload && !_saves.sealed && ![CanopySessionController nativeSessionOwnsProcess] && (path.row == 0 || (trusted && _saves && !_saves.recoveryRequired));
         if (enabled) cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         else { cell.selectionStyle = UITableViewCellSelectionStyleNone; cell.textLabel.textColor = UIColor.secondaryLabelColor; }
         return cell;
@@ -495,6 +592,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES]; if (!path.section) return;
     if (path.section == 3) {
+        if(path.row==3){[self chooseSaveProfile];return;}
         if(path.row==2) {
             if(self.settingStates || _saves.sealed || [CanopySessionController nativeSessionOwnsProcess])return;
             NSURL *support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
@@ -504,9 +602,10 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
             addons.mutationAllowed=^BOOL {CanopyGameDetails *current=owner;return current && !current.settingStates && !current->_saves.sealed && ![CanopySessionController nativeSessionOwnsProcess];};
             [self.navigationController pushViewController:addons animated:YES];return;
         }
-        if (self.settingStates || _saveLoading || _saves.sealed) return;
+        if (self.settingStates || _saveLoading || _saves.sealed || [CanopySessionController nativeSessionOwnsProcess]) return;
+        if(_profileNeedsReload){GamesAlert(self,@"Reload the save profile",@"Reload the persisted profile selection before using saves or Play.");return;}
         if (!_saves) { [self loadSaveStore]; return; }
-        if (path.row == 0) [self.navigationController pushViewController:[[CanopySaveController alloc] initWithStore:_saves queue:_saveQueue] animated:YES];
+        if (path.row == 0) [self.navigationController pushViewController:[[CanopySaveController alloc] initWithStore:_saves queue:_saveQueue profileName:_profileName] animated:YES];
         else [self startNativeSession];
         return;
     }
@@ -559,6 +658,9 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     GamesAnchor(sheet,tableView,path); [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)startNativeSession {
+    if(![self profileAvailable] || _profileNeedsReload || !_profileID)return;
+    NSError *profileError=nil;NSDictionary *current=[_profiles snapshotForTitleID:_entry[@"titleID"] error:&profileError];
+    if(!current || ![current[@"selectedID"] isEqual:_profileID]){_profileNeedsReload=YES;_saveError=profileError.localizedDescription ?: @"The persisted profile changed. Reload the actual selected profile before Play.";[self.tableView reloadData];return;}
     if (![CanopyRuntime trustedProfileForTitleID:_entry[@"titleID"]] || !_saves || _saves.sealed || _saves.recoveryRequired || !self.controllers) return;
     for (NSDictionary *device in self.controllers.devices) if ([device[@"player"] integerValue] > 0) {
         GamesAlert(self,@"This host supports Player 1 only",@"Unassign other player seats before starting this native host. Independent assignment infrastructure does not establish multiplayer support."); return;
