@@ -83,7 +83,7 @@ class CanopyBuildTests(unittest.TestCase):
                          {'UIApplicationSupportsMultipleScenes': False})
         self.assertNotIn('CFBundleIconFiles', info)
         self.assertEqual(json.loads((self.output / 'build-observation.json').read_text()), report)
-        self.assertEqual(len(report['commands']), 8)
+        self.assertEqual(len(report['commands']), len(builder.SOURCES) + 4)
         self.assertFalse(any(p.name.startswith('.canopy-stage-') for p in self.output.iterdir()))
         self.assertEqual(report['output_files'][0]['sha256'],
                          hashlib.sha256((app / 'Canopy').read_bytes()).hexdigest())

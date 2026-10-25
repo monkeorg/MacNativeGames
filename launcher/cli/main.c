@@ -1,9 +1,16 @@
 #if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
 #define _DARWIN_C_SOURCE
 #endif
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #define _FILE_OFFSET_BITS 64
 #include "mng_file.h"
+#include "mng_crypto.h"
+#include "mng_keys.h"
+#include "mng_store.h"
+#include <errno.h>
+#include <signal.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -25,7 +32,7 @@ static void json_string(const char *text) {
     }
     putchar('"');
 }
-int main(int argc, char **argv) {
+static int inspect_command(int argc, char **argv) {
     if (argc!=3 || strcmp(argv[1],"inspect")) return error("usage",2);
     int fd=open(argv[2],O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
     if (fd<0) return error("open_failed",3);
@@ -58,4 +65,138 @@ int main(int argc, char **argv) {
     puts("]}");
     mng_inventory_free(&result);
     return ferror(stdout) ? 5:0;
+}
+
+static volatile sig_atomic_t interrupted;
+static void interrupt_handler(int signum) { (void)signum;interrupted=1; }
+static int interrupt_requested(void *context) { (void)context;return interrupted!=0; }
+struct cancel_sink { struct mng_asset_sink sink; struct mng_store *store; };
+static int cancelled(void *context) {
+    struct cancel_sink *c=context;
+    if(interrupted)mng_store_cancel(c->store);
+    return interrupted || (c->sink.cancelled && c->sink.cancelled(c->sink.context));
+}
+static int asset_begin(void *context,const char *path,uint64_t length) {
+    struct cancel_sink *c=context;
+    return cancelled(c) ? -1:c->sink.begin(c->sink.context,path,length);
+}
+static int asset_write(void *context,const void *bytes,size_t length) {
+    struct cancel_sink *c=context;
+    return cancelled(c) ? -1:c->sink.write(c->sink.context,bytes,length);
+}
+static int asset_end(void *context,const unsigned char digest[32]) {
+    struct cancel_sink *c=context;
+    return cancelled(c) ? -1:c->sink.end(c->sink.context,digest);
+}
+static void progress(void *context,const char *phase,uint64_t done,uint64_t total) {
+    struct cancel_sink *c=context;
+    (void)cancelled(c);
+    if(c->sink.progress)c->sink.progress(c->sink.context,phase,done,total);
+}
+static int stable(const struct stat *a,const struct stat *b) {
+#ifdef __APPLE__
+#define MNG_MT st_mtimespec
+#define MNG_CT st_ctimespec
+#else
+#define MNG_MT st_mtim
+#define MNG_CT st_ctim
+#endif
+    return a->st_dev==b->st_dev && a->st_ino==b->st_ino && a->st_size==b->st_size &&
+        a->st_mode==b->st_mode && a->st_nlink==b->st_nlink &&
+        a->MNG_MT.tv_sec==b->MNG_MT.tv_sec && a->MNG_MT.tv_nsec==b->MNG_MT.tv_nsec &&
+        a->MNG_CT.tv_sec==b->MNG_CT.tv_sec && a->MNG_CT.tv_nsec==b->MNG_CT.tv_nsec;
+}
+static int read_keys(const char *path,struct mng_keys **keys) {
+    int fd=open(path,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC), result=-1;
+    struct stat before,after;unsigned char *bytes=NULL,extra=0;size_t size=0,used=0;
+    if(fd<0)return -1;
+    if(fstat(fd,&before) || !S_ISREG(before.st_mode) || before.st_size<1 || before.st_size>1048576)goto done;
+    size=(size_t)before.st_size;
+    bytes=malloc(size);if(!bytes)goto done;
+    while(used<size) {
+        ssize_t n=read(fd,bytes+used,size-used);
+        if(n<0 && errno==EINTR && !interrupted)continue;
+        if(n<=0 || interrupted)goto done;
+        used+=(size_t)n;
+    }
+    if(read(fd,&extra,1)!=0 || fstat(fd,&after) || !stable(&before,&after))goto done;
+    result=mng_keys_parse(bytes,size,keys);
+ done:
+    mng_secure_clear(&extra,sizeof(extra));
+    if(bytes){mng_secure_clear(bytes,size);free(bytes);}
+    close(fd);return result;
+}
+static int job_valid(const char *job) {
+    if(!job || strlen(job)!=32)return 0;
+    for(unsigned i=0;i<32;i++)if(!((job[i]>='0'&&job[i]<='9')||(job[i]>='a'&&job[i]<='f')))return 0;
+    return 1;
+}
+static void digest_hex(const unsigned char *bytes,size_t size,char *out) {
+    static const char digits[]="0123456789abcdef";
+    for(size_t i=0;i<size;i++){out[2*i]=digits[bytes[i]>>4];out[2*i+1]=digits[bytes[i]&15];}out[size*2]=0;
+}
+static int prepare_command(int argc,char **argv) {
+    const char *key_path=NULL,*store_path=NULL,*job=NULL;
+    struct mng_keys *keys=NULL;struct mng_store *store=NULL;
+    struct mng_prepare_result prepared={0};
+    int input=-1,root=-1,result=4,publication_attempted=0,cancelled_result=0;const char *failure="prepare_failed";
+    enum mng_prepare_status status;
+    char generated_job[33],generation[65],source_hash[65];
+    if(argc!=7 && argc!=9)return error("usage",2);
+    for(int i=3;i<argc;i+=2) {
+        if(!strcmp(argv[i],"--keys") && !key_path)key_path=argv[i+1];
+        else if(!strcmp(argv[i],"--store") && !store_path)store_path=argv[i+1];
+        else if(!strcmp(argv[i],"--job") && !job)job=argv[i+1];
+        else return error("usage",2);
+    }
+    if(!key_path || !store_path || (job && !job_valid(job)))return error("usage",2);
+    if(!job) {
+        unsigned char random[16];
+        if(getentropy(random,sizeof(random)))return error("random_failed",4);
+        digest_hex(random,sizeof(random),generated_job);job=generated_job;
+    }
+    struct sigaction action={0};action.sa_handler=interrupt_handler;sigemptyset(&action.sa_mask);
+    if(sigaction(SIGINT,&action,NULL))return error("signal_failed",4);
+    if(read_keys(key_path,&keys)){failure="keys_invalid";goto done;}
+    input=open(argv[2],O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if(input<0){failure="open_failed";goto done;}
+    struct stat info;
+    if(fstat(input,&info) || !S_ISREG(info.st_mode)){failure="invalid_source";goto done;}
+    if(mkdir(store_path,0700) && errno!=EEXIST){failure="store_open_failed";goto done;}
+    root=open(store_path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if(root<0 || fstat(root,&info) || (info.st_mode&077) || info.st_uid!=geteuid()) {failure="store_open_failed";goto done;}
+    status=mng_store_open(root,&store);
+    if(status!=MNG_PREPARE_OK){failure=mng_prepare_status_name(status);goto done;}
+    mng_store_set_cancel_check(store,interrupt_requested,NULL);
+    status=mng_store_begin(store,job);
+    if(status!=MNG_PREPARE_OK){failure=mng_prepare_status_name(status);goto done;}
+    struct cancel_sink wrapped={mng_store_sink(store),store};
+    struct mng_asset_sink sink={&wrapped,asset_begin,asset_write,asset_end,cancelled,progress};
+    struct mng_key_provider provider=mng_keys_provider(keys);
+    status=mng_prepare_fd(input,&provider,&sink,&prepared);
+    if(interrupted)status=MNG_PREPARE_CANCELLED;
+    if(status==MNG_PREPARE_OK) {
+        /* The store polls cancellation during verification and establishes its
+         * own atomic publication cutoff. Its return is authoritative afterward. */
+        publication_attempted=1;
+        status=mng_store_commit(store,&prepared,generation);
+    }
+    if(status!=MNG_PREPARE_OK){cancelled_result=status==MNG_PREPARE_CANCELLED;failure=mng_prepare_status_name(status);goto done;}
+    digest_hex(prepared.source_sha256,32,source_hash);
+    printf("{\"title_id\":\"%016" PRIx64 "\",\"generation\":\"%s\",\"job\":\"%s\","
+           "\"source_sha256\":\"%s\",\"asset_count\":%" PRIu64 ",\"asset_bytes\":%" PRIu64 ","
+           "\"exefs_verified\":%s,\"romfs_verified\":%s,\"signature_verified\":false,\"execution_verified\":false}\n",
+           prepared.title_id,generation,job,source_hash,prepared.asset_count,prepared.asset_bytes,
+           prepared.exefs_verified?"true":"false",prepared.romfs_verified?"true":"false");
+    result=ferror(stdout)?5:0;
+ done:
+    mng_keys_free(keys);mng_store_close(store);
+    if(input>=0)close(input);
+    if(root>=0)close(root);
+    if(cancelled_result || (!publication_attempted && interrupted))return error("cancelled",130);
+    return result ? error(failure,result):0;
+}
+int main(int argc,char **argv) {
+    if(argc>=2 && !strcmp(argv[1],"prepare"))return prepare_command(argc,argv);
+    return inspect_command(argc,argv);
 }

@@ -18,14 +18,32 @@ import sys
 import tempfile
 
 
-RECIPE = 'canopy-unsigned-arm64-ios16-v1'
+RECIPE = 'canopy-preparation-arm64-ios16-v2'
 BRAND = 'launcher/Resources/Branding/Canopy.png'
 BRAND_SHA256 = 'f7f596a192596aee546970b4db36068efb9b65932743bd3318353b6ea7a340d0'
 SOURCES = ('launcher/apple/Sources/CanopyApp.m',
            'launcher/apple/Sources/CanopyLibrary.m',
-           'launcher/src/mng_container.c', 'launcher/src/mng_file.c')
+           'launcher/apple/Sources/CanopyCatalog.m',
+           'launcher/apple/Sources/CanopySettings.m',
+           'launcher/apple/Sources/CanopyPreparation.m',
+           'launcher/apple/Sources/CanopyControllers.m',
+           'launcher/apple/Sources/CanopyGames.m',
+           'launcher/src/mng_container.c', 'launcher/src/mng_file.c',
+           'launcher/src/mng_crypto.c', 'launcher/src/mng_keys.c',
+           'launcher/src/mng_content.c', 'launcher/src/mng_prepare.c', 'launcher/src/mng_store.c',
+           'launcher/src/mng_romfs.c',
+           'launcher/src/mng_players.c', 'launcher/src/mng_session.c')
 HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
-           'launcher/include/mng_container.h', 'launcher/include/mng_file.h')
+           'launcher/apple/Sources/CanopyCatalog.h',
+           'launcher/apple/Sources/CanopySettings.h',
+           'launcher/apple/Sources/CanopyPreparation.h',
+           'launcher/apple/Sources/CanopyControllers.h',
+           'launcher/apple/Sources/CanopyGames.h',
+           'launcher/include/mng_container.h', 'launcher/include/mng_file.h',
+           'launcher/include/mng_crypto.h', 'launcher/include/mng_keys.h',
+           'launcher/include/mng_content.h', 'launcher/include/mng_prepare.h', 'launcher/include/mng_store.h',
+           'launcher/include/mng_romfs.h',
+           'launcher/include/mng_players.h', 'launcher/include/mng_session.h')
 INPUTS = SOURCES + HEADERS + (BRAND,)
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 
@@ -100,6 +118,7 @@ def commands(source_root, work, sdk):
     result.append(['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64-apple-ios16.0',
                    '-isysroot', sdk, *objects, '-framework', 'UIKit', '-framework', 'Foundation',
                    '-framework', 'UniformTypeIdentifiers', '-framework', 'CoreFoundation',
+                   '-framework', 'GameController',
                    '-Wl,-no_adhoc_codesign',
                    '-o', str(work / 'Canopy.app/Canopy')])
     return result
