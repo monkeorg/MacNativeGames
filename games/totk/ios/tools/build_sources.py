@@ -100,6 +100,13 @@ def file_hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def project_file_hash(name):
+    path = ROOT / name
+    if path.resolve() != path:
+        raise RuntimeError(f"Project input resolves through a symbolic link: {name}")
+    return file_hash(path)
+
+
 def save_report(path, report):
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(report, indent=2) + "\n")
@@ -117,9 +124,10 @@ def project_input_snapshot():
     for name in result.stdout.split(b"\0"):
         if not name:
             continue
-        path = (ROOT / os.fsdecode(name)).resolve()
-        if path.is_relative_to(ROOT) and path.suffix in suffixes and path.is_file():
-            snapshot[str(path.relative_to(ROOT))] = file_hash(path)
+        path = Path(os.path.abspath(ROOT / os.fsdecode(name)))
+        if path.is_relative_to(ROOT) and path.suffix in suffixes and path.resolve() == path and path.is_file():
+            name = str(path.relative_to(ROOT))
+            snapshot[name] = project_file_hash(name)
     return snapshot
 
 
@@ -145,7 +153,9 @@ def project_dependencies(depfile):
         raise RuntimeError("Compiler dependency rule has a trailing escape")
     if word:
         words.append("".join(word).replace("$$", "$"))
-    paths = {(ROOT / name).resolve() for name in words}
+    # Preserve the spelled project path. Resolving symlinks here could hide a
+    # changed project header by reclassifying its new target as an external SDK input.
+    paths = {Path(os.path.abspath(ROOT / name)) for name in words}
     return sorted(str(path.relative_to(ROOT)) for path in paths if path.is_relative_to(ROOT))
 
 
@@ -191,7 +201,7 @@ def compile_one(profile, defines, source, output, toolchain, snapshot):
                 raise RuntimeError("Compiler dependency rule omits the translation unit")
             record["project_dependencies"] = [
                 {"path": name, "sha256_before": snapshot.get(name),
-                 "sha256_after": file_hash(ROOT / name) if name in snapshot else None}
+                 "sha256_after": project_file_hash(name) if name in snapshot else None}
                 for name in dependencies
             ]
             record["inputs_unchanged"] = all(item["sha256_before"] is not None and
@@ -245,6 +255,11 @@ def main():
         print(f"{toolchain['xcode']}\niPhoneOS SDK {toolchain['sdk_version']}\nRevision {report['revision']}", flush=True)
         work = [(profile, defines, source) for profile, defines in PROFILES.items() for source in SOURCES]
         snapshot = project_input_snapshot()
+        if any(str(source.relative_to(ROOT)) not in snapshot for source in SOURCES):
+            raise RuntimeError("Source selection contains an untracked, missing, or symlinked input; no compiler started")
+        if any(project_file_hash(str(source.relative_to(ROOT))) != snapshot[str(source.relative_to(ROOT))]
+               for source in SOURCES):
+            raise RuntimeError("Source inputs changed before scheduling; no compiler started")
         report["phase"] = "compilation"
         save_report(report_path, report)
         with ThreadPoolExecutor(max_workers=args.jobs) as executor:
@@ -263,7 +278,7 @@ def main():
         report["results"].sort(key=lambda result: (result["profile"], result["source"]))
         report["compiled_object_count"] = sum(result["returncode"] == 0 for result in report["results"])
         used = {item["path"] for result in report["results"] for item in result.get("project_dependencies", [])}
-        report["inputs_unchanged_at_completion"] = all(name in snapshot and file_hash(ROOT / name) == snapshot[name] for name in used)
+        report["inputs_unchanged_at_completion"] = all(name in snapshot and project_file_hash(name) == snapshot[name] for name in used)
         report["success"] = bool(work) and all(result["success"] for result in report["results"]) and report["inputs_unchanged_at_completion"]
         report["phase"] = "completed"
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
