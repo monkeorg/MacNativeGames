@@ -216,6 +216,16 @@
       },
       "patch": "0018-ir-collection-loop-checkpoints.patch",
       "sha256": "0b663446e8554318130253fd972ed060b99e421b4fe0c1e2be18d7edbfadc751"
+    },
+    {
+      "after": {
+        "spirv_msl.cpp": "8d3145aaea9e5d7ea5ed44cff387cb12d4da8c8c1238963b12187ef1d5b7f891"
+      },
+      "before": {
+        "spirv_msl.cpp": "8024d3b5ffc1e61653646314eb631b1b7668371c8a8bea13f44cf323c129f611"
+      },
+      "patch": "0019-packing-workgroup-depth.patch",
+      "sha256": "e92a9acfd2509608d47d758c8b37ab702a4929be4aa9175d1ca5d03bd5d447c4"
     }
   ],
   "schemaVersion": 1

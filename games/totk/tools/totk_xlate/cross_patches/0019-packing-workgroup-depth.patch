@@ -1,0 +1,18 @@
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -2581,6 +2581,7 @@
+ // are marked as packable with the SPIRVCrossDecorationBufferBlockRepacked decoration,
+ void CompilerMSL::mark_as_packable(SPIRType &type)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	// If this is not the base type (eg. it's a pointer or array), tunnel down
+ 	if (type.parent_type)
+ 	{
+@@ -2614,6 +2615,7 @@
+ // are marked as used with workgroup storage using the SPIRVCrossDecorationWorkgroupStruct decoration.
+ void CompilerMSL::mark_as_workgroup_struct(SPIRType &type)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	// If this is not the base type (eg. it's a pointer or array), tunnel down
+ 	if (type.parent_type)
+ 	{

@@ -484,7 +484,9 @@
     "invariant expression-dependency traversal",
     "global-read function-dependency traversal",
     "type-location member traversal",
-    "MSL composite interface-member flattening"
+    "MSL composite interface-member flattening",
+    "MSL packable type parent/member marking",
+    "MSL workgroup type parent/member marking"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
