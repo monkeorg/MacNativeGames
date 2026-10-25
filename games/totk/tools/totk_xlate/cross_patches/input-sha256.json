@@ -290,6 +290,16 @@
       },
       "patch": "0025-array-dimension-query-bounds.patch",
       "sha256": "7c612de84649e60a3680cfac620b69ac713075b8199d83f7250fa971aa1af13e"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "2e3a9e1f71c7842bf590759e605fb46a33425656049897edc711930126b3f4fd"
+      },
+      "before": {
+        "spirv_glsl.cpp": "7cae8032f6c49ac49d3470a296f607a297a0fd3aa99577586a92b9568a94e7ed"
+      },
+      "patch": "0026-normal-emission-reset-loop-checkpoints.patch",
+      "sha256": "93c7edb2d5ee3e8320dfeca8c7612ad8c908ab1751000ae55b4fdebb03eeda40"
     }
   ],
   "schemaVersion": 1
