@@ -34,6 +34,7 @@ targets:
         CFBundleIdentifier: ${TOTK_BUNDLE_ID}
         CFBundleShortVersionString: "1.0"
         CFBundleVersion: "1"
+        TOTKShaderSeedPackReaderABI: 1
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true

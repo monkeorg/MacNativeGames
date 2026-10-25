@@ -120,7 +120,8 @@ seeds are deleted. Source inventories are bounded and reject links/hardlinks.
 The separately owned reader takes expected metadata only from its installed main bundle. It
 opens fixed content-addressed paths with nofollow descriptors, bounds every
 read/count/addition, checks parts and member hashes during one streaming decode,
-polls cancellation off the main thread and reports bounded progress. Staging
+reports bounded progress off the main thread. This checkpoint has no cancellation
+API; it must not advertise cancellation or completed runtime teardown. Staging
 uses a fresh owned UUID sibling under private Application Support and exclusive
 files; failures clean only that stage. Its final output is
 `ApplicationSupport/TOTKShaderSeeds/<streamSHA256>`, never Documents. After full
