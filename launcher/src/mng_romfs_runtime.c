@@ -83,11 +83,11 @@ static enum mng_romfs_status emit(int fd, struct runtime_index *index,
     *offset += count;
     return MNG_ROMFS_OK;
 }
-enum mng_romfs_status mng_romfs_runtime_index_fd(int image_fd, int output_fd,
-    const struct mng_romfs_callbacks *callbacks, struct mng_romfs_runtime_result *out) {
+enum mng_romfs_status mng_romfs_runtime_index_fd_ex(int image_fd, int output_fd,
+    const struct mng_romfs_callbacks *callbacks, unsigned flags, struct mng_romfs_runtime_result *out) {
     struct stat before, after, image_before, image_after;
     static const unsigned char zero[32];
-    if (!out || out->file_count || out->index_size || memcmp(out->index_sha256, zero, 32) ||
+    if ((flags & ~MNG_ROMFS_RUNTIME_ALLOW_EMPTY) || !out || out->file_count || out->index_size || memcmp(out->index_sha256, zero, 32) ||
         fstat(output_fd, &before) || !S_ISREG(before.st_mode) || before.st_size ||
         before.st_uid != geteuid() || before.st_nlink != 1 || (before.st_mode & 077)) return MNG_ROMFS_INVALID;
     if (fstat(image_fd, &image_before)) return MNG_ROMFS_IO;
@@ -103,7 +103,7 @@ enum mng_romfs_status mng_romfs_runtime_index_fd(int image_fd, int output_fd,
     struct mng_sha256 *hash = NULL;
     uint64_t at = 0;
     if (status) goto done;
-    if (!index.count) { status = MNG_ROMFS_INVALID; goto done; }
+    if (!index.count && !(flags & MNG_ROMFS_RUNTIME_ALLOW_EMPTY)) { status = MNG_ROMFS_INVALID; goto done; }
     if (stopped(&index)) { status = MNG_ROMFS_CANCELLED; goto done; }
     qsort(index.entries, index.count, sizeof(*index.entries), compare);
     if (mng_sha256_init(&hash)) { status = MNG_ROMFS_NOMEM; goto done; }
@@ -134,4 +134,9 @@ done:
     for (size_t i = 0; i < index.count; ++i) free(index.entries[i].path);
     free(index.entries);
     return status;
+}
+
+enum mng_romfs_status mng_romfs_runtime_index_fd(int image_fd, int output_fd,
+    const struct mng_romfs_callbacks *callbacks, struct mng_romfs_runtime_result *out) {
+    return mng_romfs_runtime_index_fd_ex(image_fd,output_fd,callbacks,0,out);
 }

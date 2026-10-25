@@ -27,7 +27,6 @@ class CanopyAddonTests(unittest.TestCase):
     def run_case(self,mode='ok',index=None,special=None):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);image=root/'romfs';raw,layout=romfs([] if mode=='empty' else [('nested/data.bin',b'original payload')]);image.write_bytes(raw);image.chmod(0o600)
-            if mode=='empty' and index is None:index=struct.pack('<8sQQ',b'TOTKRFS1',0,24)
             if special and index is None:
                 name=b'nested/data.bin\0'
                 index=struct.pack('<8sQQQQII',b'TOTKRFS1',1,48,layout['data_start'],16,0,len(name))+name

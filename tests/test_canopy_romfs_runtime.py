@@ -50,7 +50,7 @@ class CanopyRomfsRuntimeTests(unittest.TestCase):
             self.assertNotIn('runtime error:', result.stderr)
             report = json.loads(result.stdout)
             self.assertTrue(report['positionsPreserved'])
-            if mode == 'mutate-image':
+            if mode.endswith('mutate-image'):
                 self.assertEqual(source.read_bytes(), b'X' + image[1:])
             else:
                 self.assertEqual(source.read_bytes(), image)
@@ -109,6 +109,38 @@ class CanopyRomfsRuntimeTests(unittest.TestCase):
                 self.assertEqual(report['status'], status)
                 self.assertEqual((report['files'], report['size'], report['sha256']), (0, 0, '0'*64))
                 self.assertGreater(len(data), 24)
+
+
+    def test_explicit_empty_option_validates_real_romfs_and_writes_canonical_hash(self):
+        expected=struct.pack('<8sQQ',b'TOTKRFS1',0,24)
+        for image in (romfs()[0],romfs([],['empty/nested'])[0]):
+            report,data=self.run_index(image,'empty-ok')
+            self.assertEqual(report['status'],'ok');self.assertEqual(data,expected)
+            self.assertEqual((report['files'],report['size']),(0,24))
+            self.assertEqual(report['sha256'],hashlib.sha256(expected).hexdigest())
+            legacy,legacy_data=self.run_index(image)
+            self.assertEqual(legacy['status'],'invalid');self.assertEqual(legacy_data,b'')
+
+    def test_explicit_zero_flags_preserves_existing_nonempty_bytes(self):
+        image=romfs([('a',b'original')])[0]
+        legacy,data=self.run_index(image);extended,other=self.run_index(image,'extended')
+        self.assertEqual(legacy,extended);self.assertEqual(data,other)
+
+    def test_unknown_flags_and_malformed_empty_image_never_write(self):
+        broken=bytearray(romfs()[0]);struct.pack_into('<I',broken,80+4,0)
+        for image,mode in ((romfs()[0],'badflags'),(romfs()[0],'extended'),(bytes(broken),'empty-ok'),(b'bad','empty-ok')):
+            report,data=self.run_index(image,mode)
+            self.assertNotEqual(report['status'],'ok');self.assertEqual(data,b'')
+            self.assertEqual((report['files'],report['size'],report['sha256']),(0,0,'0'*64))
+
+    def test_empty_output_cancellation_write_failure_and_detected_mutation(self):
+        for mode,status in (('empty-cancel','cancelled'),('empty-cancel-write','cancelled'),
+                            ('empty-write-error','io'),('empty-mutate-image','io')):
+            with self.subTest(mode=mode):
+                report,data=self.run_index(romfs()[0],mode)
+                self.assertEqual(report['status'],status)
+                self.assertEqual((report['files'],report['size'],report['sha256']),(0,0,'0'*64))
+                self.assertEqual(len(data),24 if mode in ('empty-cancel-write','empty-mutate-image') else 0)
 
 
 if __name__ == '__main__':

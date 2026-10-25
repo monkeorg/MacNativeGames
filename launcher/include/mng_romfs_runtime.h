@@ -12,4 +12,10 @@ struct mng_romfs_runtime_result {
 };
 enum mng_romfs_status mng_romfs_runtime_index_fd(int image_fd, int index_fd,
     const struct mng_romfs_callbacks *, struct mng_romfs_runtime_result *);
+/* Explicit separate-volume option. Unknown flags refuse before any output.
+ * ALLOW_EMPTY emits canonical TOTKRFS1 header(count0/strings24), but only after
+ * actual complete RomFS validation. The legacy entrypoint always uses flags0. */
+#define MNG_ROMFS_RUNTIME_ALLOW_EMPTY 1u
+enum mng_romfs_status mng_romfs_runtime_index_fd_ex(int image_fd, int index_fd,
+    const struct mng_romfs_callbacks *, unsigned flags, struct mng_romfs_runtime_result *);
 #endif

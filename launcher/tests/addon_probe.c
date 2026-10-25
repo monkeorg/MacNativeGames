@@ -48,7 +48,8 @@ int main(int argc,char **argv){
     const char *mode=argv[4];int image=open(argv[1],O_RDONLY),index=open(argv[2],O_RDWR),pin=open(argv[3],O_RDWR);
     check(image>=0&&index>=0&&pin>=0&&!flock(pin,LOCK_SH|LOCK_NB));
     struct stat st;check(!fstat(index,&st));
-    if(!st.st_size){struct mng_romfs_runtime_result indexed={0};check(mng_romfs_runtime_index_fd(image,index,NULL,&indexed)==MNG_ROMFS_OK);}
+    if(!st.st_size){struct mng_romfs_runtime_result indexed={0};check((!strcmp(mode,"empty") ? mng_romfs_runtime_index_fd_ex(image,index,NULL,MNG_ROMFS_RUNTIME_ALLOW_EMPTY,&indexed) :
+        mng_romfs_runtime_index_fd(image,index,NULL,&indexed))==MNG_ROMFS_OK);}
     close(index);index=open(argv[2],O_RDONLY);check(index>=0);
     struct mng_addon_result result={0};result.application_id=10;result.title_id=11;result.version=2;result.required_application_version=4;
     result.source_size=100;result.source_sha256[0]=1;result.cnmt_sha256[0]=2;result.romfs_verified=1;
