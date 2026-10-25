@@ -236,3 +236,31 @@ skip when only an older SDK is selected; other available source checks continue.
 No SDK version is fabricated or downloaded by these tests. Real
 Mac/iPad graphics/gameplay acceptance remains separate evidence. No fixture
 counter is reported as gameplay FPS or commercial compatibility.
+
+## Unexpected SDK return in the private host
+
+For TOTK with `CANOPY_HOST_RUNTIME` (and not `GAME_BOTW`), the loader forwards its existing five-argument
+`nn::init::Start` call through `canopy_sdk_return.h`. The handle, zero argument
+and original ready/init/fini callback pointers are unchanged. Only if that native
+call actually returns does the adapter produce
+`CANOPY_LOADER_UNEXPECTED_SDK_RETURN` (70). This is a loader-wrapper error, not
+an observed guest program exit code.
+
+The existing iOS frontend callback then returns normally and `totk_host_main`
+returns that result to the ABI3 worker observer. Runtime treats the ended main
+worker as failure, captures input/focus and retains generation, shader, save,
+device and module protections. No finalizer, unmap, service destruction or thread
+exit is injected. The unflagged loader and all BOTW branches retain their existing fatal return path.
+`module_finis` is still an unimplemented fatal path; this change does not make
+normal SDK shutdown, whole-runtime teardown or relaunch supported.
+
+`test_canopy_sdk_return.py` executes the actual return adapter with an original
+native C signature fixture, checking exact argument/callback forwarding and the
+named nonzero result. A real pthread-exit/TLS-destructor/join case confirms the
+adapter cannot manufacture a fallthrough result or finalizer call when the
+native call does not return. On Apple hosts a separate production-loader syntax
+check uses explicitly original, nonexecutable module metadata for macOS and
+iPhoneOS, both Canopy and unflagged variants. That metadata supplies no accepted
+game pins, instructions or private payload. Two native fixture cases pass on
+Linux; Apple compilation and actual private SDK/device behavior remain separate
+gates here.
