@@ -8,6 +8,7 @@
 #import "CanopySaveStore.h"
 #import "CanopyStorageController.h"
 #import "CanopyDiagnosticsController.h"
+#import "CanopyAddonsController.h"
 #import "../../../games/totk/ios/Sources/save_validation.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
@@ -285,6 +286,83 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 @end
 
+@interface CanopyKeyboardKeyPicker : UITableViewController
+@property(nonatomic,copy) void (^choose)(UIViewController *,NSNumber *);
+@end
+@implementation CanopyKeyboardKeyPicker
+- (void)viewDidLoad {[super viewDidLoad];self.title=@"Choose keyboard key";self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=50;}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {(void)tableView;(void)section;return (NSInteger)CanopySettings.keyboardSupportedKeys.count;}
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
+    NSNumber *usage=CanopySettings.keyboardSupportedKeys[(NSUInteger)path.row];
+    return GamesCell(tableView,[CanopySettings keyboardKeyTitle:usage.unsignedIntValue],usage.unsignedIntValue ? [NSString stringWithFormat:@"HID usage %@",usage] : @"Unbind this action");
+}
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {(void)tableView;(void)section;return @"Escape and Command remain system controls. Reusing a bound key requires confirming which action will be unbound.";}
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {[tableView deselectRowAtIndexPath:path animated:YES];if(self.choose)self.choose(self,CanopySettings.keyboardSupportedKeys[(NSUInteger)path.row]);}
+@end
+
+@interface CanopyKeyboardBindingsController : UITableViewController
+@property(nonatomic,copy) CanopySettingsApply applySettings;
+@property(nonatomic,copy) CanopySettingsStateProvider settingStates;
+- (instancetype)initWithSettings:(CanopySettings *)settings titleID:(NSString *)titleID;
+@end
+@implementation CanopyKeyboardBindingsController {
+    CanopySettings *_settings; NSString *_titleID;
+}
+- (instancetype)initWithSettings:(CanopySettings *)settings titleID:(NSString *)titleID {
+    if((self=[super initWithStyle:UITableViewStyleInsetGrouped])){_settings=settings;_titleID=[titleID copy];}return self;
+}
+- (void)viewDidLoad {[super viewDidLoad];self.title=@"Keyboard bindings";self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=60;}
+- (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self.tableView reloadData];}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {(void)tableView;(void)section;return (NSInteger)CanopySettings.keyboardActions.count;}
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+    (void)tableView;(void)section;
+    NSError *error=nil;NSDictionary *values=[_settings settingsForTitleID:_titleID error:&error];
+    if(!values)return error.localizedDescription;
+    return self.settingStates ? SettingApplicationDetail(@"keyboardBindings",values[@"keyboardBindings"],self.settingStates) : @"Bindings are saved for this game. Each key controls one action. Gameplay input stays captured while this editor is open.";
+}
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
+    NSString *action=CanopySettings.keyboardActions[(NSUInteger)path.row];NSError *error=nil;
+    NSDictionary *values=[_settings settingsForTitleID:_titleID error:&error];
+    UITableViewCell *cell=GamesCell(tableView,action,values ? [CanopySettings keyboardKeyTitle:[CanopySettings keyboardBindingForAction:action settings:values]] : @"Metadata recovery required");
+    cell.accessoryType=values ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;return cell;
+}
+- (void)assignUsage:(NSNumber *)usage action:(NSString *)action presenter:(UIViewController *)presenter {
+    NSError *error=nil;NSDictionary *values=[_settings settingsForTitleID:_titleID error:&error];
+    if(!values){GamesAlert(presenter,@"Settings unavailable",error.localizedDescription);return;}
+    NSMutableArray<NSString *> *conflicts=[NSMutableArray new];
+    if(usage.unsignedIntValue)for(NSString *other in CanopySettings.keyboardActions)
+        if(![other isEqual:action] && [CanopySettings keyboardBindingForAction:other settings:values]==usage.unsignedIntValue)[conflicts addObject:other];
+    // Confirm the exact current conflict, then re-read before writing so a
+    // stale confirmation cannot silently displace a different binding.
+    void (^save)(void)=^{
+        NSError *failure=nil;NSDictionary *current=[self->_settings settingsForTitleID:self->_titleID error:&failure];
+        if(!current){GamesAlert(presenter,@"Could not save keyboard binding",failure.localizedDescription);return;}
+        NSMutableArray *actual=[NSMutableArray new];
+        if(usage.unsignedIntValue)for(NSString *other in CanopySettings.keyboardActions)
+            if(![other isEqual:action] && [CanopySettings keyboardBindingForAction:other settings:current]==usage.unsignedIntValue)[actual addObject:other];
+        if(![actual isEqualToArray:conflicts]){GamesAlert(presenter,@"Bindings changed",@"Choose the key again to review its current assignment.");return;}
+        NSMutableDictionary *bindings=[current[@"keyboardBindings"] mutableCopy] ?: [NSMutableDictionary new];
+        for(NSString *other in conflicts)bindings[other]=@0;
+        bindings[action]=usage;
+        if(![self->_settings setValue:bindings forSetting:@"keyboardBindings" titleID:self->_titleID error:&failure]){GamesAlert(presenter,@"Could not save keyboard binding",failure.localizedDescription);return;}
+        ApplySavedSettings(self->_settings,self->_titleID,self.applySettings);
+        [self.navigationController popToViewController:self animated:YES];[self.tableView reloadData];
+    };
+    if(!conflicts.count){save();return;}
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Reassign this key?" message:[NSString stringWithFormat:@"Assign %@ to %@ and unbind %@?",[CanopySettings keyboardKeyTitle:usage.unsignedIntValue],action,[conflicts componentsJoinedByString:@", "]] preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reassign" style:UIAlertActionStyleDefault handler:^(UIAlertAction *button){(void)button;save();}]];
+    [presenter presentViewController:alert animated:YES completion:nil];
+}
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
+    [tableView deselectRowAtIndexPath:path animated:YES];NSString *action=CanopySettings.keyboardActions[(NSUInteger)path.row];
+    CanopyKeyboardKeyPicker *picker=[[CanopyKeyboardKeyPicker alloc] initWithStyle:UITableViewStyleInsetGrouped];
+    __weak CanopyKeyboardBindingsController *owner=self;
+    picker.choose=^(UIViewController *presenter,NSNumber *usage){[owner assignUsage:usage action:action presenter:presenter];};
+    [self.navigationController pushViewController:picker animated:YES];
+}
+@end
+
 @interface CanopyGameDetails : UITableViewController
 @property(nonatomic, copy) CanopySettingsApply applySettings;
 @property(nonatomic, copy) CanopySettingsStateProvider settingStates;
@@ -328,7 +406,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section < 3 ? 6 : section == 3 ? 2 : 1; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 2 ? 7 : section < 3 ? 6 : section == 3 ? 3 : 1; }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Prepared assets",@"Graphics preferences",@"Control preferences",@"Saves & native session",@"Language"][(NSUInteger)section]; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
@@ -342,7 +420,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (NSArray *)keysForSection:(NSInteger)section {
     if (section == 1) return @[@"fpsLimit",@"renderHeight",@"aspect",@"hud",@"metalHUD",@"taa"];
-    if (section == 2) return @[@"touch",@"controllerType",@"mouseSensitivity",@"mouseInvertY",@"buttonMappings",@"players"];
+    if (section == 2) return @[@"touch",@"controllerType",@"mouseSensitivity",@"mouseInvertY",@"buttonMappings",@"players",@"keyboardBindings"];
     return @[@"language"];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -356,6 +434,12 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         UITableViewCell *cell = GamesCell(tableView,titles[(NSUInteger)path.row],details[(NSUInteger)path.row]); cell.selectionStyle = UITableViewCellSelectionStyleNone; return cell;
     }
     if (path.section == 3) {
+        if(path.row==2) {
+            UITableViewCell *cell=GamesCell(tableView,@"Add-ons",@"Install and manage isolated prepared content. Activation requires a reviewed native host binding.");
+            if(!self.settingStates && !_saves.sealed && ![CanopySessionController nativeSessionOwnsProcess])cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+            else {cell.selectionStyle=UITableViewCellSelectionStyleNone;cell.textLabel.textColor=UIColor.secondaryLabelColor;}
+            return cell;
+        }
         BOOL trusted = [CanopyRuntime trustedProfileForTitleID:_entry[@"titleID"]] != nil;
         NSString *title = path.row == 0 ? @"Manage saves and backups" : trusted ? @"Start reviewed native host" : @"Gameplay unavailable";
         NSString *detail = path.row == 0 ? (_saveLoading ? @"Opening the private save profile…" : _saveError ?: @"Canopy export/import, backup, restore and recovery") : @"No compiled reviewed native profile is present for this title";
@@ -367,7 +451,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         else { cell.selectionStyle = UITableViewCellSelectionStyleNone; cell.textLabel.textColor = UIColor.secondaryLabelColor; }
         return cell;
     }
-    NSArray *titles = path.section == 1 ? @[@"Target frame rate",@"Render height",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD",@"Temporal anti-aliasing"] : path.section == 2 ? @[@"Touch controls",@"Controller layout",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Players & controllers"] : @[@"Language"];
+    NSArray *titles = path.section == 1 ? @[@"Target frame rate",@"Render height",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD",@"Temporal anti-aliasing"] : path.section == 2 ? @[@"Touch controls",@"Controller layout",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Players & controllers",@"Keyboard bindings"] : @[@"Language"];
     NSString *key = [self keysForSection:path.section][(NSUInteger)path.row];
     NSError *error = nil; NSDictionary *values = [_settings settingsForTitleID:_entry[@"titleID"] error:&error];
     id value = values[key];
@@ -375,6 +459,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     if ([key isEqual:@"hud"] && values) detail = @[@"Off",@"Full",@"FPS only"][[value unsignedIntegerValue]];
     if ([key isEqual:@"language"] && [value isEqual:@""]) detail = @"System";
     if ([key isEqual:@"buttonMappings"] && values) detail = @"Per-game controller and mouse buttons";
+    if ([key isEqual:@"keyboardBindings"] && values) detail = @"24 per-game actions with explicit key reassignment";
     if ([key isEqual:@"players"]) detail = @"Assign, unassign or swap connected controllers";
     else if (values && self.settingStates) detail = SettingApplicationDetail(key,value,self.settingStates);
     UITableViewCell *cell = GamesCell(tableView,titles[(NSUInteger)path.row],detail);
@@ -409,6 +494,15 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES]; if (!path.section) return;
     if (path.section == 3) {
+        if(path.row==2) {
+            if(self.settingStates || _saves.sealed || [CanopySessionController nativeSessionOwnsProcess])return;
+            NSURL *support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+            NSURL *base=[support URLByAppendingPathComponent:@"Canopy" isDirectory:YES];
+            CanopyAddonsController *addons=CanopyMakeAddonsController(_entry,[base URLByAppendingPathComponent:@"Prepared" isDirectory:YES],[base URLByAppendingPathComponent:@"Caches" isDirectory:YES],_settings);
+            __weak CanopyGameDetails *owner=self;
+            addons.mutationAllowed=^BOOL {CanopyGameDetails *current=owner;return current && !current.settingStates && !current->_saves.sealed && ![CanopySessionController nativeSessionOwnsProcess];};
+            [self.navigationController pushViewController:addons animated:YES];return;
+        }
         if (self.settingStates || _saveLoading || _saves.sealed) return;
         if (!_saves) { [self loadSaveStore]; return; }
         if (path.row == 0) [self.navigationController pushViewController:[[CanopySaveController alloc] initWithStore:_saves queue:_saveQueue] animated:YES];
@@ -423,6 +517,11 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     if (!values) { GamesAlert(self,@"Settings unavailable",error.localizedDescription); return; }
     NSString *key = [self keysForSection:path.section][(NSUInteger)path.row];
     if ([@[@"touch",@"mouseInvertY",@"metalHUD",@"taa"] containsObject:key]) return;
+    if ([key isEqual:@"keyboardBindings"]) {
+        CanopyKeyboardBindingsController *keyboard=[[CanopyKeyboardBindingsController alloc] initWithSettings:_settings titleID:_entry[@"titleID"]];
+        keyboard.applySettings=self.applySettings;keyboard.settingStates=self.settingStates;
+        [self.navigationController pushViewController:keyboard animated:YES];return;
+    }
     if ([key isEqual:@"buttonMappings"]) {
         CanopyMappingController *mappings = [[CanopyMappingController alloc] initWithSettings:_settings titleID:_entry[@"titleID"]];
         mappings.applySettings = self.applySettings; mappings.settingStates = self.settingStates;

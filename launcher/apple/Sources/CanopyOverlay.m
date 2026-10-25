@@ -123,7 +123,10 @@
     if (!_expanded) return YES;
     if (_transitioning) return NO;
     if (_navigation.presentedViewController || _navigation.topViewController.presentedViewController) {
-        [_navigation dismissViewControllerAnimated:NO completion:^{ [self close]; }]; return NO;
+        // A Home/Escape edge must not dismiss a confirmation and then restore
+        // gameplay behind its dismissal animation. Keep capture until the
+        // dialog ends and the user explicitly requests Resume again.
+        [self showStatus:@"Finish or cancel the current dialog before resuming gameplay."]; return NO;
     }
     _transitioning = YES; [self.view.window endEditing:YES];
     NSError *error = nil; BOOL restored = _restore(&error);
