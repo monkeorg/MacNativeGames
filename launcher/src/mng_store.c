@@ -145,7 +145,7 @@ static int hash_asset(int root, const struct asset *asset, struct mng_store *can
     if (parent<0) return -1;
     int fd=openat(parent,name,O_RDONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC); close(parent);
     if (fd<0) return -1;
-    struct stat before, after;
+    struct stat before={0}, after={0};
     struct mng_sha256 *hash_state=NULL;
     int bad=regular(fd,asset->size,&before) || (uint64_t)before.st_size!=asset->size || mng_sha256_init(&hash_state);
     unsigned char buffer[65536], digest[32]; uint64_t remaining=asset->size;
