@@ -9,13 +9,14 @@ static void Check(BOOL condition,const char *message) {
 }
 int main(int argc,char **argv) {
     @autoreleasepool {
-        Check(argc==6,"arguments");
+        Check(argc==6 || argc==7,"arguments");
         Check(NSThread.isMainThread,"main owner");
         NSString *mode=@(argv[1]);
         NSURL *source=[NSURL fileURLWithPath:@(argv[2])];
         NSURL *keys=[NSURL fileURLWithPath:@(argv[3])];
         NSURL *store=[NSURL fileURLWithPath:@(argv[4]) isDirectory:YES];
         NSString *identifier=strcmp(argv[5],"-") ? @(argv[5]):nil;
+        NSURL *update=argc==7 ? [NSURL fileURLWithPath:@(argv[6])]:nil;
         CanopyPreparation *job=[[CanopyPreparation alloc] initWithPreparedRootURL:store];
         Check(!job.busy,"initial busy");
         __block BOOL completed=NO,cancelSent=NO;
@@ -29,11 +30,11 @@ int main(int argc,char **argv) {
             progressCalls++;
             /* ExeFS assets are already complete when IVFC verification starts;
              * cancellation leaves a resumable job with real completed files. */
-            if([mode isEqual:@"cancel"] && !cancelSent && [phase isEqual:@"verify-ivfc"]) {
+            if([mode isEqual:@"cancel"] && !cancelSent && [phase isEqual:(update ? @"hash-update-source":@"verify-ivfc")]) {
                 cancelSent=YES;[weakJob cancel];
             }
         };
-        BOOL started=[job startSourceURL:source keysURL:keys jobIdentifier:identifier
+        BOOL started=[job startSourceURL:source updateURL:update keysURL:keys jobIdentifier:identifier
             completion:^(NSDictionary<NSString *,id> *value,NSError *error) {
                 Check(NSThread.isMainThread,"completion thread");
                 Check(!completed,"duplicate completion");

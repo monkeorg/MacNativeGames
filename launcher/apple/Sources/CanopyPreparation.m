@@ -81,6 +81,16 @@ static BOOL CPJobID(NSString *identifier) {
     if (identifier.length != 32) return NO;
     return [identifier rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location == NSNotFound;
 }
+static BOOL CPMatchesPreparation(const struct mng_prepare_result *a, const struct mng_prepare_result *b) {
+    return a->title_id == b->title_id && a->application_id == b->application_id &&
+        a->source_size == b->source_size && !memcmp(a->source_sha256, b->source_sha256, 32) &&
+        a->title_version == b->title_version && a->version_identified == b->version_identified &&
+        a->content_role == b->content_role && a->update_applied == b->update_applied &&
+        a->update_source_size == b->update_source_size && !memcmp(a->update_source_sha256, b->update_source_sha256, 32) &&
+        a->patch_title_id == b->patch_title_id && a->base_title_version == b->base_title_version &&
+        a->asset_count == b->asset_count && a->asset_bytes == b->asset_bytes &&
+        a->exefs_verified == b->exefs_verified && a->romfs_verified == b->romfs_verified;
+}
 static NSError *CPError(enum mng_prepare_status status, BOOL published) {
     NSString *message;
     switch (status) {
@@ -169,8 +179,11 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
     return keys;
 }
 - (BOOL)startSourceURL:(NSURL *)source keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
+    return [self startSourceURL:source updateURL:nil keysURL:keysURL jobIdentifier:identifier completion:completion];
+}
+- (BOOL)startSourceURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
     NSAssert(NSThread.isMainThread, @"Canopy preparation is owned by the main thread");
-    if (_busy || !source.isFileURL || !keysURL.isFileURL || !completion || (identifier && !CPJobID(identifier))) return NO;
+    if (_busy || !source.isFileURL || !keysURL.isFileURL || (updateURL && !updateURL.isFileURL) || !completion || (identifier && !CPJobID(identifier))) return NO;
     _busy = YES; ++_epoch; NSUInteger epoch = _epoch;
     _jobIdentifier = identifier ?: [[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
     NSString *job = [_jobIdentifier copy];
@@ -204,17 +217,30 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
                 }
                 if (operation == MNG_PREPARE_OK) {
                     BOOL scoped = [source startAccessingSecurityScopedResource];
+                    BOOL updateScoped = updateURL ? [updateURL startAccessingSecurityScopedResource] : NO;
                     NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
                     [self useCoordinator:coordinator]; NSError *coordinationError = nil;
-                    if (![self cancellationRequested]) [coordinator coordinateReadingItemAtURL:source options:0 error:&coordinationError byAccessor:^(NSURL *readURL) {
+                    void (^readInputs)(NSURL *, NSURL * _Nullable) = ^(NSURL *readURL, NSURL * _Nullable readUpdateURL) {
                         int fd = open(readURL.fileSystemRepresentation, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
                         if (fd < 0) { operation = MNG_PREPARE_IO; return; }
+                        int updateFD = readUpdateURL ? open(readUpdateURL.fileSystemRepresentation, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK) : -1;
+                        if (readUpdateURL && updateFD < 0) { close(fd); operation = MNG_PREPARE_IO; return; }
                         struct preparation_context context = { self, store, mng_store_sink(store), epoch, 0, {0} };
                         struct mng_asset_sink sink = { &context, CPBegin, CPWrite, CPEnd, CPStopped, CPProgress };
                         struct mng_key_provider provider = mng_keys_provider(keys);
-                        operation = mng_prepare_fd(fd, &provider, &sink, &prepared);
+                        operation = readUpdateURL ? mng_prepare_latest_update_fd(fd, updateFD, &provider, &sink, &prepared) :
+                            mng_prepare_fd(fd, &provider, &sink, &prepared);
+                        if (updateFD >= 0) close(updateFD);
                         close(fd);
-                    }];
+                    };
+                    if (![self cancellationRequested]) {
+                        if (updateURL) [coordinator coordinateReadingItemAtURL:source options:0 readingItemAtURL:updateURL options:0
+                            error:&coordinationError byAccessor:readInputs];
+                        else [coordinator coordinateReadingItemAtURL:source options:0 error:&coordinationError byAccessor:^(NSURL *readURL) {
+                            readInputs(readURL, nil);
+                        }];
+                    }
+                    if (updateScoped) [updateURL stopAccessingSecurityScopedResource];
                     if (scoped) [source stopAccessingSecurityScopedResource];
                     [self useCoordinator:nil];
                     if (coordinationError) operation = MNG_PREPARE_IO;
@@ -229,7 +255,7 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
                             // authoritative verified current rather than promising rollback.
                             if (mng_store_current(store, prepared.title_id, current) == MNG_PREPARE_OK &&
                                 mng_store_verify(store, prepared.title_id, current, &actual) == MNG_PREPARE_OK &&
-                                !memcmp(actual.source_sha256, prepared.source_sha256, 32)) published = YES;
+                                CPMatchesPreparation(&actual, &prepared)) published = YES;
                         }
                     }
                 }
@@ -242,6 +268,10 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
                 @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.application_id],
                 @"titleVersion":@(prepared.title_version), @"versionIdentified":prepared.version_identified ? @YES : @NO,
                 @"contentRole":@(prepared.content_role),
+                @"updateApplied":prepared.update_applied ? @YES : @NO,
+                @"baseTitleVersion":@(prepared.base_title_version),
+                @"patchTitleID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.patch_title_id],
+                @"updateSourceSHA256":CPHex(prepared.update_source_sha256, 32), @"updateSourceSize":@(prepared.update_source_size),
                 @"generationID":[NSString stringWithUTF8String:generation], @"jobID":job,
                 @"sourceSHA256":CPHex(prepared.source_sha256, 32), @"assetCount":@(prepared.asset_count), @"assetBytes":@(prepared.asset_bytes),
                 @"exefsVerified":prepared.exefs_verified ? @YES : @NO, @"romfsVerified":prepared.romfs_verified ? @YES : @NO,

@@ -58,10 +58,12 @@ class CanopyPreparationJobTests(unittest.TestCase):
                                    ('titlekek_00', f.TITLEKEK)])
         self.keys.write_text(self.key_text)
 
-    def job(self, mode='success', job=None):
-        originals = {p: p.read_bytes() for p in (self.source, self.keys) if p.is_file() and not p.is_symlink()}
+    def job(self, mode='success', job=None, update=None):
+        inputs = (self.source, self.keys) + ((update,) if update is not None else ())
+        originals = {p: p.read_bytes() for p in inputs if p.is_file() and not p.is_symlink()}
         run = subprocess.run([str(self.probe), mode, str(self.source), str(self.keys),
-                              str(self.store), job or '-'], capture_output=True, text=True, timeout=30)
+                              str(self.store), job or '-', *([str(update)] if update is not None else [])],
+                             capture_output=True, text=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         for p, data in originals.items():
             self.assertEqual(p.read_bytes(), data)
@@ -106,6 +108,39 @@ class CanopyPreparationJobTests(unittest.TestCase):
         self.assertGreater(report['progress_calls'], 0)
         self.assertIsInstance(report['result'], dict)
         self.assertTrue(report['result'])
+
+    def test_two_coordinated_inputs_publish_actual_updated_assets_and_provenance(self):
+        from test_canopy_pipeline import CanopyPipelineTests
+        base, patch, _, updated = CanopyPipelineTests.update_fixture(self)
+        self.source.write_bytes(self.fixture.partition(base))
+        update = self.directory/'invented-update.nsp'
+        update.write_bytes(self.fixture.partition(patch))
+        report = self.job(update=update)
+        self.assertIs(report['result']['updateApplied'], True)
+        self.assertEqual((report['result']['baseTitleVersion'], report['result']['titleVersion']), (7, 12))
+        self.assertEqual(report['result']['updateSourceSHA256'], hashlib.sha256(update.read_bytes()).hexdigest())
+        root = self.generation(report, 0x0100123456780000)
+        self.assertEqual((root/'exefs/main').read_bytes(), b'updated native bytes')
+        self.assertEqual((root/'romfs.bin').read_bytes(), updated)
+        self.assertEqual(json.loads((root/'manifest.json').read_text())['schemaVersion'], 3)
+
+    def test_update_cancellation_waits_for_completion_and_resumes_verified_work(self):
+        from test_canopy_pipeline import CanopyPipelineTests
+        base, patch, _, updated = CanopyPipelineTests.update_fixture(self)
+        self.source.write_bytes(self.fixture.partition(base))
+        update = self.directory/'invented-update.nsp'; update.write_bytes(self.fixture.partition(patch))
+        before = self.job()
+        current = self.current(0x0100123456780000)
+        identifier = 'ef'*16
+        cancelled = self.job('cancel', identifier, update)
+        self.assertEqual(cancelled['error']['code'], 6)
+        self.assertEqual(current.read_text().strip(), before['result']['generationID'])
+        retained = self.store/'jobs'/identifier/'exefs/main'
+        inode = retained.stat().st_ino
+        resumed = self.job(job=identifier, update=update)
+        root = self.generation(resumed, 0x0100123456780000)
+        self.assertEqual((root/'exefs/main').stat().st_ino, inode)
+        self.assertEqual((root/'romfs.bin').read_bytes(), updated)
 
     def test_cancellation_from_main_progress_preserves_current_and_resumes_job(self):
         first = self.job()

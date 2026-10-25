@@ -13,6 +13,12 @@ NS_ASSUME_NONNULL_BEGIN
         jobIdentifier:(nullable NSString *)identifier
            completion:(void (^)(NSDictionary<NSString *, id> * _Nullable result,
                                 NSError * _Nullable error))completion;
+/// Selects the highest declared update revision and publishes composed assets.
+/// A nil update keeps base-only preparation. Both input URLs are coordinated.
+- (BOOL)startSourceURL:(NSURL *)source updateURL:(nullable NSURL *)update
+              keysURL:(NSURL *)keys jobIdentifier:(nullable NSString *)identifier
+           completion:(void (^)(NSDictionary<NSString *, id> * _Nullable result,
+                                NSError * _Nullable error))completion;
 /// Requests cancellation, including native verification. Completion is the
 /// authority: a request after publication may still return a successful result.
 - (void)cancel;
