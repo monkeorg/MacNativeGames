@@ -2,7 +2,13 @@
 
 ## Local integration checkpoint — 2026-10-25
 
-The overnight source at `feat/totk-cloud-ready` (`2241674`) is integrated through draft [PR #33](https://github.com/monkeorg/MacNativeGames/pull/33). Production candidate `ecd124e` is built, signed and installed under the existing app identity. Later commits change the device test harness and documentation only. No merge or release occurred.
+The overnight source at `feat/totk-cloud-ready` (`2241674`) is integrated through draft [PR #33](https://github.com/monkeorg/MacNativeGames/pull/33). Production candidate `259e1cb` is built, signed and installed under the existing app identity. It includes the telescope mask correction and a thermal-state badge. No merge or release occurred.
+
+Latest verification: 362 repository tests passed, 22 iPhoneOS source objects compiled, and the cached native host, full iPad app and UI runner builds passed. Physical `test04PlayAndNativeHUD` passed in 42.028 seconds. Its screenshot shows gameplay and `Thermal: Nominal`; the badge reports the public device thermal state, not a temperature in degrees. Account identity remained byte-identical. Live badge visibility and the corrected telescope appearance remain unchecked.
+
+The one-time external game-image copy completed all 16 parts. First launch hashed all 17,052,625,232 bytes and mounted the image before loading `slot_04/progress.sav`. The app now omits the bundled image: its local signed bundle is approximately 1.87 GB; the device data container holds approximately 17.90 GB, including 17.05 GB of game data. These logical sizes total approximately 19.8 GB, not an independently measured Settings storage total. The earlier approximately 37 GB report is consistent with the temporary overlap between the old bundled image and the external copy. No saves, caches or private inputs were deleted.
+
+The user requested a pause after this delivery and asked to stop repetitive UI automation. No further launch or live-menu test ran after that request. Retain the installed app and private evidence; do not restart automation without a concrete acceptance need.
 
 Verified host evidence: 360 repository tests passed in the retained project environment, both iPhoneOS profiles compiled (22 objects), the full cached native host and iPad app builds passed, and all nine embedded executable-section hashes matched. The first system-Python test run had three environment errors; the project-environment run passed all 360 tests.
 
@@ -14,11 +20,11 @@ Physical test `test06fExistingGameGraphicsAndTouchApplyLive` passed in 89.942 se
 
 Open delivery limits:
 
-- The 4:3 **telescope/scope** mask correction is committed as `a6a794a`. Eleven layout tests passed; private archive validation changed only one guarded scale float. It is not installed or physically accepted yet. Full display remains experimental; scoped world projection still needs a matched capture.
+- The 4:3 **telescope/scope** mask correction from `a6a794a` is installed in `259e1cb`. Eleven layout tests passed; private archive validation changed only one guarded scale float. Its appearance is not physically accepted yet. Full display remains experimental; scoped world projection still needs a matched capture.
 - Stable native 60 FPS at 1080 high, synchronized memory/thermal measurements, and complete projection/effects acceptance remain unverified.
 - Physical keyboard/mouse/controller behavior, editor Apply followed by game load, and the complete ordered save/provider regression remain open.
 - Safe in-process restart and a generic mod manager are not implemented. Restart uses close/reopen guidance; arbitrary executable mods are unsupported.
-- The current self-contained IPA still includes game binaries and assets. External-image packaging can reduce later transfers, but does not make that IPA content-free.
+- The current app uses external-image packaging to reduce later transfers. It still contains game binaries and some assets; this does not make the app content-free.
 
 The current post-tutorial save stays active by user instruction. Retain the original automatic backup and previous signed app. The user waived a fresh full-profile backup; do not claim an immediate complete pre-install comparison. Private reports, inputs, saves, signing and caches remain outside Git.
 
