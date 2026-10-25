@@ -7,16 +7,19 @@
 
 @interface TOTKResolutionFactor : UIViewController
 @property(nonatomic) double factor;
+@property(nonatomic) BOOL inputHeightMode;
+@property(nonatomic) double aspect;
 @property(nonatomic, copy) void (^saved)(double);
 @end
 
 @implementation TOTKResolutionFactor {
     UISlider *_slider;
     UILabel *_value;
+    UITextField *_heightField;
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Multiplier";
+    self.title = self.inputHeightMode ? @"Input height" : @"Multiplier";
     self.view.backgroundColor = UIColor.clearColor;
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
     _value = [UILabel new];
@@ -24,28 +27,41 @@
     _value.textAlignment = NSTextAlignmentCenter;
     _value.adjustsFontForContentSizeCategory = YES;
     _slider = [UISlider new];
-    _slider.minimumValue = 1; _slider.maximumValue = 4; _slider.value = self.factor;
-    _slider.accessibilityLabel = @"Upscale multiplier";
-    _slider.accessibilityIdentifier = @"resolution.factor.slider";
+    _slider.minimumValue = self.inputHeightMode ? 360 : 1;
+    _slider.maximumValue = self.inputHeightMode ? 1080 : 4;
+    _slider.value = self.factor;
+    _slider.accessibilityLabel = self.inputHeightMode ? @"Input height" : @"Upscale multiplier";
+    _slider.accessibilityIdentifier = self.inputHeightMode ? @"resolution.input.slider" : @"resolution.factor.slider";
     [_slider addTarget:self action:@selector(slide) forControlEvents:UIControlEventValueChanged];
     UIStackView *presets = [[UIStackView alloc] init];
     presets.distribution = UIStackViewDistributionFillEqually;
-    for (NSNumber *number in @[@1,@1.25,@1.5,@2,@3,@4]) {
+    NSArray *values = self.inputHeightMode ? @[@540,@720,@900,@960,@1080] : @[@1,@1.25,@1.5,@2,@3,@4];
+    for (NSNumber *number in values) {
         UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
         button.titleLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
         button.titleLabel.adjustsFontForContentSizeCategory = YES;
-        [button setTitle:[NSString stringWithFormat:@"%@×",number] forState:UIControlStateNormal];
+        [button setTitle:[NSString stringWithFormat:self.inputHeightMode ? @"%@" : @"%@×",number] forState:UIControlStateNormal];
         [button addAction:[UIAction actionWithHandler:^(UIAction *action) {
             (void)action; self->_slider.value = number.floatValue; [self slide];
         }] forControlEvents:UIControlEventTouchUpInside];
         [presets addArrangedSubview:button];
     }
     UILabel *hint = [UILabel new];
-    hint.text = @"Output ÷ multiplier = input. Input height: 360–1080 pixels.";
+    hint.text = self.inputHeightMode ? @"Select 360–1080 pixels in steps of 6. Width follows the selected aspect. Enter an exact height below."
+        : @"Output ÷ multiplier = input. Input height: 360–1080 pixels.";
     hint.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
     hint.textColor = UIColor.secondaryLabelColor; hint.numberOfLines = 0;
     hint.adjustsFontForContentSizeCategory = YES;
     UIStackView *stack = [[UIStackView alloc] initWithArrangedSubviews:@[_value,_slider,presets,hint]];
+    if (self.inputHeightMode) {
+        _heightField = [UITextField new];
+        _heightField.borderStyle = UITextBorderStyleRoundedRect;
+        _heightField.keyboardType = UIKeyboardTypeNumberPad;
+        _heightField.accessibilityLabel = @"Exact input height";
+        _heightField.accessibilityIdentifier = @"resolution.input.height";
+        [_heightField addTarget:self action:@selector(editHeight) forControlEvents:UIControlEventEditingChanged];
+        [stack addArrangedSubview:_heightField];
+    }
     stack.axis = UILayoutConstraintAxisVertical; stack.spacing = 18;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:stack];
@@ -56,9 +72,22 @@
     [self slide];
 }
 - (void)slide {
-    self.factor = round(_slider.value * 100) / 100;
-    _value.text = [NSString stringWithFormat:@"%.3g×",self.factor];
+    self.factor = self.inputHeightMode ? 6 * round(_slider.value / 6) : round(_slider.value * 100) / 100;
+    _slider.value = self.factor;
+    _value.text = self.inputHeightMode ? [NSString stringWithFormat:@"%u × %u",(unsigned)(2 * round(self.factor * self.aspect / 2)),(unsigned)self.factor]
+        : [NSString stringWithFormat:@"%.3g×",self.factor];
     _slider.accessibilityValue = _value.text;
+    _heightField.text = [NSString stringWithFormat:@"%u",(unsigned)self.factor];
+    self.navigationItem.rightBarButtonItem.enabled = YES;
+}
+- (void)editHeight {
+    NSString *text = _heightField.text;
+    NSInteger height = text.integerValue;
+    BOOL valid = text.length && text.length <= 4 &&
+        [text rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location == NSNotFound &&
+        height >= 360 && height <= 1080 && height % 6 == 0;
+    self.navigationItem.rightBarButtonItem.enabled = valid;
+    if (valid) { _slider.value = height; [self slide]; }
 }
 - (void)cancel { [self.navigationController popViewControllerAnimated:YES]; }
 - (void)done {
@@ -110,6 +139,7 @@
     if (![mode isEqual:@"input-scale"]) [rows addObject:@"Output"];
     if (![mode isEqual:@"input-output"]) [rows addObject:@"Multiplier"];
     [rows addObject:@"Scaler"];
+    if ([TOTKLauncherScalerStage(NSUserDefaults.standardUserDefaults) isEqual:@"game-output"]) [rows addObject:@"Game canvas"];
     return rows;
 }
 - (BOOL)fullDisplayAvailable {
@@ -129,19 +159,19 @@
 }
 - (NSString *)summary {
     TOTKGraphicsPlan plan;
-    if (![self graphicsPlan:&plan]) return @"Input outside game profile";
+    if (![self graphicsPlan:&plan]) return @"Invalid resolution plan";
     double fit = fmin((double)plan.displayWidth / plan.canvasWidth,(double)plan.displayHeight / plan.canvasHeight);
     unsigned width = (unsigned)(2 * round(plan.canvasWidth * fit / 2));
     unsigned height = (unsigned)(2 * round(plan.canvasHeight * fit / 2));
-    return [NSString stringWithFormat:@"%u × %u → %u × %u",plan.inputWidth,plan.inputHeight,width,height];
+    return [NSString stringWithFormat:@"Input %u × %u → canvas %u × %u → output %u × %u",
+        plan.inputWidth,plan.inputHeight,plan.canvasWidth,plan.canvasHeight,width,height];
 }
 - (NSString *)activity {
-    if (!TOTKLauncherSpatialUpscaling(NSUserDefaults.standardUserDefaults)) return @"Off";
     unsigned activity = runtime_ios_upscaling_activity();
     NSMutableArray *passes = [NSMutableArray array];
     if (activity & 1) [passes addObject:@"scene"];
-    if (activity & 2) [passes addObject:@"docked"];
-    if (activity & 4) [passes addObject:@"output"];
+    if (activity & 2) [passes addObject:@"docked scene"];
+    if (activity & 4) [passes addObject:@"final output"];
     return passes.count ? [@"Recent MetalFX activity: " stringByAppendingString:[passes componentsJoinedByString:@" / "]] : @"No recent MetalFX frames";
 }
 - (NSString *)effectiveMultiplier {
@@ -149,6 +179,10 @@
     if (![self graphicsPlan:&plan]) return @"Unavailable";
     double fit=fmin((double)plan.displayWidth/plan.canvasWidth,(double)plan.displayHeight/plan.canvasHeight);
     return [NSString stringWithFormat:@"%.2f×",fit*plan.canvasHeight/plan.inputHeight];
+}
+- (NSString *)scalerTitle:(NSString *)stage {
+    return @{@"game":@"Game scaling",@"game-output":@"Game → final MetalFX",
+        @"scene-output":@"Scene MetalFX + final MetalFX"}[stage];
 }
 - (NSString *)modeTitle:(NSString *)mode {
     return @{@"input-output":@"Input + output",@"input-scale":@"Input + multiplier",@"output-scale":@"Output + multiplier"}[mode];
@@ -163,13 +197,13 @@
         NSString *title = @{@"native50":@"50% native",@"native75":@"75% native",@"native":@"Native"}[mode];
         return [NSString stringWithFormat:@"%@ · %u × %u",title,width,height];
     }
-    if ([mode isEqual:@"game"]) return @"Match input";
+    if ([mode isEqual:@"game"]) return @"Match game canvas";
     CGSize size = self.view.window ? self.view.window.bounds.size : self.view.bounds.size;
     double ratio = MAX(size.width,size.height) / MAX(1,MIN(size.width,size.height));
     BOOL fullDisplay = self.fullDisplayAvailable && [TOTKLauncherAspect(NSUserDefaults.standardUserDefaults) isEqual:@"display"];
-    double height = mode.doubleValue;
+    double height = [mode isEqual:@"custom"] ? TOTKLauncherCustomOutputHeight(NSUserDefaults.standardUserDefaults) : mode.doubleValue;
     unsigned width = (unsigned)(2 * round(height * (fullDisplay ? ratio : 16.0 / 9.0) / 2));
-    return [NSString stringWithFormat:@"%@ high · %u × %u",mode,width,(unsigned)(2 * round(height / 2))];
+    return [NSString stringWithFormat:@"%@ high · %u × %u",[mode isEqual:@"custom"] ? [NSString stringWithFormat:@"Custom %u",(unsigned)height] : mode,width,(unsigned)(2 * round(height / 2))];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 3; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -182,10 +216,10 @@
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
-    if (section == 1) return @"Input renders the game. Full display fills the iPad; 16:9 keeps black bars. Native uses the window’s physical pixels.";
-    if (section == 2) return [[self summary] isEqual:@"Input outside game profile"]
-        ? @"Adjust output or multiplier. Input height must be 360–1080 pixels, within the 1920 × 1080 game limit."
-        : @"Sizes apply at the next game start. MetalFX activity shows encodes from the last two seconds.";
+    if (section == 1) return @"Input renders the game into its canvas. The game or scene MetalFX scales that image; final MetalFX scales the canvas to output. Full display fills the iPad; 16:9 keeps black bars. Native uses the window’s physical pixels.";
+    if (section == 2) return [[self summary] isEqual:@"Invalid resolution plan"]
+        ? @"Adjust output, multiplier, or game canvas. Input must fit 1920 × 1080. Game canvas must be at least the input height."
+        : @"Configured sizes and multiplier describe the saved plan for the next game start, not active buffers. Activity shows MetalFX encodes from the last two seconds.";
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -206,15 +240,19 @@
             cell.detailTextLabel.text = [self graphicsPlan:&plan] ? [NSString stringWithFormat:@"%u high",plan.inputHeight] : @"Outside game profile";
         }
         else if ([row isEqual:@"Output"]) cell.detailTextLabel.text = [self outputTitle:TOTKLauncherPresentationMode(defaults)];
+        else if ([row isEqual:@"Game canvas"]) {
+            NSInteger height = TOTKLauncherGameCanvasHeight(defaults);
+            cell.detailTextLabel.text = height ? [NSString stringWithFormat:@"%ld high",(long)height] : @"Match input";
+        }
         else if ([row isEqual:@"Multiplier"]) cell.detailTextLabel.text = [NSString stringWithFormat:@"%.3g×",TOTKLauncherUpscaleFactor(defaults)];
         else cell.detailTextLabel.text = runtime_ios_spatial_upscaling_supported()
-            ? (TOTKLauncherSpatialUpscaling(defaults) ? @"MetalFX Spatial" : @"Game scaling") : @"Game scaling · MetalFX unavailable";
+            ? [self scalerTitle:TOTKLauncherScalerStage(defaults)] : @"Game scaling · MetalFX unavailable";
     } else {
-        cell.textLabel.text = (@[@"Configured",@"Activity",@"Effective multiplier"])[path.row];
+        cell.textLabel.text = (@[@"Configured",@"Activity",@"Configured multiplier"])[path.row];
         cell.detailTextLabel.text = path.row == 0 ? self.summary : path.row == 1 ? self.activity : self.effectiveMultiplier;
     }
     NSDictionary *symbols = @{@"Mode":@"slider.horizontal.3",@"Aspect":@"aspectratio",@"Input":@"square.arrow.down",
-        @"Output":@"display",@"Multiplier":@"multiply",@"Effective multiplier":@"multiply",@"Scaler":@"sparkles",@"Configured":@"rectangle.on.rectangle",@"Activity":@"waveform.path"};
+        @"Output":@"display",@"Game canvas":@"rectangle.on.rectangle",@"Multiplier":@"multiply",@"Configured multiplier":@"multiply",@"Scaler":@"sparkles",@"Configured":@"rectangle.on.rectangle",@"Activity":@"waveform.path"};
     cell.accessibilityIdentifier = [@"resolution." stringByAppendingString:cell.textLabel.text.lowercaseString];
     TOTKStyleSettingsCell(cell,symbols[cell.textLabel.text]);
     return cell;
@@ -232,7 +270,14 @@
 }
 - (void)choose:(NSArray<NSString *> *)titles path:(NSIndexPath *)path selected:(void (^)(NSUInteger))selected {
     UITableViewCell *cell=[self.tableView cellForRowAtIndexPath:path];
-    TOTKChooseSetting(self,cell.textLabel.text,titles,cell.detailTextLabel.text,nil,selected);
+    NSString *selection = cell.detailTextLabel.text;
+    if (![titles containsObject:selection] && [titles containsObject:@"Custom…"]) {
+        NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+        BOOL customInput = [cell.textLabel.text isEqual:@"Input"] && [defaults objectForKey:@"TOTK_LAUNCHER_CUSTOM_HEIGHT"];
+        BOOL customOutput = [cell.textLabel.text isEqual:@"Output"] && [TOTKLauncherPresentationMode(defaults) isEqual:@"custom"];
+        if (customInput || customOutput) selection = @"Custom…";
+    }
+    TOTKChooseSetting(self,cell.textLabel.text,titles,selection,nil,selected);
 }
 - (void)saveInputHeight:(NSInteger)height {
     [self save:^(NSUserDefaults *defaults) {
@@ -240,20 +285,42 @@
     } resetScene:YES];
 }
 - (void)customInput {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Input height" message:@"Enter 360–1080 pixels in steps of 6. Width follows the selected aspect." preferredStyle:UIAlertControllerStyleAlert];
+    TOTKResolutionFactor *editor = [TOTKResolutionFactor new];
+    editor.inputHeightMode = YES;
+    editor.factor = TOTKLauncherRenderHeight(NSUserDefaults.standardUserDefaults);
+    CGSize size = self.view.window ? self.view.window.bounds.size : self.view.bounds.size;
+    BOOL full = self.fullDisplayAvailable && [TOTKLauncherAspect(NSUserDefaults.standardUserDefaults) isEqual:@"display"];
+    editor.aspect = full ? MAX(size.width,size.height) / MAX(1,MIN(size.width,size.height)) : 16.0 / 9.0;
+    editor.saved = ^(double height) { [self saveInputHeight:(NSInteger)height]; };
+    [self.navigationController pushViewController:editor animated:YES];
+}
+- (void)customOutput {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Custom output height"
+        message:@"Enter an even content height from 64 to 8192 pixels. Width follows the selected aspect. The drawable must also fit within 8192 × 8192."
+        preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
         field.keyboardType = UIKeyboardTypeNumberPad;
-        field.accessibilityLabel = @"Input height";
-        field.text = [NSString stringWithFormat:@"%ld",(long)TOTKLauncherRenderHeight(NSUserDefaults.standardUserDefaults)];
+        field.accessibilityLabel = @"Output height";
+        field.text = [NSString stringWithFormat:@"%ld",(long)TOTKLauncherCustomOutputHeight(NSUserDefaults.standardUserDefaults)];
     }];
     BOOL (^valid)(NSString *) = ^BOOL(NSString *text) {
         if (!text.length || text.length > 4 || [text rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location != NSNotFound) return NO;
-        return text.integerValue >= 360 && text.integerValue <= 1080 && text.integerValue % 6 == 0;
+        NSInteger height = text.integerValue;
+        if (height < 64 || height > 8192 || height % 2) return NO;
+        CGSize size = self.view.window ? self.view.window.bounds.size : self.view.bounds.size;
+        double ratio = MAX(size.width,size.height) / MAX(1,MIN(size.width,size.height));
+        BOOL full = self.fullDisplayAvailable && [TOTKLauncherAspect(NSUserDefaults.standardUserDefaults) isEqual:@"display"];
+        double contentRatio = full ? ratio : 16.0 / 9.0;
+        double drawableHeight = height * fmax(1.0,contentRatio / ratio);
+        return drawableHeight <= 8192 && drawableHeight * ratio <= 8192;
     };
     __weak UIAlertController *weakAlert = alert;
     UIAlertAction *done = [UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         (void)action; NSString *text = weakAlert.textFields.firstObject.text;
-        if (valid(text)) [self saveInputHeight:text.integerValue];
+        if (valid(text)) [self save:^(NSUserDefaults *defaults) {
+            [defaults setInteger:text.integerValue forKey:@"TOTK_LAUNCHER_CUSTOM_OUTPUT_HEIGHT"];
+            [defaults setObject:@"custom" forKey:@"TOTK_LAUNCHER_DISPLAY_OUTPUT"];
+        } resetScene:NO];
     }];
     done.enabled = valid(alert.textFields.firstObject.text);
     __weak UIAlertAction *weakDone = done;
@@ -300,9 +367,21 @@
         NSMutableArray *modes = [TOTKLauncherPresentationModes() mutableCopy];
         if ([TOTKLauncherResolutionMode(NSUserDefaults.standardUserDefaults) isEqual:@"output-scale"]) [modes removeObject:@"game"];
         NSMutableArray *titles = [NSMutableArray array];
-        for (NSString *mode in modes) [titles addObject:[self outputTitle:mode]];
+        for (NSString *mode in modes) [titles addObject:[mode isEqual:@"custom"] ? @"Custom…" : [self outputTitle:mode]];
         [self choose:titles path:path selected:^(NSUInteger index) {
+            if ([modes[index] isEqual:@"custom"]) { [self customOutput]; return; }
             [self save:^(NSUserDefaults *defaults) { [defaults setObject:modes[index] forKey:@"TOTK_LAUNCHER_DISPLAY_OUTPUT"]; } resetScene:NO];
+        }];
+    } else if ([row isEqual:@"Game canvas"]) {
+        TOTKGraphicsPlan plan;
+        unsigned inputHeight = [self graphicsPlan:&plan] ? plan.inputHeight : 1080;
+        NSMutableArray *heights = [NSMutableArray arrayWithObject:@0];
+        NSMutableArray *titles = [NSMutableArray arrayWithObject:@"Match input"];
+        for (NSNumber *height in @[@900,@1080]) if (height.unsignedIntValue >= inputHeight) {
+            [heights addObject:height]; [titles addObject:[NSString stringWithFormat:@"%@ high",height]];
+        }
+        [self choose:titles path:path selected:^(NSUInteger index) {
+            [self save:^(NSUserDefaults *defaults) { [defaults setInteger:[heights[index] integerValue] forKey:@"TOTK_LAUNCHER_GAME_CANVAS_HEIGHT"]; } resetScene:NO];
         }];
     } else if ([row isEqual:@"Multiplier"]) {
         TOTKResolutionFactor *factor = [TOTKResolutionFactor new];
@@ -310,8 +389,14 @@
         factor.saved = ^(double value) { [self save:^(NSUserDefaults *defaults) { [defaults setDouble:value forKey:@"TOTK_LAUNCHER_UPSCALE_FACTOR"]; } resetScene:NO]; };
         [self.navigationController pushViewController:factor animated:YES];
     } else {
-        [self choose:runtime_ios_spatial_upscaling_supported() ? @[@"Game scaling",@"MetalFX Spatial"] : @[@"Game scaling"] path:path selected:^(NSUInteger index) {
-            [self save:^(NSUserDefaults *defaults) { [defaults setBool:index == 1 forKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"]; } resetScene:NO];
+        NSArray *stages = runtime_ios_spatial_upscaling_supported() ? TOTKLauncherScalerStages() : @[@"game"];
+        NSMutableArray *titles = [NSMutableArray array];
+        for (NSString *stage in stages) [titles addObject:[self scalerTitle:stage]];
+        [self choose:titles path:path selected:^(NSUInteger index) {
+            [self save:^(NSUserDefaults *defaults) {
+                [defaults setObject:stages[index] forKey:@"TOTK_LAUNCHER_SCALER_STAGE"];
+                [defaults setBool:[stages[index] isEqual:@"scene-output"] forKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"];
+            } resetScene:NO];
         }];
     }
 }

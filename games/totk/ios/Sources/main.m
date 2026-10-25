@@ -116,6 +116,7 @@ void runtime_shortcut_help_toggle(void) {}
         TOTKLauncherApplyControls(NSUserDefaults.standardUserDefaults);
         runtime_ios_set_fps_limit((unsigned)TOTKLauncherFPSLimit(NSUserDefaults.standardUserDefaults));
         runtime_ios_set_taa_enabled(TOTKLauncherTAA(NSUserDefaults.standardUserDefaults));
+        runtime_ios_set_shader_hud_visible([NSUserDefaults.standardUserDefaults boolForKey:@"TOTK_LAUNCHER_SHADER_HUD"]);
         [NSUserDefaults.standardUserDefaults setBool:TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults) forKey:@"MetalHUDForceEnabled"];
         NSString *lang = TOTKLauncherLanguage(NSUserDefaults.standardUserDefaults);
         if (!getenv("TOTK_LANG") && lang.length) setenv("TOTK_LANG",lang.UTF8String,0);
@@ -156,7 +157,8 @@ void runtime_shortcut_help_toggle(void) {}
             BOOL defaultOutput=[TOTKLauncherResolutionMode(NSUserDefaults.standardUserDefaults) isEqual:@"input-output"] && [presentation isEqual:@"game"];
             unsigned displayW=defaultOutput ? 0 : graphics.displayWidth,displayH=defaultOutput ? 0 : graphics.displayHeight;
             runtime_ios_set_display_output_size(displayW,displayH);
-            setenv("TOTK_MFX_OUTPUT",spatial && displayW && displayH ? "1" : "0",0);
+            setenv("TOTK_MFX_OUTPUT",TOTKLauncherOutputUpscaling(NSUserDefaults.standardUserDefaults) &&
+                runtime_ios_spatial_upscaling_supported() && displayW && displayH ? "1" : "0",0);
             fprintf(stderr,"[totk] display output mode %s; requested drawable %ux%u (0 = game canvas); MetalFX output %s\n",
                 presentation.UTF8String,displayW,displayH,getenv("TOTK_MFX_OUTPUT"));
             fprintf(stderr,"[totk] requested scene %s -> output %s; MetalFX spatial %s (application requires renderer confirmation)\n",

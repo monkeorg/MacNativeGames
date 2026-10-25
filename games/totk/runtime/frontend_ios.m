@@ -8,6 +8,8 @@
 #include <stdatomic.h>
 #include "runtime.h"
 #include "ios_fps_policy.h"
+#include "fps_overlay.h"
+#include <time.h>
 #include "totk_taa.h"
 #include "totk_mfx_up.h"
 #include "totk_ui_lang.h"
@@ -26,6 +28,29 @@ static _Atomic unsigned fpsLimit = 60, maximumFps = 60;
 static UILabel *thermalLabel;
 static _Atomic int thermalState = -1;
 static BOOL thermalHUDVisible;
+static UILabel *shaderCompileLabel;
+static NSTimer *shaderCompileTimer;
+static BOOL shaderHUDVisible;
+static void refresh_shader_activity(void) {
+ shader_compile_activity value=shader_compile_snapshot();
+ uint64_t now=clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+ BOOL recent=value.last_end_ns&&now-value.last_end_ns<2000000000ull;
+ shaderCompileLabel.hidden=!shaderHUDVisible||(!value.active&&!recent);
+ if(shaderCompileLabel.hidden)return;
+ shaderCompileLabel.text=[NSString stringWithFormat:@"Preparing shaders\n%llu active · %llu complete · %llu failed",
+  (unsigned long long)value.active,(unsigned long long)value.completed,(unsigned long long)value.failed];
+ shaderCompileLabel.textColor=value.active?UIColor.systemYellowColor:UIColor.whiteColor;
+}
+void runtime_ios_set_shader_hud_visible(int visible) {
+ NSCAssert(NSThread.isMainThread,@"Shader HUD must change on the main thread");
+ shaderHUDVisible=visible!=0;shader_compile_set_enabled(shaderHUDVisible);
+ [shaderCompileTimer invalidate];shaderCompileTimer=nil;
+ if(shaderHUDVisible&&shaderCompileLabel){
+  shaderCompileTimer=[NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer){(void)timer;refresh_shader_activity();}];
+  [NSRunLoop.mainRunLoop addTimer:shaderCompileTimer forMode:NSRunLoopCommonModes];
+ }
+ refresh_shader_activity();
+}
 static unsigned displayOutputWidth, displayOutputHeight;
 void runtime_ios_set_display_output_size(unsigned width,unsigned height){
  NSCAssert(NSThread.isMainThread,@"Display output must change on the main thread");
@@ -237,6 +262,25 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
   [thermalLabel.widthAnchor constraintGreaterThanOrEqualToConstant:170],
   [thermalLabel.widthAnchor constraintLessThanOrEqualToAnchor:host.safeAreaLayoutGuide.widthAnchor constant:-24]
  ]];
+ shaderCompileLabel=[UILabel new];shaderCompileLabel.translatesAutoresizingMaskIntoConstraints=NO;
+ shaderCompileLabel.font=[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightMedium];
+ shaderCompileLabel.numberOfLines=2;shaderCompileLabel.textAlignment=NSTextAlignmentCenter;
+ shaderCompileLabel.backgroundColor=[UIColor.blackColor colorWithAlphaComponent:0.7];
+ shaderCompileLabel.layer.cornerRadius=8;shaderCompileLabel.clipsToBounds=YES;
+ shaderCompileLabel.accessibilityIdentifier=@"TOTKShaderCompileHUD";
+ shaderCompileLabel.accessibilityLabel=@"Shader and pipeline preparation";
+ shaderCompileLabel.userInteractionEnabled=NO;
+ [host addSubview:shaderCompileLabel];
+ NSLayoutConstraint *shaderWidth=[shaderCompileLabel.widthAnchor constraintEqualToConstant:540];
+ shaderWidth.priority=UILayoutPriorityDefaultHigh;
+ [NSLayoutConstraint activateConstraints:@[
+  shaderWidth,
+  [shaderCompileLabel.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
+  [shaderCompileLabel.topAnchor constraintEqualToAnchor:thermalLabel.bottomAnchor constant:4],
+  [shaderCompileLabel.heightAnchor constraintEqualToConstant:44],
+  [shaderCompileLabel.widthAnchor constraintLessThanOrEqualToAnchor:host.safeAreaLayoutGuide.widthAnchor constant:-24]
+ ]];
+ runtime_ios_set_shader_hud_visible(shaderHUDVisible);
  // Read before registration, as required by the thermal-state notification contract.
  refresh_thermal_state();
  NSNotificationCenter *nc=NSNotificationCenter.defaultCenter;

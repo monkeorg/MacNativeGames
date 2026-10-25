@@ -31,6 +31,15 @@ static const char *const FPS60[7] = {
 static _Atomic int g_spin_stop;
 static void *spin_main(void *arg) { (void)arg; pthread_setname_np("probe-spin"); volatile unsigned long x = 0; while (!atomic_load(&g_spin_stop)) x++; return NULL; }
 
+static void *compile_worker(void *arg) {
+    (void)arg;
+    for (int i = 0; i < 1000; i++) {
+        int token = shader_compile_begin();
+        shader_compile_end(token, i % 2);
+    }
+    return NULL;
+}
+
 static int pixel_is(int x, int y, const uint8_t want[4]) { return !memcmp(px + 4 * ((size_t)y * FPS_OVERLAY_TEX_W + x), want, 4); }
 
 /* "8x9" after "FPS 60  " (8 characters: x = 2 + 48 at scale 1) (the box ends right after it). */
@@ -73,6 +82,26 @@ static void colours(int w, int h, int *green, int *yellow) {
 
 int main(void) {
     int w, h, green, yellow;
+    CHECK(!shader_compile_begin(), "compile tracking must start disabled");
+    shader_compile_set_enabled(1);
+    int token = shader_compile_begin();
+    shader_compile_activity activity = shader_compile_snapshot();
+    CHECK(token && activity.active == 1 && activity.completed == 0 && activity.failed == 0,
+          "active compile must appear before completion");
+    shader_compile_set_enabled(0);
+    shader_compile_end(token, 1);
+    activity = shader_compile_snapshot();
+    CHECK(activity.active == 0 && activity.completed == 1 && activity.last_end_ns > 0,
+          "toggle during compilation must preserve the matching end");
+    CHECK(!shader_compile_begin(), "disabled tracking must reject new activity");
+    shader_compile_set_enabled(1);
+    pthread_t compilers[4];
+    for (int i = 0; i < 4; i++) pthread_create(&compilers[i], NULL, compile_worker, NULL);
+    for (int i = 0; i < 4; i++) pthread_join(compilers[i], NULL);
+    activity = shader_compile_snapshot();
+    CHECK(activity.active == 0 && activity.completed == 2001 && activity.failed == 2000,
+          "parallel compiler calls lost counts or left active calls");
+    shader_compile_set_enabled(0);
     setenv("TOTK_UI_LANG", "zh", 1);   /* the Chinese labels below; the English ones are checked after them */
     /* The 5x7 pixel font (lines of ASCII only: the bottom-right load line): glyph pixels against the written patterns. */
     fps_overlay_raster_line("FPS 60  8x9", 0, 1, px, &w, &h);
@@ -205,7 +234,7 @@ int main(void) {
     atomic_store(&g_spin_stop, 1); pthread_join(spin, NULL);
     if (got) { sysload_text(line, sizeof line, &real); fprintf(stderr, "this machine now: %s (busiest thread %s)\n", line, real.thread_name); }
 
-    printf("{\"status\":\"%s\",\"probe\":\"probe-fps-overlay\",\"checked\":%d,\"failures\":%d,\"scope\":\"5x7 glyph pixels (ASCII lines), the system-font FPS box (MetalFX label, box growth, text colour, nothing outside the box), box bounds for values -1..5000 and screen sizes at scales 1..%d, scale choice, game-present and interpolated-frame rate measurement, FPS 50+50 form, bottom-right load line (text, glyphs, width, GPU busy union, busiest thread found, one real sample), shader collection box text / glyphs / bounds / highlight; negative controls flip one pixel and ask for a missing glyph\"}\n",
+    printf("{\"status\":\"%s\",\"probe\":\"probe-fps-overlay\",\"checked\":%d,\"failures\":%d,\"scope\":\"5x7 glyph pixels (ASCII lines), the system-font FPS box (MetalFX label, box growth, text colour, nothing outside the box), box bounds for values -1..5000 and screen sizes at scales 1..%d, scale choice, game-present and interpolated-frame rate measurement, FPS 50+50 form, bottom-right load line (text, glyphs, width, GPU busy union, busiest thread found, one real sample), shader collection box text / glyphs / bounds / highlight, compile activity toggle and parallel counts; negative controls flip one pixel and ask for a missing glyph\"}\n",
            failures ? "fail" : "pass", checks, failures, FPS_OVERLAY_MAX_SCALE);
     return failures ? 1 : 0;
 }

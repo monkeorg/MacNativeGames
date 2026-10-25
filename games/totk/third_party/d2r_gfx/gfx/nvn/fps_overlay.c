@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "include/totk_ui_lang.h"
 
 enum { GLYPH_W = 5, GLYPH_H = 7, ADVANCE = 6, PAD = 2, BOX_ROWS = GLYPH_H + 2 * PAD, MAX_CHARS = 80 };
@@ -242,3 +243,32 @@ int fps_overlay_value(void) { return atomic_load(&g_game.value); }
 void fps_overlay_note_gen(uint64_t n, double now_s) { rate_note(&g_gen, n, now_s); }
 int fps_overlay_gen_value(void) { return atomic_load(&g_gen.value); }
 
+
+/* The lock protects only four counters, never a Metal call. The disabled path reads one atomic. */
+static _Atomic int compile_activity_enabled;
+static pthread_mutex_t compile_activity_lock = PTHREAD_MUTEX_INITIALIZER;
+static shader_compile_activity compile_activity;
+void shader_compile_set_enabled(int enabled) {
+    atomic_store_explicit(&compile_activity_enabled, enabled != 0, memory_order_relaxed);
+}
+int shader_compile_begin(void) {
+    if (!atomic_load_explicit(&compile_activity_enabled, memory_order_relaxed)) return 0;
+    pthread_mutex_lock(&compile_activity_lock);
+    compile_activity.active++;
+    pthread_mutex_unlock(&compile_activity_lock);
+    return 1;
+}
+void shader_compile_end(int token, int succeeded) {
+    if (!token) return;
+    pthread_mutex_lock(&compile_activity_lock);
+    compile_activity.active--;
+    if (succeeded) compile_activity.completed++; else compile_activity.failed++;
+    compile_activity.last_end_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    pthread_mutex_unlock(&compile_activity_lock);
+}
+shader_compile_activity shader_compile_snapshot(void) {
+    pthread_mutex_lock(&compile_activity_lock);
+    shader_compile_activity value = compile_activity;
+    pthread_mutex_unlock(&compile_activity_lock);
+    return value;
+}

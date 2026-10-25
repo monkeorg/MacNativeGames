@@ -54,3 +54,12 @@ int fps_overlay_value(void);
 /* The same for interpolated frames shown (n counts them); fps_overlay_gen_value() is that rate, or -1. */
 void fps_overlay_note_gen(uint64_t n, double now_s);
 int fps_overlay_gen_value(void);
+
+/* Observed Metal source-library and archive-miss pipeline build requests, not cache lookups.
+   Off by default. Keep the begin token until end, even if the toggle changes during the call.
+   Metal may satisfy these requests from its private cache; no compiler percentage is available. */
+typedef struct { uint64_t active, completed, failed, last_end_ns; } shader_compile_activity;
+void shader_compile_set_enabled(int enabled);
+int shader_compile_begin(void);
+void shader_compile_end(int token, int succeeded);
+shader_compile_activity shader_compile_snapshot(void);

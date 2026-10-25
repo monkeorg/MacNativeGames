@@ -99,9 +99,7 @@ final class DeviceLauncherUI: XCTestCase {
     }
 
     private func cancelSettingsPopover() {
-        let back = app.navigationBars.buttons.element(boundBy: 0)
-        expectHittable(back)
-        back.tap()
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).tap()
         expectHittable(app.buttons["Close game menu"])
         XCTAssertTrue(app.navigationBars["Settings"].exists)
         XCTAssertFalse(app.otherElements["TOTKTouchControls"].isHittable)
@@ -143,10 +141,11 @@ final class DeviceLauncherUI: XCTestCase {
         XCTAssertEqual(card.frame.width, original.width, accuracy: 1)
         XCTAssertEqual(card.frame.height, original.height, accuracy: 1)
         cell("Mode").tap()
-        XCTAssertTrue(app.navigationBars["Mode"].waitForExistence(timeout: 5))
+        let current = app.buttons["TOTKChoice.Mode.0"]
+        XCTAssertTrue(current.waitForExistence(timeout: 5))
         XCTAssertEqual(card.frame.width, original.width, accuracy: 1)
         XCTAssertEqual(card.frame.height, original.height, accuracy: 1)
-        app.navigationBars.buttons.element(boundBy: 0).tap()
+        current.tap()
         XCTAssertTrue(app.navigationBars["Resolution"].waitForExistence(timeout: 5))
         app.buttons["Back to main menu"].tap()
         XCTAssertTrue(app.navigationBars["Tears of the Kingdom"].waitForExistence(timeout: 5))

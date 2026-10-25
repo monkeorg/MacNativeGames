@@ -11,6 +11,11 @@ NSInteger TOTKLauncherRenderHeight(NSUserDefaults *defaults);
 NSInteger TOTKLauncherSceneScale(NSUserDefaults *defaults);
 NSInteger TOTKLauncherCustomSceneHeight(NSUserDefaults *defaults);
 BOOL TOTKLauncherSpatialUpscaling(NSUserDefaults *defaults);
+NSArray<NSString *> *TOTKLauncherScalerStages(void);
+NSString *TOTKLauncherScalerStage(NSUserDefaults *defaults);
+BOOL TOTKLauncherOutputUpscaling(NSUserDefaults *defaults);
+NSInteger TOTKLauncherCustomOutputHeight(NSUserDefaults *defaults);
+NSInteger TOTKLauncherGameCanvasHeight(NSUserDefaults *defaults);
 NSArray<NSString *> *TOTKLauncherPresentationModes(void);
 NSString *TOTKLauncherPresentationMode(NSUserDefaults *defaults);
 typedef struct {

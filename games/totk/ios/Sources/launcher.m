@@ -217,7 +217,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return (NSInteger[]){1,5,6,5,1}[section];
+    (void)tableView; return (NSInteger[]){1,6,6,5,1}[section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return @[@"",@"Graphics",@"Controls",@"Saves",@"Language"][section];
@@ -246,10 +246,10 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.backgroundColor = [UIColor.secondarySystemGroupedBackgroundColor colorWithAlphaComponent:0.65];
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    NSArray *titles = @[@[@"Play"],@[@"Resolution & scaling",@"Performance overlay",@"Apple Metal HUD",@"Target frame rate",@"Anti-aliasing (TAA)"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
+    NSArray *titles = @[@[@"Play"],@[@"Resolution & scaling",@"Performance overlay",@"Apple Metal HUD",@"Target frame rate",@"Anti-aliasing (TAA)",@"Shader compilation indicator"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
         @[@"Import save folder",@"Export save folder",@"Back up save",@"Restore backup",@"Edit this save"],@[@"Game language"]];
     cell.textLabel.text = _inGame && path.section == 0 ? @"Resume game" : titles[path.section][path.row];
-    NSArray *symbols = @[@[@"play.fill"],@[@"arrow.up.left.and.arrow.down.right",@"gauge.with.dots.needle.50percent",@"chart.xyaxis.line",@"speedometer",@"sparkles"],
+    NSArray *symbols = @[@[@"play.fill"],@[@"arrow.up.left.and.arrow.down.right",@"gauge.with.dots.needle.50percent",@"chart.xyaxis.line",@"speedometer",@"sparkles",@"cpu"],
         @[@"hand.tap",@"gamecontroller",@"computermouse",@"arrow.up.arrow.down",@"button.programmable",@"keyboard"],
         @[@"square.and.arrow.down",@"square.and.arrow.up",@"externaldrive.badge.plus",@"clock.arrow.circlepath",@"pencil"],@[@"globe"]];
     TOTKStyleSettingsCell(cell,symbols[path.section][path.row]);
@@ -266,7 +266,15 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
         else if (path.row == 3) {
             unsigned rate = _inGame ? runtime_ios_fps_limit() : (unsigned)TOTKLauncherFPSLimit(d);
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%u FPS%@",rate,runtime_ios_fps_limit_supported(rate) ? @"" : @" · unavailable"];
-        } else cell.detailTextLabel.text = runtime_ios_taa_supported() ? ((_inGame ? runtime_ios_taa_enabled() : TOTKLauncherTAA(d)) ? @"On" : @"Off") : @"Unavailable";
+        } else if (path.row == 4) cell.detailTextLabel.text = runtime_ios_taa_supported() ? ((_inGame ? runtime_ios_taa_enabled() : TOTKLauncherTAA(d)) ? @"On" : @"Off") : @"Unavailable";
+        else {
+            UISwitch *toggle = [UISwitch new];
+            toggle.on = [d boolForKey:@"TOTK_LAUNCHER_SHADER_HUD"];
+            toggle.accessibilityLabel = @"Shader compilation indicator";
+            [toggle addTarget:self action:@selector(shaderIndicatorChanged:) forControlEvents:UIControlEventValueChanged];
+            cell.accessoryView = toggle;
+            cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        }
     }
     BOOL controlsOverride = NO;
     if (path.section == 2) {
@@ -319,6 +327,10 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [footer addSubview:label];
     self.tableView.tableFooterView = footer;
+}
+- (void)shaderIndicatorChanged:(UISwitch *)sender {
+    [NSUserDefaults.standardUserDefaults setBool:sender.on forKey:@"TOTK_LAUNCHER_SHADER_HUD"];
+    if (_HUDChanged) _HUDChanged();
 }
 - (void)setTouchChoice:(NSUInteger)choice {
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;

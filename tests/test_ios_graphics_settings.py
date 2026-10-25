@@ -45,3 +45,9 @@ class IOSGraphicsSettingsTests(unittest.TestCase):
 
     def test_native_ipad_and_4k_display_plans(self):
         self.run_probe('plans', 'TOTKGraphicsProbe.' + uuid.uuid4().hex)
+
+    def test_scaler_stages_custom_output_and_profile_limits(self):
+        self.run_probe('stages-custom', 'TOTKGraphicsProbe.' + uuid.uuid4().hex)
+
+    def test_game_canvas_between_input_and_final_output(self):
+        self.run_probe('game-canvas', 'TOTKGraphicsProbe.' + uuid.uuid4().hex)

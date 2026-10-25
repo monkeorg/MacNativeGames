@@ -4956,7 +4956,10 @@ static id<MTLLibrary> lib_from_file(NSString *path, NSError **err) {
     if (len < 4 || memcmp(m, "MTLB", 4)) { NSString *src = [[NSString alloc] initWithBytes:m length:len encoding:NSUTF8StringEncoding]; munmap(m, len);
         if (!src) { if (err) *err = [NSError errorWithDomain:NSPOSIXErrorDomain code:EILSEQ userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"既不是编好的库也不是源码 %@", path]}]; return nil; }
         static _Atomic int n; static _Atomic long long us; CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
-        id<MTLLibrary> l = [g_dev newLibraryWithSource:src options:totk_precise_opts() error:err]; long long dt = (long long)((CFAbsoluteTimeGetCurrent() - t0) * 1e6);
+        int activity = shader_compile_begin();
+        id<MTLLibrary> l = [g_dev newLibraryWithSource:src options:totk_precise_opts() error:err];
+        shader_compile_end(activity, l != nil);
+        long long dt = (long long)((CFAbsoluteTimeGetCurrent() - t0) * 1e6);
         int k = atomic_fetch_add(&n, 1) + 1; long long tot = atomic_fetch_add(&us, dt) + dt;
         if (k == 1 || k % 100 == 0 || dt >= 300000) MLOG("着色器现编：第 %d 个 %.0f ms，累计 %.1f 秒", k, dt / 1e3, tot / 1e6);
         return l; }
@@ -4996,7 +4999,9 @@ static MTLCompileOptions *totk_precise_opts(void) {
 static id<MTLLibrary> totk_msl_library(NSString *src, NSError **err) {
     NSError *e = nil;
     for (int attempt = 1;; attempt++) {
+        int activity = shader_compile_begin();
         id<MTLLibrary> lib = [g_dev newLibraryWithSource:src options:totk_precise_opts() error:&e];
+        shader_compile_end(activity, lib != nil);
         BOOL interrupted = !lib && [e.localizedDescription containsString:@"XPC_ERROR_CONNECTION_INTERRUPTED"];
         if (lib || !interrupted || attempt == 4) { if (err) *err = e; return lib; }
         MLOG("【红】着色器编译服务连接中断（第 %d 次），%d ms 后重试", attempt, attempt * 100);
@@ -6740,7 +6745,9 @@ static id<MTLRenderPipelineState> pso_new(MTLRenderPipelineDescriptor *d, NSStri
         if (ps) { par_count(1); return ps; }
     }
     if (key && g_par_on) par_count(0);
+    int activity = shader_compile_begin();
     ps = [g_dev newRenderPipelineStateWithDescriptor:d error:e];
+    shader_compile_end(activity, ps != nil);
     atomic_store(&g_par_last_compile_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
     if (ps) par_add(g_dev, key, d);
     return ps;
@@ -6757,7 +6764,9 @@ static id<MTLComputePipelineState> cs_new(NvShader *cs, NSError **e) {
         if (ps) { par_count(1); return ps; }
     }
     if (g_par_on) par_count(0);
+    int activity = shader_compile_begin();
     ps = [g_dev newComputePipelineStateWithDescriptor:d options:MTLPipelineOptionNone reflection:nil error:e];
+    shader_compile_end(activity, ps != nil);
     atomic_store(&g_par_last_compile_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
     if (ps) par_add(g_dev, key, d);
     return ps;
@@ -12765,7 +12774,12 @@ static NSUInteger g_outup_size[4];            // in and out size of the last ups
 static id<MTLTexture> output_upscale(id<MTL4CommandBuffer> cb, id<MTLTexture> src, NSUInteger cx, NSUInteger cy, NSUInteger cw, NSUInteger ch, MTLViewport vp, int slot) {
     static NSUInteger sw, sh; static int same;
     if (slot >= 0 && slot < 3) g_outup_timed[slot] = 0;
+    // iPad settings select the final stage independently of scene replacement.
+#if TARGET_OS_IPHONE
+    if (!mfxup_output_enabled()) { g_outup_skip[0]++; return nil; }
+#else
     if (!mfxup_enabled() || !mfxup_output_enabled()) { g_outup_skip[0]++; return nil; }
+#endif
     NSUInteger ow = (NSUInteger)vp.width, oh = (NSUInteger)vp.height;
     if (cx || cy || ow < cw + 16 || oh < ch + 9) { g_outup_skip[1]++; return nil; }
     if (ow != sw || oh != sh) { sw = ow; sh = oh; same = 0; }

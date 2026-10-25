@@ -59,13 +59,42 @@ NSInteger TOTKLauncherSceneScale(NSUserDefaults *defaults) {
         [value integerValue] >= 50 && [value integerValue] <= 100) return [value integerValue];
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_SCENE_SCALE"]; return 100;
 }
-BOOL TOTKLauncherSpatialUpscaling(NSUserDefaults *defaults) {
+static BOOL launcher_legacy_spatial_upscaling(NSUserDefaults *defaults) {
     id value = [defaults objectForKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"];
     if ([value isKindOfClass:NSNumber.class] && [@[@0,@1] containsObject:value]) return [value boolValue];
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"]; return NO;
 }
+NSArray<NSString *> *TOTKLauncherScalerStages(void) {
+    return @[@"game",@"game-output",@"scene-output"];
+}
+NSString *TOTKLauncherScalerStage(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_SCALER_STAGE"];
+    if ([value isKindOfClass:NSString.class] && [TOTKLauncherScalerStages() containsObject:value]) return value;
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_SCALER_STAGE"];
+    // An absent stage preserves the old switch's scene and final-output behavior.
+    return launcher_legacy_spatial_upscaling(defaults) ? @"scene-output" : @"game";
+}
+BOOL TOTKLauncherSpatialUpscaling(NSUserDefaults *defaults) {
+    return [TOTKLauncherScalerStage(defaults) isEqual:@"scene-output"];
+}
+BOOL TOTKLauncherOutputUpscaling(NSUserDefaults *defaults) {
+    return ![TOTKLauncherScalerStage(defaults) isEqual:@"game"];
+}
+NSInteger TOTKLauncherGameCanvasHeight(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_GAME_CANVAS_HEIGHT"];
+    if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        [@[@0,@900,@1080] containsObject:value]) return [value integerValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_GAME_CANVAS_HEIGHT"]; return 0;
+}
+NSInteger TOTKLauncherCustomOutputHeight(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_CUSTOM_OUTPUT_HEIGHT"];
+    if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        isfinite([value doubleValue]) && [value doubleValue] == [value integerValue] &&
+        [value integerValue] >= 64 && [value integerValue] <= 8192 && [value integerValue] % 2 == 0) return [value integerValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_CUSTOM_OUTPUT_HEIGHT"]; return 1440;
+}
 NSArray<NSString *> *TOTKLauncherPresentationModes(void) {
-    return @[@"game",@"720",@"900",@"1080",@"1440",@"2160",@"native50",@"native75",@"native"];
+    return @[@"game",@"720",@"900",@"1080",@"1440",@"2160",@"native50",@"native75",@"native",@"custom"];
 }
 NSString *TOTKLauncherPresentationMode(NSUserDefaults *defaults) {
     id value = [defaults objectForKey:@"TOTK_LAUNCHER_DISPLAY_OUTPUT"];
@@ -84,7 +113,7 @@ BOOL TOTKLauncherPresentationSize(NSUserDefaults *defaults, double viewWidth, do
     } else if ([mode isEqual:@"game"]) {
         w = canvasWidth; h = canvasWidth / ratio;
     } else {
-        h = mode.doubleValue * fmax(1.0,((double)canvasWidth / canvasHeight) / ratio);
+        h = ([mode isEqual:@"custom"] ? TOTKLauncherCustomOutputHeight(defaults) : mode.doubleValue) * fmax(1.0,((double)canvasWidth / canvasHeight) / ratio);
         w = h * ratio;
     }
     if (!isfinite(w) || !isfinite(h) || w < 64 || h < 64 || w > 8192 || h > 8192) return NO;
@@ -142,7 +171,8 @@ double TOTKLauncherUpscaleFactor(NSUserDefaults *defaults) {
 NSDictionary *TOTKLauncherGraphicsPreferences(NSUserDefaults *defaults) {
     return @{@"height":@(TOTKLauncherRenderHeight(defaults)),@"aspect":TOTKLauncherAspect(defaults),
         @"scene":@(TOTKLauncherCustomSceneHeight(defaults)),@"scale":@(TOTKLauncherSceneScale(defaults)),
-        @"spatial":@(TOTKLauncherSpatialUpscaling(defaults)),@"display":TOTKLauncherPresentationMode(defaults),
+        @"spatial":@(TOTKLauncherSpatialUpscaling(defaults)),@"scaler":TOTKLauncherScalerStage(defaults),
+        @"canvas":@(TOTKLauncherGameCanvasHeight(defaults)),@"customOutput":@(TOTKLauncherCustomOutputHeight(defaults)),@"display":TOTKLauncherPresentationMode(defaults),
         @"mode":TOTKLauncherResolutionMode(defaults),@"factor":@(TOTKLauncherUpscaleFactor(defaults))};
 }
 BOOL TOTKLauncherGraphicsPlan(NSUserDefaults *defaults, NSDictionary *info, double viewWidth, double viewHeight,
@@ -173,6 +203,17 @@ BOOL TOTKLauncherGraphicsPlan(NSUserDefaults *defaults, NSDictionary *info, doub
             if (w > 1920) return NO;
             result.canvasWidth=result.inputWidth=w; result.canvasHeight=result.inputHeight=h;
         }
+    }
+    NSInteger canvasHeight = TOTKLauncherGameCanvasHeight(defaults);
+    if ([TOTKLauncherScalerStage(defaults) isEqual:@"game-output"] && canvasHeight) {
+        if (canvasHeight < result.inputHeight) return NO;
+        double aspect = result.fullDisplay ? fmax(viewWidth,viewHeight) / fmin(viewWidth,viewHeight) : 16.0 / 9.0;
+        unsigned canvasWidth = (unsigned)(2 * round(aspect * canvasHeight / 2));
+        if (canvasWidth < result.inputWidth || canvasWidth > 1920) return NO;
+        result.canvasWidth = canvasWidth; result.canvasHeight = (unsigned)canvasHeight;
+        if ([mode isEqual:@"input-output"] && [TOTKLauncherPresentationMode(defaults) isEqual:@"game"] &&
+            !TOTKLauncherPresentationSize(defaults,viewWidth,viewHeight,nativeScale,result.canvasWidth,result.canvasHeight,
+                                          &result.displayWidth,&result.displayHeight)) return NO;
     }
     *plan = result; return YES;
 }
