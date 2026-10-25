@@ -280,6 +280,16 @@
       },
       "patch": "0024-msl-dimension-resource-loop-checkpoints.patch",
       "sha256": "eb131d217d517161f90dd1f2f8aa84cfca709aa17409ac04a6f2e6402472aecf"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "7cae8032f6c49ac49d3470a296f607a297a0fd3aa99577586a92b9568a94e7ed"
+      },
+      "before": {
+        "spirv_glsl.cpp": "8b4b4a11a16a1141d88f626b99a77c79d8fb78adaf04ae283d829efcec4d228e"
+      },
+      "patch": "0025-array-dimension-query-bounds.patch",
+      "sha256": "7c612de84649e60a3680cfac620b69ac713075b8199d83f7250fa971aa1af13e"
     }
   ],
   "schemaVersion": 1

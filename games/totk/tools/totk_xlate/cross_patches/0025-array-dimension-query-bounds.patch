@@ -1,0 +1,20 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -17533,12 +17533,16 @@
+ 
+ uint32_t CompilerGLSL::to_array_size_literal(const SPIRType &type) const
+ {
++	if (type.array.empty() || type.array.size() > UINT32_MAX)
++		SPIRV_CROSS_THROW("Array dimension query is empty or too large.");
+ 	return to_array_size_literal(type, uint32_t(type.array.size() - 1));
+ }
+ 
+ uint32_t CompilerGLSL::to_array_size_literal(const SPIRType &type, uint32_t index) const
+ {
+-	assert(type.array.size() == type.array_size_literal.size());
++	if (type.array.size() > UINT32_MAX || type.array.size() != type.array_size_literal.size() ||
++	    index >= type.array.size())
++		SPIRV_CROSS_THROW("Array dimension index or metadata is invalid.");
+ 
+ 	if (type.array_size_literal[index])
+ 	{
