@@ -168,7 +168,7 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
     if (error || [self cancellationRequested]) { mng_keys_free(keys); keys = NULL; *status = [self cancellationRequested] ? MNG_PREPARE_CANCELLED : MNG_PREPARE_IO; }
     return keys;
 }
-- (BOOL)startSourceURL:(NSURL *)source keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary *, NSError *))completion {
+- (BOOL)startSourceURL:(NSURL *)source keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
     NSAssert(NSThread.isMainThread, @"Canopy preparation is owned by the main thread");
     if (_busy || !source.isFileURL || !keysURL.isFileURL || !completion || (identifier && !CPJobID(identifier))) return NO;
     _busy = YES; ++_epoch; NSUInteger epoch = _epoch;
