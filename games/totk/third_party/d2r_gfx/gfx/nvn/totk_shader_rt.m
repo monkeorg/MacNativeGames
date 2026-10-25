@@ -24,6 +24,9 @@
 #include "totk_shader_seed.h"
 #include "totk_shader_observed.h"
 #include "totk_shader_contrib.h"
+#if defined(CANOPY_HOST_RUNTIME)
+extern _Noreturn void runtime_fail(const char *);
+#endif
 extern void runtime_boot_status(const char *,const char *) __attribute__((weak_import));
 extern void runtime_boot_count(const char *,uint64_t,uint64_t) __attribute__((weak_import));
 static void seed_progress(int pass, NSUInteger done, NSUInteger total) {   // the bar under "Checking the shader cache"
@@ -76,7 +79,11 @@ NSString *totk_rt_dir(void) {
         const char *seedMode = getenv("TOTK_SHADER_SEED");
         if (!(seedMode && !strcmp(seedMode, "off"))) {
             NSError *error = nil;
+#if defined(CANOPY_HOST_RUNTIME)
+            if (runtime_boot_status) runtime_boot_status("Checking the private shader cache","Using the host-verified private shader seed");
+#else
             if (runtime_boot_status) runtime_boot_status(TOTK_UI("检查着色器缓存","Checking the shader cache"),TOTK_UI("校验 App 附带的着色器，并按需导入本机缓存","Verifying the shaders bundled with the app and importing them into the local cache if needed"));
+#endif
             NSString *source = seed_dir();
             totk_seed_progress = seed_progress;
             NSDictionary *seed = totk_seed_import(source, g_dir, &error);
@@ -87,6 +94,9 @@ NSString *totk_rt_dir(void) {
                 NSDictionary *m = md ? [NSJSONSerialization JSONObjectWithData:md options:0 error:nil] : nil;
                 g_seed_all_default = [m isKindOfClass:NSDictionary.class] && [m[@"all_default"] isEqual:@YES];
             }
+#if defined(CANOPY_HOST_RUNTIME)
+            if (!seed || ![seed[@"available"] boolValue]) runtime_fail("Required verified private shader seed unavailable");
+#else
             if (!seed) {   // 2026-10-18: a damaged bundle or a full disk used to end the game here with nothing on screen. The
                            // cache stays usable (totk_seed_import writes shader files before the indexes that name them),
                            // so play on and translate shaders as they first appear, as before the prepared shaders existed.
@@ -95,21 +105,33 @@ NSString *totk_rt_dir(void) {
                 if (runtime_boot_status) runtime_boot_status(TOTK_UI("着色器缓存未就绪","Shader cache not ready"),TOTK_UI("App 附带的着色器导入失败，改为边玩边翻译","Could not import the shaders bundled with the app; shaders are translated during play"));
                 seed = @{@"available": @NO, @"failed": @YES};
             }
+#endif
             if ([seed[@"available"] boolValue]) {
                 unsigned long long imported=[seed[@"imported_files"] unsignedLongLongValue];
+#if defined(CANOPY_HOST_RUNTIME)
+                LOG("[shader-seed] private seed: %llu shaders, %llu imported files%s",
+                    [seed[@"shaders"] unsignedLongLongValue], imported,
+                    [seed[@"verifiedPrivate"] boolValue] ? " (host-verified content, read in place)" :
+                    [seed[@"sealed"] boolValue] ? " (signed bundle, read in place)" : "");
+#else
                 LOG("[shader-seed] 发现随 App 准备的着色器 %llu 个，导入 %llu 个文件%s%s；首次启动即可预热",
                     [seed[@"shaders"] unsignedLongLongValue], imported,
                     [seed[@"cloned_folder"] boolValue] ? "（整个文件夹一次克隆）" : "",
                     g_seed_dir ? "（App 包已签名，原地读取，不校验也不复制）" : "");
+#endif
                 if ([seed[@"folder_skipped"] length]) LOG("[shader-seed] 缓存里已有文件（例如 %s），逐个导入", [seed[@"folder_skipped"] UTF8String]);
                 if ([seed[@"clone_errno"] intValue]) LOG("[shader-seed] 【红】克隆失败（%s），改为复制文件", strerror([seed[@"clone_errno"] intValue]));
                 if (runtime_boot_status) runtime_boot_status(TOTK_UI("着色器缓存已就绪","Shader cache ready"),imported
                     ? [NSString stringWithFormat:@(TOTK_UI("已导入 %llu 个预置文件，开始预热","Imported %llu prepared files; starting warm-up")),imported].UTF8String
+#if defined(CANOPY_HOST_RUNTIME)
+                    : g_seed_dir ? "Reading the verified private shader seed in place; starting warm-up"
+#else
                     : g_seed_dir ? TOTK_UI("直接读取 App 附带的着色器，无需导入；开始预热","Reading the shaders bundled with the app in place, nothing to import; starting warm-up")
+#endif
                     : TOTK_UI("本机缓存已存在，无需重新导入；开始预热","Local cache already present, nothing to import; starting warm-up"));
             } else if (runtime_boot_status && ![seed[@"failed"] boolValue]) runtime_boot_status(TOTK_UI("着色器缓存已就绪","Shader cache ready"),TOTK_UI("没有内置着色器种子，继续初始化图形","No bundled shader seed; continuing graphics setup"));
         }
-#if TARGET_OS_IPHONE
+#if TARGET_OS_IPHONE && !defined(CANOPY_HOST_RUNTIME)
         // Variants that ios/tools/fill_shaders.py translated on the Mac for this device's earlier misses (shader-requests/).
         NSDictionary *fill = totk_fill_import(@"shader-fill", g_dir);
         if ([fill[@"packs"] unsignedIntegerValue]) LOG("[shader-fill] 合并 Mac 补译的着色器包 %lu 个，导入 %lu 个文件",

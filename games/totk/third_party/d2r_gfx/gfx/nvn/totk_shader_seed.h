@@ -3,6 +3,9 @@
 #pragma once
 #import <Foundation/Foundation.h>
 #include <TargetConditionals.h>
+#if defined(CANOPY_HOST_RUNTIME) && TARGET_OS_OSX
+#import <Security/Security.h>
+#endif
 #include <sys/clonefile.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -38,7 +41,21 @@ static NSString *totk_seed_fingerprint(NSDictionary *m, NSArray<NSString *> *nam
 // development tree, TOTK_SHADER_SEED_DIR) is still checked and imported; TOTK_SHADER_SEED_IN_PLACE=1 / 0 forces either.
 static BOOL totk_seed_sealed(NSString *source) {
     NSString *path = source.isAbsolutePath ? source : [NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:source];
+#if defined(CANOPY_HOST_RUNTIME)
+    // In the explicit private host, environment overrides and a mere signature
+    // filename are not evidence of an Apple-signed bundle.
+    NSString *bundle = NSBundle.mainBundle.bundlePath.stringByResolvingSymlinksInPath;
+    if (![bundle.pathExtension isEqualToString:@"app"] || ![path.stringByResolvingSymlinksInPath hasPrefix:[bundle stringByAppendingString:@"/"]]) return NO;
 #if TARGET_OS_IPHONE
+    return YES; // iOS validates and protects its installed main application bundle.
+#else
+    SecStaticCodeRef code = NULL;
+    OSStatus status = SecStaticCodeCreateWithPath((__bridge CFURLRef)[NSURL fileURLWithPath:bundle], kSecCSDefaultFlags, &code);
+    if (status == errSecSuccess) status = SecStaticCodeCheckValidity(code, kSecCSStrictValidate, NULL);
+    if (code) CFRelease(code);
+    return status == errSecSuccess;
+#endif
+#elif TARGET_OS_IPHONE
     NSString *bundle = NSBundle.mainBundle.bundlePath.stringByResolvingSymlinksInPath;
     return bundle.length && [path.stringByResolvingSymlinksInPath hasPrefix:[bundle stringByAppendingString:@"/"]];
 #else
@@ -77,6 +94,11 @@ static BOOL totk_seed_clone_folder(NSString *source, NSString *cache, NSSet<NSSt
 // phone); set by the runtime (totk_shader_rt.m), nil in tests.
 static void (*totk_seed_progress)(int pass, NSUInteger done, NSUInteger total);
 // marker: a receipt in the cache that skips re-importing the same files; nil imports every time (fill packs).
+#if defined(CANOPY_HOST_RUNTIME)
+/* Exact lease-backed path attested by the dedicated private host after native
+ * manifest/content validation. This is integrity verification, not code signing. */
+extern int runtime_canopy_shader_seed_verified(const char *path);
+#endif
 static NSDictionary *totk_seed_import_into(NSString *source, NSString *cache, NSString *marker, NSError **error) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *manifestPath = [source stringByAppendingPathComponent:@"seed-manifest.json"];
@@ -101,15 +123,27 @@ static NSDictionary *totk_seed_import_into(NSString *source, NSString *cache, NS
         NSString *const scopeName = @"shader-keys.json";
         BOOL installed = [old isKindOfClass:NSDictionary.class] && [old[@"files_sha256"] isEqual:fingerprint];   // receipts from before 2026-10-18 (manifest_sha256) are checked once more
         BOOL sealed = marker && totk_seed_sealed(source);
+        BOOL readInPlace = sealed;
+#if defined(CANOPY_HOST_RUNTIME)
+        BOOL verifiedPrivate = marker && runtime_canopy_shader_seed_verified(source.fileSystemRepresentation);
+        // The attested private cache is never described as an Apple-signed bundle.
+        if (verifiedPrivate) sealed = NO;
+        readInPlace = sealed || verifiedPrivate;
+#endif
         for (id name in names) {
             if (![name isKindOfClass:NSString.class] || ![safe numberOfMatchesInString:name options:0 range:NSMakeRange(0, [name length])]) {
                 problem = @"Unsafe startup shader seed filename"; goto fail;
             }
-            if (!sealed && ![name isEqualToString:scopeName] && ![fm fileExistsAtPath:[cache stringByAppendingPathComponent:name]]) installed = NO;
+            if (!readInPlace && ![name isEqualToString:scopeName] && ![fm fileExistsAtPath:[cache stringByAppendingPathComponent:name]]) installed = NO;
         }
-        if (sealed) {   // read in place (see totk_seed_sealed): nothing to check or copy
+        if (readInPlace) {   // signed bundle or separately attested private immutable seed
             if (![fm createDirectoryAtPath:cache withIntermediateDirectories:YES attributes:nil error:error]) return nil;
+#if defined(CANOPY_HOST_RUNTIME)
+            return @{@"available": @YES, @"shaders": m[@"shaders"], @"imported_files": @0,
+                @"sealed": @(sealed), @"readInPlace": @YES, @"verifiedPrivate": @(verifiedPrivate), @"overlay": names};
+#else
             return @{@"available": @YES, @"shaders": m[@"shaders"], @"imported_files": @0, @"sealed": @YES, @"overlay": names};
+#endif
         }
         if (installed) return @{@"available": @YES, @"shaders": m[@"shaders"], @"imported_files": @0};
         // Validate the complete source before changing any existing cache entry.

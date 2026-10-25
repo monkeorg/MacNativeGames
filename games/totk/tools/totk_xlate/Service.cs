@@ -363,15 +363,19 @@ static class ShaderService
         _ = outp.Result;
     }
 
-    static void Translate(JsonObject job)
+    static (byte[] spirv, JsonObject reflection) TranslateCore(JsonObject job, byte[] code, bool bounded)
     {
-        string err = SwshXlate.Translate(job, outDir);
-        if (err != null) throw new RuntimeError(Cut($"fail {(string)job["key"]} {err}".Trim(), 300));
+        try { return SwshXlate.TranslateBytes(job, code, bounded); }
+        catch (Exception e) when (!bounded) {
+            // Preserve the executable service's existing translator diagnostics.
+            if (Environment.GetEnvironmentVariable("DMSH_STACK") != null) Console.Error.WriteLine(e.StackTrace);
+            string error = $"{e.GetType().Name}: {e.Message.Split('\n')[0]}";
+            throw new RuntimeError(Cut($"fail {(string)job["key"]} {error}".Trim(), 300));
+        }
     }
 
-    static JsonObject ReadRes(string variant) => JsonNode.Parse(File.ReadAllText(Path.Combine(outDir, variant + ".res.json"))).AsObject();
-
-    static void Handle(JsonObject rq)
+    internal static (byte[] spirv, string metal, string reflection, JsonObject rawReflection) TranslateBytes(JsonObject rq, byte[] code,
+        string chain, bool debug, Func<byte[], string> cross, bool bounded = false)
     {
         string variant = (string)rq["variant"], stage = (string)rq["stage"];
         if (stage != "vs" && stage != "ps" && stage != "cs") throw new RuntimeError($"stage {stage} not supported by the translation chain");
@@ -379,16 +383,14 @@ static class ShaderService
         // DebugMode (AST optimizer off) since 2026-10-13: --debug-mode / TOTK_SHADER_DEBUGMODE, as in shader_service.py
         var job = new JsonObject
         {
-            ["key"] = variant, ["stage"] = stage, ["code"] = (string)rq["code"], ["c1"] = GetStr(rq, "c1", ""), ["debug"] = debugMode != 0, ["reduced"] = true,
+            ["key"] = variant, ["stage"] = stage, ["c1"] = GetStr(rq, "c1", ""), ["debug"] = debug, ["reduced"] = true,
             ["tex"] = GetObj(rq, "tex").DeepClone(), ["img"] = GetObj(rq, "img").DeepClone(), ["attr"] = GetObj(rq, "attr").DeepClone(), ["fout"] = GetObj(rq, "fout").DeepClone(),
         };
         if (Truthy(Get(rq, "local"))) job["local"] = rq["local"].DeepClone();
         job["depth_minus_w"] = Truthy(Get(rq, "depth_minus_w"));   // nvnDeviceSetDepthMode(NEAR_IS_MINUS_W): clip z converted to Metal's 0..w
-        Translate(job);
-        JsonObject res = ReadRes(variant);
-        string spv = Path.Combine(outDir, variant + ".spv"), msl = Path.Combine(outDir, variant + "_b.metal");
-        SpirvCross(spv, msl, "spirv-cross: ");
-        string src = File.ReadAllText(msl);
+        var translated = TranslateCore(job, code, bounded);
+        JsonObject res = translated.reflection;
+        string src = cross(translated.spirv);
         JsonObject tex = GetObj(rq, "tex"), img = GetObj(rq, "img"), attr = GetObj(rq, "attr"), fout = GetObj(rq, "fout");
         // Vertex inputs the request leaves unanswered (the prepared seed answers none) are typed by their use: an input
         // the code only ever bitcasts to an integer or indexes with is an integer attribute (shader_variants.md). The
@@ -400,10 +402,9 @@ static class ShaderService
                 if (!attr.ContainsKey(kv.Key) && kv.Value != "float") { job["attr"][kv.Key] = kv.Value; again = true; }
             if (again)
             {
-                Translate(job);
-                res = ReadRes(variant);
-                SpirvCross(spv, msl, "spirv-cross (inferred attributes): ");
-                src = File.ReadAllText(msl);
+                translated = TranslateCore(job, code, bounded);
+                res = translated.reflection;
+                src = cross(translated.spirv);
             }
         }
         bool softfloat64 = Fp64.IsMatch(src);
@@ -411,10 +412,9 @@ static class ShaderService
         {
             // Metal has no FP64 in shaders: Ryujinx's DoubleToFloat lowering for this variant only
             job["softfloat64"] = true;
-            Translate(job);
-            res = ReadRes(variant);
-            SpirvCross(spv, msl, "spirv-cross FP64 fallback: ");
-            src = File.ReadAllText(msl);
+            translated = TranslateCore(job, code, bounded);
+            res = translated.reflection;
+            src = cross(translated.spirv);
             if (Fp64.IsMatch(src)) throw new RuntimeError("Ryujinx FP64 fallback still emitted Metal-unsupported double");
         }
         var depthSlots = new HashSet<long>(tex.Where(kv => kv.Value is JsonValue v && v.GetValueKind() == JsonValueKind.String && v.GetValue<string>().EndsWith("_depth", StringComparison.Ordinal))
@@ -423,8 +423,6 @@ static class ShaderService
         if (depthSlots.Count > 0)
             src = RewriteDepthTextures(src, depthSlots);
         src = MatchSwitchDepthSampling(src);
-        if (depthSlots.Count > 0 || src != File.ReadAllText(msl))
-            File.WriteAllText(msl, src);
         Match entry = Regex.Match(src, @"(vertex|fragment|kernel)\s+\S+\s+(\w+)\s*\(");
         JsonObject dr = DrvReads(src, stage);
         JsonArray unfillable = Unfillable(dr, stage);
@@ -461,8 +459,30 @@ static class ShaderService
             ["vertex_inputs"] = vertexInputs, ["raster"] = new JsonObject(), ["deps"] = deps, ["softfloat64"] = softfloat64,
             ["compare_slots"] = new JsonArray(compareSlots.Select(s => (JsonNode)s).ToArray()),
         };
+        return (translated.spirv, src, PyJson(refl, 1, false), res);
+    }
+
+    static byte[] ReadCodeForCLI(string path, string variant)
+    {
+        try { return File.ReadAllBytes(path); }
+        catch (Exception e) {
+            if (Environment.GetEnvironmentVariable("DMSH_STACK") != null) Console.Error.WriteLine(e.StackTrace);
+            string error = $"{e.GetType().Name}: {e.Message.Split('\n')[0]}";
+            throw new RuntimeError(Cut($"fail {variant} {error}".Trim(), 300));
+        }
+    }
+
+    static void Handle(JsonObject rq)
+    {
+        string variant = (string)rq["variant"];
+        var result = TranslateBytes(rq, ReadCodeForCLI((string)rq["code"], variant), chain, debugMode != 0, bytes => {
+            string spv = Path.Combine(outDir, variant + ".spv"), msl = Path.Combine(outDir, variant + "_b.metal");
+            File.WriteAllBytes(spv, bytes); SpirvCross(spv, msl, "spirv-cross: "); return File.ReadAllText(msl);
+        });
+        File.WriteAllText(Path.Combine(outDir, variant + ".res.json"), result.rawReflection.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(Path.Combine(outDir, variant + "_b.metal"), result.metal);
         string tmp = Path.Combine(outDir, variant + "_b.json.tmp");
-        File.WriteAllText(tmp, PyJson(refl, 1, false));
+        File.WriteAllText(tmp, result.reflection);
         File.Move(tmp, Path.Combine(outDir, variant + "_b.json"), true);
     }
 

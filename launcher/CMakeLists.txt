@@ -4,7 +4,17 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-add_library(canopy_core STATIC src/mng_container.c src/mng_file.c)
+add_library(canopy_core STATIC src/mng_container.c src/mng_file.c
+    src/mng_crypto.c src/mng_keys.c src/mng_content.c src/mng_bktr.c src/mng_prepare.c src/mng_folder.c src/mng_store.c
+    src/mng_romfs.c src/mng_romfs_runtime.c src/mng_players.c src/mng_session.c)
+target_sources(canopy_core PRIVATE src/mng_addon.c src/mng_install.c src/mng_multiplayer.c)
+find_package(Threads REQUIRED)
+target_link_libraries(canopy_core PUBLIC Threads::Threads)
+if(NOT APPLE)
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(canopy_core PUBLIC OpenSSL::Crypto)
+endif()
+target_link_libraries(canopy_core PUBLIC ${CMAKE_DL_LIBS})
 target_include_directories(canopy_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_executable(canopy cli/main.c)
 target_link_libraries(canopy PRIVATE canopy_core)

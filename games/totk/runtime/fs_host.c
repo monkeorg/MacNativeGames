@@ -71,17 +71,45 @@ static int remove_tree(const char *path) {
     closedir(d);
     return ok | rmdir(path);
 }
+#if defined(CANOPY_HOST_RUNTIME)
+static int canopy_save_path(const char *p) {
+    if (!p || *p!='/' || strnlen(p,sizeof(save_root))>=sizeof(save_root)) return 0;
+    const char *part=p+1;
+    while (*part) {
+        const char *end=strchr(part,'/'); size_t n=end ? (size_t)(end-part):strlen(part);
+        if (!n || (n==1 && part[0]=='.') || (n==2 && part[0]=='.' && part[1]=='.')) return 0;
+        if (!end) return 1;
+        part=end+1;
+    }
+    return 0;
+}
+#endif
 static void init(void) {
     const char *dir = getenv("TOTK_PROFILE_DIR"); if (!dir) dir = "user-data";
     need(snprintf(profile, sizeof profile, "%s", dir) < (int)sizeof profile, "profile path");
     uint64_t uid[2]; runtime_account_uid(uid);
     char p[1100]; make_dir(profile);
+#if defined(CANOPY_HOST_RUNTIME)
+    const char *canopy_save = getenv("CANOPY_SAVE_DIR");
+    if (canopy_save) {
+        /* Account identity remains outside active save replacement. */
+        need(canopy_save_path(canopy_save), "Canopy save path");
+        need(snprintf(save_root,sizeof(save_root),"%s",canopy_save)<(int)sizeof(save_root), "Canopy save path");
+    } else {
+#endif
     snprintf(p, sizeof p, "%s/save", profile); make_dir(p);
     need(snprintf(save_root, sizeof save_root, "%s/save/%016llx%016llx", profile, (unsigned long long)uid[1], (unsigned long long)uid[0]) < (int)sizeof save_root, "save path");
+#if defined(CANOPY_HOST_RUNTIME)
+    }
+#endif
     make_dir(save_root);                                   /* launcher-style EnsureSaveData */
     snprintf(p, sizeof p, "%s/temp", profile); remove_tree(p); make_dir(p);
     snprintf(p, sizeof p, "%s/cache", profile); make_dir(p);
+#if defined(CANOPY_HOST_RUNTIME)
+    fprintf(stderr, "[totk] host save storage initialized\n");
+#else
     fprintf(stderr, "[totk] host save storage: %s\n", save_root);
+#endif
 }
 static void ready(void) { pthread_once(&once, init); }
 
@@ -94,7 +122,11 @@ static unsigned mount_add(const char *name, int kind, const char *root) {
     if (slot < 0) runtime_fail("fs mount table full");
     mounts[slot].kind = kind; strcpy(mounts[slot].name, name); snprintf(mounts[slot].root, sizeof mounts[slot].root, "%s", root);
     pthread_mutex_unlock(&lock);
+#if defined(CANOPY_HOST_RUNTIME)
+    fprintf(stderr, "[totk] fs mount initialized\n");
+#else
     fprintf(stderr, "[totk] fs mount %s: -> %s\n", name, root);
+#endif
     return 0;
 }
 static int component_ok(const char *c, size_t n) { return n && !(n == 1 && c[0] == '.') && !(n == 2 && c[0] == '.' && c[1] == '.'); }

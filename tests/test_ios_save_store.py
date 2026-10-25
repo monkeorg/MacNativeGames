@@ -41,7 +41,7 @@ class IOSSaveStoreTests(unittest.TestCase):
             'xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
             '-I', str(SOURCES),
             str(ROOT / 'tests/ios_save_store_probe.m'),
-            str(save_object), str(SOURCES / 'launcher_settings.m'),
+            str(save_object), str(SOURCES / 'save_validation.m'), str(SOURCES / 'launcher_settings.m'),
             '-framework', 'Foundation', '-o', str(cls.probe),
         ], capture_output=True, text=True, timeout=120)
         if build.returncode:

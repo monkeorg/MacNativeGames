@@ -37,8 +37,8 @@ static class SwshXlate
     sealed class Accessor : IGpuAccessor
     {
         readonly byte[] _code; readonly JsonObject _job; int _binding = 1; public readonly List<string> Notes = new(); public readonly SortedSet<int> TexQueried = new(), ImgQueried = new();
-        readonly byte[] _c1;
-        public Accessor(byte[] code, JsonObject job) { _code = code; _job = job; _c1 = job["c1"] is JsonNode h ? Convert.FromHexString((string)h) : Array.Empty<byte>(); }
+        readonly byte[] _c1; readonly bool _bounded; int _reads;
+        public Accessor(byte[] code, JsonObject job, bool bounded = false) { _bounded = bounded; _code = code; _job = job; _c1 = job["c1"] is JsonNode h ? Convert.FromHexString((string)h) : Array.Empty<byte>(); }
         // c1 常数段（着色器包控制段前 0x100 字节）：间接跳转 BRX 的跳转表在这里（LDC c[1]）；不提供时翻译器解不出跳转目标、控制流出错（粒子着色器死循环）
         // c1 constant segment (the 0x100 bytes before the control segment in the shader package): the jump table of indirect jump BRX lives here (LDC c[1]); without it the translator cannot resolve jump targets and control flow goes wrong (particle shaders loop forever)
         public uint ConstantBuffer1Read(int offset) { if (offset >= 0 && offset + 4 <= _c1.Length) return BitConverter.ToUInt32(_c1, offset); Notes.Add($"c1 读越界 +{offset:X}（c1 长 {_c1.Length}）"); return 0; }
@@ -48,7 +48,13 @@ static class SwshXlate
         public SetBindingPair CreateImageBinding(int count, bool isBuffer) { int b = _binding; _binding += count; return new(0, b); }
         public SetBindingPair CreateStorageBufferBinding(int index) => new(0, _binding++);
         public SetBindingPair CreateTextureBinding(int count, bool isBuffer) { int b = _binding; _binding += count; return new(0, b); }
-        public ReadOnlySpan<ulong> GetCode(ulong address, int minimumSize) => MemoryMarshal.Cast<byte, ulong>(new ReadOnlySpan<byte>(_code)[(int)address..]);
+        public ReadOnlySpan<ulong> GetCode(ulong address, int minimumSize)
+        {
+            if (_bounded && (++_reads > 1000000 || address > (ulong)_code.Length || minimumSize < 0 ||
+                (ulong)minimumSize > (ulong)_code.Length - address || (address & 7) != 0)) throw new InvalidDataException("decoder budget");
+            var bytes = new ReadOnlySpan<byte>(_code)[checked((int)address)..];
+            return MemoryMarshal.Cast<byte, ulong>(_bounded ? bytes[..minimumSize] : bytes);
+        }
         public int QuerySamplerArrayLengthFromPool() => 32;
         public int QueryTextureArrayLengthFromBuffer(int slot) => 32;
         public int QueryTextureArrayLengthFromPool() => 32;
@@ -116,35 +122,42 @@ static class SwshXlate
     }
 
 
-    internal static string Translate(JsonObject job, string outDir)   // also called by the --service mode (Service.cs)
+    // Shared actual translator core; no filesystem/process access. Native bounds
+    // restrict decoder reads, not a claim of preemptive optimizer cancellation.
+    internal static (byte[] spirv, JsonObject reflection) TranslateBytes(JsonObject job, byte[] code, bool bounded = false)
     {
         string key = (string)job["key"];
-            try
-            {
-                byte[] code = File.ReadAllBytes((string)job["code"]);
-                var acc = new Accessor(code, job);
-                // 作业 debug = false：关 DebugMode（DebugMode 会跳过 AST 优化器，产物满是临时变量；不改语义）
-                // Job debug = false: turn off DebugMode (DebugMode skips the AST optimizer and the output is full of temporaries; semantics unchanged)
-                var flags = (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] == "cs" ? TranslationFlags.Compute : 0);
-                var ctx = Translator.CreateContext(0, acc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
-                ShaderProgram p = ctx.Translate();
-                File.WriteAllBytes(Path.Combine(outDir, key + ".spv"),
-                    VertexCounterLowering.Apply(code, (string)job["stage"], p.BinaryCode, acc.Notes));
-                var res = new JsonObject
-                {
-                    ["key"] = key, ["stage"] = (string)job["stage"], ["notes"] = new JsonArray(acc.Notes.ConvertAll(n => (JsonNode)n).ToArray()),
-                    ["cbufs"] = new JsonArray(), ["sbufs"] = new JsonArray(), ["textures"] = new JsonArray(), ["images"] = new JsonArray(),
-                    ["uses_frag_coord"] = p.Info.UsesFragCoord, ["frag_out_map"] = p.Info.FragmentOutputMap,
-                    ["tex_queried"] = new JsonArray(acc.TexQueried.Select(x => (JsonNode)x).ToArray()), ["img_queried"] = new JsonArray(acc.ImgQueried.Select(x => (JsonNode)x).ToArray()),
-                };
-                foreach (var b in p.Info.CBuffers) res["cbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot });
-                foreach (var b in p.Info.SBuffers) res["sbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot, ["cb_slot"] = b.SbCbSlot, ["cb_offset"] = b.SbCbOffset, ["flags"] = (int)b.Flags });
-                foreach (var (list, name) in new[] { (p.Info.Textures, "textures"), (p.Info.Images, "images") })
-                    foreach (var t in list) res[name].AsArray().Add((JsonNode)new JsonObject { ["binding"] = t.Binding, ["type"] = (int)t.Type, ["format"] = t.Format.ToString(), ["cbuf_slot"] = t.CbufSlot, ["handle"] = t.HandleIndex, ["array"] = t.ArrayLength, ["separate"] = t.Separate, ["flags"] = (int)t.Flags });
-                File.WriteAllText(Path.Combine(outDir, key + ".res.json"), res.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-                return null;
-            }
-            catch (Exception e) { if (Environment.GetEnvironmentVariable("DMSH_STACK") != null) Console.Error.WriteLine(e.StackTrace); return $"{e.GetType().Name}: {e.Message.Split('\n')[0]}"; }
+        var acc = new Accessor(code, job, bounded);
+        // 作业 debug = false：关 DebugMode（DebugMode 会跳过 AST 优化器，产物满是临时变量；不改语义）
+        // Job debug = false: turn off DebugMode (DebugMode skips the AST optimizer and the output is full of temporaries; semantics unchanged)
+        var flags = (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] == "cs" ? TranslationFlags.Compute : 0);
+        var ctx = Translator.CreateContext(0, acc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
+        ShaderProgram p = ctx.Translate();
+        byte[] spirv = VertexCounterLowering.Apply(code, (string)job["stage"], p.BinaryCode, acc.Notes);
+        var res = new JsonObject
+        {
+            ["key"] = key, ["stage"] = (string)job["stage"], ["notes"] = new JsonArray(acc.Notes.ConvertAll(n => (JsonNode)n).ToArray()),
+            ["cbufs"] = new JsonArray(), ["sbufs"] = new JsonArray(), ["textures"] = new JsonArray(), ["images"] = new JsonArray(),
+            ["uses_frag_coord"] = p.Info.UsesFragCoord, ["frag_out_map"] = p.Info.FragmentOutputMap,
+            ["tex_queried"] = new JsonArray(acc.TexQueried.Select(x => (JsonNode)x).ToArray()), ["img_queried"] = new JsonArray(acc.ImgQueried.Select(x => (JsonNode)x).ToArray()),
+        };
+        foreach (var b in p.Info.CBuffers) res["cbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot });
+        foreach (var b in p.Info.SBuffers) res["sbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot, ["cb_slot"] = b.SbCbSlot, ["cb_offset"] = b.SbCbOffset, ["flags"] = (int)b.Flags });
+        foreach (var (list, name) in new[] { (p.Info.Textures, "textures"), (p.Info.Images, "images") })
+            foreach (var t in list) res[name].AsArray().Add((JsonNode)new JsonObject { ["binding"] = t.Binding, ["type"] = (int)t.Type, ["format"] = t.Format.ToString(), ["cbuf_slot"] = t.CbufSlot, ["handle"] = t.HandleIndex, ["array"] = t.ArrayLength, ["separate"] = t.Separate, ["flags"] = (int)t.Flags });
+        return (spirv, res);
+    }
+
+    internal static string Translate(JsonObject job, string outDir)
+    {
+        try {
+            var result = TranslateBytes(job, File.ReadAllBytes((string)job["code"]));
+            string key = (string)job["key"];
+            File.WriteAllBytes(Path.Combine(outDir, key + ".spv"), result.spirv);
+            File.WriteAllText(Path.Combine(outDir, key + ".res.json"), result.reflection.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            return null;
+        }
+        catch (Exception e) { if (Environment.GetEnvironmentVariable("DMSH_STACK") != null) Console.Error.WriteLine(e.StackTrace); return $"{e.GetType().Name}: {e.Message.Split('\n')[0]}"; }
     }
 
     // --disasm <code.bin> [vs|ps|cs]: print the decoded Maxwell instruction stream (address, name, raw opcode) with the

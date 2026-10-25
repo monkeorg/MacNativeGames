@@ -1,0 +1,105 @@
+#import "CanopyCatalog.h"
+#include "mng_store.h"
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static BOOL CatalogError(NSError **error, NSString *message) {
+    if (error) *error = [NSError errorWithDomain:@"CanopyCatalog" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
+    return NO;
+}
+static NSString *HexDigest(const unsigned char bytes[32]) {
+    char text[65];
+    for (unsigned i = 0; i < 32; ++i) snprintf(text + 2 * i, 3, "%02x", bytes[i]);
+    text[64] = 0; return [NSString stringWithUTF8String:text];
+}
+@implementation CanopyCatalog {
+    NSURL *_root;
+    CanopySettings *_settings;
+    NSArray *_entries;
+    NSArray *_issues;
+}
+- (instancetype)initWithPreparedRootURL:(NSURL *)root settings:(CanopySettings *)settings {
+    if ((self = [super init])) { _root = [root copy]; _settings = settings; _entries = @[]; _issues = @[]; }
+    return self;
+}
+- (NSArray *)entries { return _entries; }
+- (NSArray *)issues { return _issues; }
+- (BOOL)reload:(NSError **)error {
+    int root = open(_root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 && errno == ENOENT) { _entries = @[]; _issues = @[]; return YES; }
+    if (root < 0) return CatalogError(error, @"The prepared library directory is unavailable or is a link.");
+    struct mng_store *store = NULL;
+    enum mng_prepare_status status = mng_store_open(root, &store);
+    if (status != MNG_PREPARE_OK) { close(root); return CatalogError(error, @"The preparation store is busy or unavailable. Retry after the current job finishes."); }
+    int titles = openat(root, "titles", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (titles < 0) {
+        int saved = errno; mng_store_close(store); close(root);
+        if (saved == ENOENT) { _entries = @[]; _issues = @[]; return YES; }
+        return CatalogError(error, @"The title directory is unavailable or is a link.");
+    }
+    DIR *directory = fdopendir(titles);
+    if (!directory) { close(titles); mng_store_close(store); close(root); return CatalogError(error, @"The prepared library could not be enumerated."); }
+    NSMutableArray *entries = [NSMutableArray array], *issues = [NSMutableArray array];
+    NSUInteger scanned = 0;
+    BOOL okay = YES;
+    for (;;) {
+        errno = 0;
+        struct dirent *item = readdir(directory);
+        if (!item) { if (errno) okay = NO; break; }
+        if (!strcmp(item->d_name, ".") || !strcmp(item->d_name, "..")) continue;
+        if (++scanned > 500) { okay = NO; break; }
+        NSString *titleID = [NSString stringWithUTF8String:item->d_name];
+        struct stat attributes;
+        if (![CanopySettings isValidTitleID:titleID] || fstatat(titles, item->d_name, &attributes, AT_SYMLINK_NOFOLLOW) != 0 || !S_ISDIR(attributes.st_mode)) {
+            [issues addObject:@"An invalid or linked title entry was skipped."]; continue;
+        }
+        uint64_t title = strtoull(item->d_name, NULL, 16);
+        char generation[65] = {0};
+        struct mng_prepare_result result = {0};
+        status = mng_store_current(store, title, generation);
+        if (status == MNG_PREPARE_OK) status = mng_store_verify(store, title, generation, &result);
+        if (status != MNG_PREPARE_OK) {
+            [issues addObject:[NSString stringWithFormat:@"Title %@ has no valid verified current generation.", titleID]]; continue;
+        }
+        if (result.title_id != title) { [issues addObject:@"A verified generation returned an inconsistent title identity."]; continue; }
+        NSMutableDictionary *entry = [@{@"titleID":titleID, @"generationID":[NSString stringWithUTF8String:generation],
+            @"recipeID":result.source_kind ? @MNG_STORE_RECIPE_V4 : result.update_applied ? @MNG_STORE_RECIPE_V3 : result.version_identified ? @MNG_STORE_RECIPE_V2 : @MNG_STORE_RECIPE,
+            @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)result.application_id],
+            @"titleVersion":@(result.title_version), @"versionIdentified":result.version_identified ? @YES : @NO,
+            @"contentRole":@(result.content_role),
+            @"updateApplied":result.update_applied ? @YES : @NO,
+            @"baseTitleVersion":@(result.base_title_version),
+            @"patchTitleID":[NSString stringWithFormat:@"%016llx", (unsigned long long)result.patch_title_id],
+            @"updateSourceSHA256":HexDigest(result.update_source_sha256), @"updateSourceSize":@(result.update_source_size),
+            @"displayName":[_settings displayNameForTitleID:titleID] ?: titleID,
+            @"sourceSHA256":HexDigest(result.source_sha256), @"sourceSize":@(result.source_size),
+            @"assetCount":@(result.asset_count), @"assetBytes":@(result.asset_bytes),
+            @"integrity":@{@"exefsVerified":result.exefs_verified ? @YES : @NO, @"romfsVerified":result.romfs_verified ? @YES : @NO, @"signatureVerified":@NO},
+            @"preparationState":@"prepared", @"runtimeEligibility":@"unassessed"} mutableCopy];
+        if (result.source_kind) {
+            [entry removeObjectForKey:@"sourceSHA256"]; [entry removeObjectForKey:@"sourceSize"];
+            entry[@"sourceKind"]=result.source_kind==MNG_PREPARE_NCA_FOLDER ? @"nca-folder" : @"asset-folder";
+            entry[@"memberInventorySHA256"]=HexDigest(result.member_inventory_sha256);
+            entry[@"sourceMemberBytes"]=@(result.source_member_bytes); entry[@"sourceMemberCount"]=@(result.source_member_count);
+            NSMutableDictionary *integrity=[entry[@"integrity"] mutableCopy];
+            integrity[@"assetHashesVerified"]=result.asset_hashes_verified ? @YES : @NO;
+            integrity[@"romfsStructureVerified"]=result.romfs_structure_verified ? @YES : @NO;
+            entry[@"integrity"]=[integrity copy];
+        }
+        [entries addObject:[entry copy]];
+    }
+    closedir(directory); mng_store_close(store); close(root);
+    if (!okay) return CatalogError(error, @"The prepared library exceeds 500 entries or could not be read completely. Existing catalog state was retained.");
+    [entries sortUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        NSComparisonResult order = [left[@"displayName"] localizedCaseInsensitiveCompare:right[@"displayName"]];
+        return order == NSOrderedSame ? [left[@"titleID"] compare:right[@"titleID"]] : order;
+    }];
+    _entries = [entries copy]; _issues = [issues copy]; return YES;
+}
+@end

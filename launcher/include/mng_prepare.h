@@ -24,15 +24,55 @@ struct mng_asset_sink {
     int (*cancelled)(void *context);
     void (*progress)(void *context, const char *phase, uint64_t done, uint64_t total);
 };
+enum mng_prepare_source_kind {
+    MNG_PREPARE_CONTAINER = 0,
+    MNG_PREPARE_NCA_FOLDER = 1,
+    MNG_PREPARE_ASSET_FOLDER = 2
+};
 struct mng_prepare_result {
     uint64_t title_id, source_size, asset_count, asset_bytes;
     unsigned char source_sha256[32];
     /* Signature authenticity is separate from section/hash-chain integrity. */
     int exefs_verified, romfs_verified;
+    /* Verified CNMT identity when present; unknown is explicit, never a
+     * filename-derived compatibility claim. Base preparation keeps base version. */
+    uint64_t application_id;
+    uint32_t title_version;
+    int version_identified;
+    unsigned char content_role; /* CNMT0x80 application;0 legacy-unidentified */
+    /* Composed updates retain source_size/source_sha256 as the exact BASE
+     * container identity. These fields bind a distinct update input and the
+     * declared base/patch versions; no composite digest is called a file SHA. */
+    int update_applied;
+    uint64_t update_source_size, patch_title_id;
+    uint32_t base_title_version;
+    unsigned char update_source_sha256[32];
+    /* Folders use a canonical consumed-member inventory, never a physical-file
+     * SHA claim. Physical v1/v2/v3 recipes keep every field below zero. */
+    unsigned char source_kind;
+    unsigned char member_inventory_sha256[32];
+    uint64_t source_member_bytes;
+    uint32_t source_member_count;
+    int asset_hashes_verified, romfs_structure_verified;
+    /* Full-install add-on metadata (role0x82), separate from base/update data.
+     * Zero for every v1-v4 generation. No mount/execute authority is inferred. */
+    uint32_t addon_required_application_version;
+    unsigned char addon_cnmt_sha256[32];
 };
 /* Native NCA3/key-area or common-ticket AES-CTR, checked ExeFS and IVFC.
  * No game compatibility/execution is inferred. Caller passes empty result. */
 enum mng_prepare_status mng_prepare_fd(int source_fd,
+    const struct mng_key_provider *keys, const struct mng_asset_sink *sink,
+    struct mng_prepare_result *result);
+/* Exact declared patch version; supported base/update containers are read
+ * independently. Produces composed assets, not an unapplied patch inventory.
+ * Implementation must verify both sources, metadata and reconstructed IVFC. */
+enum mng_prepare_status mng_prepare_update_fd(int base_fd, int update_fd,
+    const struct mng_key_provider *keys, const struct mng_asset_sink *sink,
+    uint32_t target_version, struct mng_prepare_result *result);
+/* Explicit highest-declared-version selection for normal launcher imports.
+ * Never treats a literal target version (including UINT32_MAX) as a sentinel. */
+enum mng_prepare_status mng_prepare_latest_update_fd(int base_fd, int update_fd,
     const struct mng_key_provider *keys, const struct mng_asset_sink *sink,
     struct mng_prepare_result *result);
 const char *mng_prepare_status_name(enum mng_prepare_status status);

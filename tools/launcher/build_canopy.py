@@ -18,14 +18,59 @@ import sys
 import tempfile
 
 
-RECIPE = 'canopy-unsigned-arm64-ios16-v1'
+RECIPE = 'canopy-connected-host-arm64-ios16-v3'
 BRAND = 'launcher/Resources/Branding/Canopy.png'
 BRAND_SHA256 = 'f7f596a192596aee546970b4db36068efb9b65932743bd3318353b6ea7a340d0'
 SOURCES = ('launcher/apple/Sources/CanopyApp.m',
            'launcher/apple/Sources/CanopyLibrary.m',
-           'launcher/src/mng_container.c', 'launcher/src/mng_file.c')
+           'launcher/apple/Sources/CanopyCatalog.m',
+           'launcher/apple/Sources/CanopySettings.m',
+           'launcher/apple/Sources/CanopyPreparation.m',
+           'launcher/apple/Sources/CanopyControllers.m',
+           'launcher/apple/Sources/CanopyGames.m',
+           'launcher/apple/Sources/CanopyRomFS.m',
+           'launcher/apple/Sources/CanopySaveStore.m',
+           'launcher/apple/Sources/CanopyShaderCache.m',
+           'launcher/apple/Sources/CanopyDiagnostics.m',
+           'launcher/apple/Sources/CanopyDiagnosticsController.m',
+           'launcher/apple/Sources/CanopyRuntime.m',
+           'launcher/apple/Sources/CanopySessionController.m',
+           'launcher/apple/Sources/CanopyOverlay.m',
+           'launcher/apple/Sources/CanopyStorage.m',
+           'launcher/apple/Sources/CanopyStorageController.m',
+           'games/totk/ios/Sources/save_validation.m',
+           'launcher/src/mng_container.c', 'launcher/src/mng_file.c',
+           'launcher/src/mng_crypto.c', 'launcher/src/mng_keys.c',
+           'launcher/src/mng_content.c', 'launcher/src/mng_bktr.c', 'launcher/src/mng_prepare.c', 'launcher/src/mng_store.c',
+           'launcher/src/mng_folder.c',
+           'launcher/src/mng_romfs.c', 'launcher/src/mng_romfs_runtime.c',
+           'launcher/src/mng_players.c', 'launcher/src/mng_session.c')
+SOURCES += ('launcher/src/mng_addon.c', 'launcher/src/mng_install.c', 'launcher/src/mng_multiplayer.c')
 HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
-           'launcher/include/mng_container.h', 'launcher/include/mng_file.h')
+           'launcher/apple/Sources/CanopyCatalog.h',
+           'launcher/apple/Sources/CanopySettings.h',
+           'launcher/apple/Sources/CanopyPreparation.h',
+           'launcher/apple/Sources/CanopyControllers.h',
+           'launcher/apple/Sources/CanopyGames.h',
+           'launcher/apple/Sources/CanopyRomFS.h',
+           'launcher/apple/Sources/CanopySaveStore.h',
+           'launcher/apple/Sources/CanopyShaderCache.h',
+           'launcher/apple/Sources/CanopyDiagnostics.h',
+           'launcher/apple/Sources/CanopyDiagnosticsController.h',
+           'launcher/apple/Sources/CanopyRuntime.h',
+           'launcher/apple/Sources/CanopySessionController.h',
+           'launcher/apple/Sources/CanopyOverlay.h',
+           'launcher/apple/Sources/CanopyStorage.h',
+           'launcher/apple/Sources/CanopyStorageController.h',
+           'games/totk/ios/Sources/save_validation.h',
+           'games/totk/runtime/canopy_host.h',
+           'launcher/include/mng_container.h', 'launcher/include/mng_file.h',
+           'launcher/include/mng_crypto.h', 'launcher/include/mng_keys.h',
+           'launcher/include/mng_content.h', 'launcher/include/mng_bktr.h', 'launcher/include/mng_prepare.h', 'launcher/include/mng_store.h',
+           'launcher/include/mng_folder.h', 'launcher/src/mng_prepare_internal.h',
+           'launcher/include/mng_romfs.h', 'launcher/include/mng_romfs_runtime.h',
+           'launcher/include/mng_players.h', 'launcher/include/mng_session.h')
+HEADERS += ('launcher/include/mng_addon.h', 'launcher/include/mng_install.h', 'launcher/include/mng_multiplayer.h')
 INPUTS = SOURCES + HEADERS + (BRAND,)
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 
@@ -100,6 +145,8 @@ def commands(source_root, work, sdk):
     result.append(['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64-apple-ios16.0',
                    '-isysroot', sdk, *objects, '-framework', 'UIKit', '-framework', 'Foundation',
                    '-framework', 'UniformTypeIdentifiers', '-framework', 'CoreFoundation',
+                   '-framework', 'GameController',
+                   '-framework', 'Metal', '-framework', 'QuartzCore',
                    '-Wl,-no_adhoc_codesign',
                    '-o', str(work / 'Canopy.app/Canopy')])
     return result
@@ -218,6 +265,11 @@ def main():
         result = build_plan(repo, args.bundle_id) if args.plan else build(repo, args.out, args.bundle_id)
     except (BuildError, OSError, subprocess.SubprocessError) as exc:
         print(f'Canopy build failed: {exc}', file=sys.stderr)
+        # All compiler inputs are the fixed public snapshot. Preserve bounded
+        # diagnostics so an actual compile/link failure can be corrected in CI.
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            diagnostics = exc.stderr.decode('utf-8', errors='replace') if isinstance(exc.stderr, bytes) else exc.stderr
+            print(diagnostics[-65536:], file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

@@ -573,6 +573,12 @@ int runtime_gamepad_type(int *detected) {
 }
 
 void runtime_gamepad_start(void) {
+#if defined(CANOPY_HOST_RUNTIME)
+    /* CanopyControllers owns each GCController callback. Legacy attachment
+     * would replace its valueChangedHandler and silently stop routed input. */
+    started = YES;
+    return;
+#endif
     if (started) return;
     started = YES;
     load_controller_map();
@@ -630,6 +636,12 @@ void runtime_touch_pad_clear(void) {
 
 void runtime_gamepad_read(RuntimeGamepadState *out) {
     pthread_mutex_lock(&gamepadLock);
+#if defined(CANOPY_HOST_RUNTIME)
+    /* The dedicated Canopy router owns physical-device identities/mappings.
+     * Do not OR a second legacy physical snapshot back into routed controls. */
+    *out = touchState;
+    out->buttons |= touchPressedEdges;
+#else
     *out = gamepadState;
     out->buttons |= touchState.buttons | touchPressedEdges | pressedEdges;
 #if TARGET_OS_IPHONE
@@ -640,6 +652,7 @@ void runtime_gamepad_read(RuntimeGamepadState *out) {
     out->rx = stronger_axis(out->rx, touchState.rx); out->ry = stronger_axis(out->ry, touchState.ry);
     out->rx = stronger_axis(out->rx, mouseRX); out->ry = stronger_axis(out->ry, mouseRY);
     if (touchState.connected) out->connected = 1;
+#endif
     pressedEdges = 0;
     touchPressedEdges = 0;
 #if TARGET_OS_IPHONE
