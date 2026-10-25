@@ -12,6 +12,7 @@ target_sources(canopy_core PRIVATE src/mng_input.c src/mng_keyboard.c src/mng_po
 target_sources(canopy_core PRIVATE src/mng_display.c)
 target_sources(canopy_core PRIVATE src/mng_totk_save.c)
 target_sources(canopy_core PRIVATE src/mng_restart.c)
+target_sources(canopy_core PRIVATE src/mng_game_profile.c)
 find_package(Threads REQUIRED)
 target_link_libraries(canopy_core PUBLIC Threads::Threads)
 if(NOT APPLE)

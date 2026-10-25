@@ -29,6 +29,16 @@ shared-font hashes come from the checked-in `games/totk/assets/expected-*.json`
 tables. The recipe has no option to replace those tables or choose an arbitrary
 title. An encrypted container SHA is never substituted for an original NSO hash.
 
+The reviewed [game registry](canopy-game-profiles.md) now supplies the default,
+version aliases, manifest paths, ordered modules, patch source and compiler
+define used by this actual builder. Its compiled generated table must match the
+registry and referenced manifests. The existing default `v121`, both version
+aliases and resulting version-specific commands are preserved. Metadata cannot
+register a native implementation or grant execution/editor authority; BOTW and
+mod management remain outside this recipe. The private observation also records
+the selected game, registry metadata fingerprint and registry-helper source hash,
+and staging must retain the same selected metadata before private inputs run.
+
 ## Local prerequisites
 
 Use an Apple silicon Mac with an installed Xcode 26+ and iPhoneOS SDK26+. The

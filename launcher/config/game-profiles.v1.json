@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "defaultGame": "totk",
+  "games": [
+    {
+      "gameID": "totk",
+      "titleID": "0100f2c0115b6000",
+      "displayName": "The Legend of Zelda: Tears of the Kingdom",
+      "sourceDirectory": "games/totk",
+      "nativeAdapter": "canopy-arm64-abi3",
+      "buildAdapter": "totk-ios26",
+      "saveValidator": "totk-slots-structural-v1",
+      "maxPlayers": 1,
+      "modules": ["main", "subsdk0", "sdk"],
+      "defaultVersion": "v121",
+      "versions": [
+        {
+          "alias": "v121",
+          "expectedManifest": "games/totk/assets/expected-v1.2.1.json",
+          "compileDefine": "TOTK_GAME_V121",
+          "patchSource": "game_patches.c",
+          "displayProfile": "stock-720"
+        },
+        {
+          "alias": "v143",
+          "expectedManifest": "games/totk/assets/expected-v1.4.3.json",
+          "compileDefine": "TOTK_GAME_V143",
+          "patchSource": "game_patches_v143.c",
+          "displayProfile": "v143-signed-720-1080-four-three-v1"
+        }
+      ]
+    }
+  ]
+}
