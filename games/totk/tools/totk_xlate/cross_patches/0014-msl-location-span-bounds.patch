@@ -1,0 +1,50 @@
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -2645,6 +2645,9 @@
+                                                   StorageClass storage, bool fallback)
+ {
+ 	uint32_t count = type_to_location_count(type);
++	if ((storage == StorageClassInput || storage == StorageClassOutput) && count != 0 &&
++	    (location == k_unknown_location || count > k_unknown_location - location))
++		SPIRV_CROSS_THROW("Interface location range reaches the unknown sentinel.");
+ 	switch (storage)
+ 	{
+ 	case StorageClassInput:
+@@ -14711,6 +14714,9 @@
+ 	loc = 0;
+ 
+ 	const auto location_range_in_use = [this](uint32_t location, uint32_t location_count) -> bool {
++		if (location_count != 0 &&
++		    (location == k_unknown_location || location_count > k_unknown_location - location))
++			SPIRV_CROSS_THROW("Interface location range reaches the unknown sentinel.");
+ 		for (uint32_t i = 0; i < location_count; i++)
+ 		{
+ 			canopy_cross_budget::step();
+@@ -14723,6 +14729,8 @@
+ 	while (location_range_in_use(loc, count))
+ 	{
+ 		canopy_cross_budget::step();
++		if (loc >= k_unknown_location - 1)
++			SPIRV_CROSS_THROW("No interface location remains below the unknown sentinel.");
+ 		loc++;
+ 	}
+ 
+@@ -14761,6 +14769,9 @@
+ 	uint32_t count = type_to_location_count(mbr_type);
+ 
+ 	const auto location_range_in_use = [this](uint32_t location, uint32_t location_count) -> bool {
++		if (location_count != 0 &&
++		    (location == k_unknown_location || location_count > k_unknown_location - location))
++			SPIRV_CROSS_THROW("Interface location range reaches the unknown sentinel.");
+ 		for (uint32_t i = 0; i < location_count; i++)
+ 		{
+ 			canopy_cross_budget::step();
+@@ -14773,6 +14784,8 @@
+ 	while (location_range_in_use(loc, count))
+ 	{
+ 		canopy_cross_budget::step();
++		if (loc >= k_unknown_location - 1)
++			SPIRV_CROSS_THROW("No interface location remains below the unknown sentinel.");
+ 		loc++;
+ 	}
+ 
