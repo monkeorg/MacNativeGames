@@ -27,7 +27,7 @@ class CanopyRuntimeTests(unittest.TestCase):
         cls.build = Path(cls.temp.name).resolve()
         objects = []
         for name in ('mng_container', 'mng_file', 'mng_crypto', 'mng_keys', 'mng_prepare',
-                     'mng_store', 'mng_content', 'mng_bktr', 'mng_romfs', 'mng_romfs_runtime'):
+                     'mng_store', 'mng_content', 'mng_bktr', 'mng_folder', 'mng_romfs', 'mng_romfs_runtime'):
             output = cls.build / (name + '.o')
             cls.compile(['xcrun', 'clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror',
                          '-I', str(ROOT / 'launcher/include'), '-c', str(ROOT / f'launcher/src/{name}.c'), '-o', str(output)])
@@ -216,6 +216,9 @@ int main(void) {
 # Compile and execute the actual fs_host.c path/mount implementation. Other
 # service hooks below are original-source unused providers, not guest execution.
 FS_PATH_PROBE = r'''
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #ifndef __APPLE__

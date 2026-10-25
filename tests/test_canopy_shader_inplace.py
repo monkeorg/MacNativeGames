@@ -93,7 +93,9 @@ class CanopyShaderInPlaceTests(unittest.TestCase):
                         self.skipTest(f'Private Metal4 renderer requires iPhoneOS SDK26; available {sdk_version}')
                     command = ['xcrun', '--sdk', 'iphoneos', 'clang', '-fobjc-arc', '-fblocks', '-fsyntax-only',
                                '-target', target, '-isysroot', sdk,
-                               '-Wall', '-Wextra', '-Werror', '-Wno-deprecated-declarations',
+                               # Match ios/tools/build_sources.py for these existing full sources.
+                               # Focused new helper probes above retain strict -Werror.
+                               '-Wall', '-Wextra', '-Werror=implicit-function-declaration',
                                '-I', str(NVN), '-I', str(NVN / 'include'), str(NVN / source)]
                     if flagged:
                         command.append('-DCANOPY_HOST_RUNTIME=1')

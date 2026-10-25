@@ -207,9 +207,11 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     _startupSettings=[[NSDictionary alloc] initWithDictionary:settings copyItems:YES];atomic_store(&_preflightCancelled,0);activeRuntime=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         int root=CROpenDirectory(self->_root,YES),lease=-1;struct mng_store *store=NULL;
+        NSString *preflightFailure=@"The prepared store could not be verified safely.";
         BOOL valid=root>=0 && mng_store_open(root,&store)==MNG_PREPARE_OK;
         if(valid) {
             mng_store_set_cancel_check(store,CRCancelled,&self->_preflightCancelled);
+            preflightFailure=@"The prepared generation could not be verified or retained safely.";
             valid=mng_store_pin(store,self->_host->title_id,generationID.UTF8String,&lease)==MNG_PREPARE_OK;
         }
         mng_store_close(store);if(root>=0)close(root);
@@ -217,26 +219,42 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
             URLByAppendingPathComponent:@"generations"] URLByAppendingPathComponent:generationID];
         int gen=CROpenDirectory(generation,YES),exefs=gen<0?-1:openat(gen,"exefs",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
         int resources=CROpenDirectory(assets,NO);
-        if(valid)valid=gen>=0 && exefs>=0 && resources>=0 &&
-            CRHash(exefs,"main",CRString(self->_host->original_main_sha256),&self->_preflightCancelled) &&
-            CRHash(gen,"romfs.bin",CRString(self->_host->romfs_sha256),&self->_preflightCancelled);
+        if(valid) {
+            preflightFailure=@"Prepared asset or trusted resource directories could not be opened safely.";
+            valid=gen>=0 && exefs>=0 && resources>=0;
+        }
+        if(valid) {
+            preflightFailure=@"The original executable does not match the approved native profile.";
+            valid=CRHash(exefs,"main",CRString(self->_host->original_main_sha256),&self->_preflightCancelled);
+        }
+        if(valid) {
+            preflightFailure=@"The RomFS image does not match the approved native profile.";
+            valid=CRHash(gen,"romfs.bin",CRString(self->_host->romfs_sha256),&self->_preflightCancelled);
+        }
         int saveFD=CROpenDirectory(saves,YES),identityFD=CROpenDirectory(identity,YES),cacheFD=CROpenDirectory(cache,YES);
         if(saveFD<0 || identityFD<0 || cacheFD<0 || CRSameDirectory(saveFD,identityFD) ||
            CRSameDirectory(saveFD,cacheFD) || CRSameDirectory(identityFD,cacheFD) ||
            CRRelated(saves,identity) || CRRelated(saves,cache) || CRRelated(identity,cache) ||
-           CRRelated(generation,saves) || CRRelated(generation,identity) || CRRelated(generation,cache))valid=NO;
+           CRRelated(generation,saves) || CRRelated(generation,identity) || CRRelated(generation,cache)) {
+            if(valid)preflightFailure=@"Private save, identity or cache directories are unsafe or overlap.";valid=NO;
+        }
+        if(valid)preflightFailure=@"The native RomFS index could not be verified or produced safely.";
         NSURL *indexDirectory=valid?CRIndex(gen,cache,CRString(self->_host->runtime_index_sha256),&self->_preflightCancelled):nil;
         if(!indexDirectory)valid=NO;
         CanopyShaderCacheLease *shaderLease=nil;
         BOOL deviceUnavailable=valid && !selectedDevice;
         if(valid && !atomic_load(&self->_preflightCancelled)) {
+            preflightFailure=@"The native graphics device identity could not be verified safely.";
             NSDictionary *deviceIdentity=selectedDevice?[CanopyShaderCache deviceIdentityForDevice:selectedDevice error:NULL]:nil;
             CanopyShaderCache *shaderCache=[[CanopyShaderCache alloc] initWithRootURL:[cache URLByAppendingPathComponent:@"shader-identities" isDirectory:YES]];
-            if(deviceIdentity)shaderLease=[shaderCache prepareSeedURL:[assets URLByAppendingPathComponent:@"shader-seed" isDirectory:YES]
+            if(deviceIdentity) {
+                preflightFailure=@"The private shader seed or cache does not match the approved native profile.";
+                shaderLease=[shaderCache prepareSeedURL:[assets URLByAppendingPathComponent:@"shader-seed" isDirectory:YES]
                 titleID:titleID sourceRomFSSHA256:CRString(self->_host->romfs_sha256)
                 expectedManifestSHA256:CRString(self->_host->shader_seed_manifest_sha256) expectedChain:CRString(self->_host->shader_chain)
                 deviceIdentity:deviceIdentity cancelled:^BOOL{return atomic_load(&self->_preflightCancelled)!=0;}
                 progress:nil error:NULL];
+            }
             if(!shaderLease)valid=NO;
         }
         if(saveFD>=0)close(saveFD);if(identityFD>=0)close(identityFD);if(cacheFD>=0)close(cacheFD);
@@ -244,7 +262,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         dispatch_async(dispatch_get_main_queue(),^{
             if(!valid || atomic_load(&self->_preflightCancelled)){if(lease>=0)close(lease);self->_state=@"idle";self->_titleID=nil;activeRuntime=nil;
                 completion(NO,atomic_load(&self->_preflightCancelled)?CRError(7,@"Native startup preparation cancelled."):
-                    deviceUnavailable?CRError(3,@"No native Metal device is available."):CRError(4,@"Verified prepared assets or private host resources do not match the approved profile."));return;}
+                    deviceUnavailable?CRError(3,@"No native Metal device is available."):CRError(4,preflightFailure));return;}
             self->_lease=lease;
             self->_shaderLease=shaderLease;
             NSDictionary *desired=self->_startupSettings;

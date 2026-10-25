@@ -80,6 +80,8 @@ int main(int argc,char **argv) {
             NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:20];
             while(!completed && deadline.timeIntervalSinceNow>0)[NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
             Check(completed,"native completion timeout");
+            if(deviceDependent && !runtime.nativeEntryInvoked && failure)
+                fprintf(stderr,"Native preflight refused: code=%ld message=%s\n",(long)failure.code,failure.localizedDescription.UTF8String);
             if(!strcmp(mode,"wrong-main") || !strcmp(mode,"wrong-index") || !strcmp(mode,"corrupt-cache") || !strcmp(mode,"public-cache") || !strcmp(mode,"cancel")) {
                 Check(!started && failure && !runtime.nativeEntryInvoked && starts==0,"pin mismatch reaches no native entry");
                 Check([runtime close:&error],"preflight refusal permits seal release");
