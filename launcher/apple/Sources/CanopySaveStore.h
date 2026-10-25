@@ -42,6 +42,10 @@ typedef BOOL (^CanopySaveValidator)(NSURL *privateStagedDirectory,
 /// Unsupported names, ASCII case collisions and account.uid files are refused.
 - (nullable NSURL *)exportToDirectory:(NSURL *)directory error:(NSError **)error;
 - (BOOL)importExportURL:(NSURL *)source error:(NSError **)error;
+/// Raw folder replacement is available only with the constructor's trusted
+/// title validator. The source is copied privately, validated and rehashed
+/// before creating a backup or publishing. Same provider-scope rules apply.
+- (BOOL)importRawDirectoryURL:(NSURL *)source error:(NSError **)error;
 - (nullable NSString *)backup:(NSError **)error;
 - (nullable NSArray<NSDictionary<NSString *, id> *> *)backups:(NSError **)error;
 - (BOOL)restoreBackup:(NSString *)identifier error:(NSError **)error;

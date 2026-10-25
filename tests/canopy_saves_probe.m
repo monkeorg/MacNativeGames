@@ -107,7 +107,67 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     }else{
         Write(identity,@"identity-retain");Write(Child(active,@"progress.sav"),@"A");
         Check([NSFileManager.defaultManager createDirectoryAtURL:Child(active,@"empty") withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:NULL],"empty folder");
-        if([mode isEqual:@"validator"]){
+        if([mode hasPrefix:@"raw_"]){
+            CanopySaveValidator validator=^BOOL(NSURL *stage,NSError **failure){return TOTKSaveValidateDirectory(stage,failure);};
+            CanopySaveStore *totk=[[CanopySaveStore alloc] initWithRootURL:saveRoot titleID:@"0100f2c0115b6000" profileID:profile externalValidator:validator error:&error];
+            Check(totk!=nil,"raw title store");
+            NSURL *target=totk.activeDirectoryURL,*uid=Child(totk.accountIdentityDirectoryURL,@"account.uid");
+            Write(Child(target,@"previous.bin"),@"retain active before replacement");Write(uid,@"retain raw-import account");
+            NSURL *raw=Child(root,@"raw-source"),*slot=Child(raw,@"slot_00");
+            Check([NSFileManager.defaultManager createDirectoryAtURL:slot withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:NULL],"raw slot fixture");
+            for(NSString *name in @[@"progress.sav",@"caption.sav",@"footprint.sav",@"direct_file_save_related.sav"])Write(Child(slot,name),@"original raw structural fixture");
+            NSURL *selected=raw;
+            BOOL success=[mode isEqual:@"raw_success"],rollback=[mode isEqual:@"raw_rollback"];
+            if([mode isEqual:@"raw_invalid_slot"]){
+                Check(!rename(slot.fileSystemRepresentation,Child(raw,@"slot_99").fileSystemRepresentation),"bad raw slot fixture");
+            }else if([mode isEqual:@"raw_missing"]){
+                Check(!unlink(Child(slot,@"caption.sav").fileSystemRepresentation),"missing raw file fixture");
+            }else if([mode isEqual:@"raw_account"] || [mode isEqual:@"raw_nested_account"]){
+                Write(Child([mode isEqual:@"raw_account"]?raw:slot,@"account.uid"),@"must not copy account identity");
+            }else if([mode isEqual:@"raw_nested_profile"]){
+                NSURL *parent=Child(root,@"profile-parent");
+                Check([NSFileManager.defaultManager createDirectoryAtURL:parent withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:NULL],"nested profile fixture");
+                Check(!rename(raw.fileSystemRepresentation,Child(parent,@"save-data").fileSystemRepresentation),"nested raw move");selected=parent;
+            }else if([mode isEqual:@"raw_store_root"]){
+                selected=target.URLByDeletingLastPathComponent;
+            }else if([mode isEqual:@"raw_symlink"] || [mode isEqual:@"raw_hardlink"]){
+                NSURL *outside=Child(root,@"raw-outside");Write(outside,@"retain raw link target");
+                NSURL *caption=Child(slot,@"caption.sav");Check(!unlink(caption.fileSystemRepresentation),"raw link fixture cleanup");
+                int linked=[mode isEqual:@"raw_symlink"]?symlink(outside.fileSystemRepresentation,caption.fileSystemRepresentation):link(outside.fileSystemRepresentation,caption.fileSystemRepresentation);
+                Check(!linked,"raw link fixture");
+            }else if([mode isEqual:@"raw_large"]){
+                int fd=open(Child(slot,@"large").fileSystemRepresentation,O_CREAT|O_EXCL|O_WRONLY,0600);
+                Check(fd>=0&&!ftruncate(fd,((off_t)64<<20)+1),"raw sparse size fixture");close(fd);
+            }else if([mode isEqual:@"raw_unknown"]){
+                CanopySaveStore *unknown=[[CanopySaveStore alloc] initWithRootURL:saveRoot titleID:title profileID:@"raw-unknown" error:&error];
+                Check(unknown!=nil&&!unknown.externalImportSupported,"unknown raw capability");
+                Check(![unknown importRawDirectoryURL:raw error:&error]&&[unknown backups:&error].count==0,"unknown raw import accepted");
+                Check([Read(uid) isEqual:@"retain raw-import account"],"unknown raw identity changed");
+                puts("{\"status\":\"pass\"}");return 0;
+            }
+            NSString *token=nil;
+            if([mode isEqual:@"raw_sealed"])token=[totk sealForSession:&error];
+            if(rollback)setenv("CANOPY_SAVE_FAULT","after_swap_sync",1);
+            BOOL imported=[totk importRawDirectoryURL:selected error:&error];
+            if(rollback)unsetenv("CANOPY_SAVE_FAULT");
+            if(token)Check([totk finishSessionWithToken:token error:&error],"raw sealed fixture release");
+            if(success){
+                Check(imported,"validated raw import");
+                Check([Read(Child(Child(target,@"slot_00"),@"progress.sav")) isEqual:@"original raw structural fixture"],"raw exact bytes");
+                Check(![NSFileManager.defaultManager fileExistsAtPath:Child(target,@"previous.bin").path],"raw replacement merged old data");
+                Check([totk backups:&error].count==1,"raw replacement backup absent");
+            }else if(rollback){
+                Check(!imported&&totk.recoveryRequired,"raw ambiguous publication not quarantined");
+                Check([totk recover:&error]&&!totk.recoveryRequired,"raw rollback");
+                Check([Read(Child(target,@"previous.bin")) isEqual:@"retain active before replacement"],"raw rollback bytes");
+            }else{
+                Check(!imported,"invalid raw input accepted");
+                Check([Read(Child(target,@"previous.bin")) isEqual:@"retain active before replacement"],"raw rejection changed active");
+                Check([totk backups:&error].count==0,"raw rejection created backup");
+            }
+            Check([Read(uid) isEqual:@"retain raw-import account"],"raw import changed account identity");
+            if([mode isEqual:@"raw_symlink"]||[mode isEqual:@"raw_hardlink"])Check([Read(Child(root,@"raw-outside")) isEqual:@"retain raw link target"],"raw outside link target changed");
+        }else if([mode isEqual:@"validator"]){
             CanopySaveStore *unknown=[[CanopySaveStore alloc] initWithRootURL:saveRoot titleID:title profileID:@"unknown" error:&error];
             Check(unknown!=nil&&!unknown.externalImportSupported,"unknown title gained validator");
             Write(Child(unknown.activeDirectoryURL,@"progress.sav"),@"A");NSURL *opaque=Export(unknown,root);

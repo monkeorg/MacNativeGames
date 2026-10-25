@@ -384,7 +384,7 @@ static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
     if(fstat(source,&before)||!S_ISDIR(before.st_mode))return CSFail(error,@"The selected export is unavailable.",NO);
     NSDictionary *expected=CSReadJSON(source,"manifest.json");
     if(!expected||!CSExportShape(source)||![expected[@"schema"] isEqual:@"canopy-save-v1"]||
-       ![expected[@"titleID"] isEqual:_title]||![expected[@"profileID"] isEqual:_profile])return CSFail(error,@"Choose a Canopy save export for this exact title and profile. Raw save folders are unsupported.",NO);
+       ![expected[@"titleID"] isEqual:_title]||![expected[@"profileID"] isEqual:_profile])return CSFail(error,@"Choose a Canopy export for this exact title and profile. Supported raw saves use the separate title-validated folder import.",NO);
     int input=openat(source,"data",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     if(input<0||mkdirat(_profileFD,stage.UTF8String,0700)){if(input>=0)close(input);return CSFail(error,@"The replacement save could not be staged.",NO);}
     int output=CSDir(_profileFD,stage.UTF8String,NO);
@@ -394,6 +394,27 @@ static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
     if(output>=0)close(output);close(input);
     if(!ok){(void)CSRemove(_profileFD,stage.UTF8String,0);return CSFail(error,@"The export contents, paths or hashes failed verification.",NO);}
     *digest=actualDigest;return YES;
+}
+- (BOOL)copyRaw:(int)source toStage:(NSString *)stage digest:(NSString **)digest error:(NSError **)error {
+    if(mkdirat(_profileFD,stage.UTF8String,0700))return CSFail(error,@"The raw save replacement could not be staged.",NO);
+    int output=CSDir(_profileFD,stage.UTF8String,NO);
+    NSDictionary *actual=output<0?nil:CSManifest(source,output,_title,_profile);
+    NSString *actualDigest=actual?CSManifestDigest(actual):nil;
+    BOOL ok=actualDigest&&!fsync(output);if(output>=0)close(output);
+    if(!ok){(void)CSRemove(_profileFD,stage.UTF8String,0);return CSFail(error,@"The selected raw folder changed, contains unsupported paths or links, or exceeds save-transfer limits.",NO);}
+    *digest=actualDigest;return YES;
+}
+- (BOOL)validateExternalStage:(NSString *)stage digest:(NSString *)digest error:(NSError **)error {
+    NSError *validationError=nil;
+    BOOL accepted=_externalValidator&&_externalValidator([_profileURL URLByAppendingPathComponent:stage isDirectory:YES],&validationError);
+    int staged=CSDir(_profileFD,stage.UTF8String,NO);
+    NSDictionary *checked=accepted&&staged>=0?CSManifest(staged,-1,_title,_profile):nil;
+    if(staged>=0)close(staged);
+    if(!checked||![CSManifestDigest(checked) isEqual:digest]){
+        (void)CSRemove(_profileFD,stage.UTF8String,0);
+        return CSFail(error,@"The replacement does not pass this title's trusted save-format validation.",NO);
+    }
+    return YES;
 }
 - (BOOL)clearCommittedIntent:(NSError **)error {
     if(unlinkat(_profileFD,"transaction.json",0)&&errno!=ENOENT)return CSFail(error,@"The committed save needs final recovery confirmation.",YES);
@@ -420,15 +441,18 @@ static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
     int input=CSOpen(source);if(input<0)return CSFail(error,@"The selected export could not be opened safely.",NO);
     NSString *stage=[@".stage-" stringByAppendingString:CSID()];
     NSString *digest=nil;BOOL ok=[self copyExport:input toStage:stage digest:&digest error:error];close(input);if(!ok)return NO;
-    NSError *validationError=nil;
-    BOOL accepted=_externalValidator([_profileURL URLByAppendingPathComponent:stage isDirectory:YES],&validationError);
-    int staged=CSDir(_profileFD,stage.UTF8String,NO);
-    NSDictionary *checked=accepted&&staged>=0?CSManifest(staged,-1,_title,_profile):nil;
-    if(staged>=0)close(staged);
-    if(!checked||![CSManifestDigest(checked) isEqual:digest]){
-        (void)CSRemove(_profileFD,stage.UTF8String,0);
-        return CSFail(error,@"The replacement does not pass this title's trusted save-format validation.",NO);
-    }
+    if(![self validateExternalStage:stage digest:digest error:error])return NO;
+    NSString *backup=[self backup:error];
+    if(!backup){(void)CSRemove(_profileFD,stage.UTF8String,0);return NO;}
+    return [self publishStage:stage backup:backup digest:digest error:error];
+}}
+- (BOOL)importRawDirectoryURL:(NSURL *)source error:(NSError **)error {@synchronized(self){
+    if(![self available:error])return NO;
+    if(!_externalValidator)return CSFail(error,@"No trusted save-format validator is available for this title. Raw save replacement is unavailable.",NO);
+    int input=CSOpen(source);if(input<0)return CSFail(error,@"The selected raw folder could not be opened safely.",NO);
+    NSString *stage=[@".stage-" stringByAppendingString:CSID()],*digest=nil;
+    BOOL ok=[self copyRaw:input toStage:stage digest:&digest error:error];close(input);if(!ok)return NO;
+    if(![self validateExternalStage:stage digest:digest error:error])return NO;
     NSString *backup=[self backup:error];
     if(!backup){(void)CSRemove(_profileFD,stage.UTF8String,0);return NO;}
     return [self publishStage:stage backup:backup digest:digest error:error];

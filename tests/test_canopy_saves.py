@@ -84,6 +84,42 @@ class CanopySaves(unittest.TestCase):
     def test_external_replacement_requires_trusted_title_validator(self):
         self.run_probe('validator')
 
+    def test_raw_totk_folder_uses_real_validator_backup_and_exact_replacement(self):
+        self.run_probe('raw_success')
+
+    def test_raw_invalid_slot_missing_file_and_nested_profile_refuse_before_backup(self):
+        for scenario in ('raw_invalid_slot', 'raw_missing', 'raw_nested_profile', 'raw_store_root'):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as isolated:
+                previous = self.root
+                self.root = Path(isolated).resolve()
+                try:
+                    self.run_probe(scenario)
+                finally:
+                    self.root = previous
+
+    def test_raw_account_identity_links_and_quota_are_refused_without_mutation(self):
+        for scenario in ('raw_account', 'raw_nested_account', 'raw_symlink', 'raw_hardlink', 'raw_large'):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as isolated:
+                previous = self.root
+                self.root = Path(isolated).resolve()
+                try:
+                    self.run_probe(scenario)
+                finally:
+                    self.root = previous
+
+    def test_raw_unknown_title_and_sealed_session_refuse_before_backup(self):
+        for scenario in ('raw_unknown', 'raw_sealed'):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as isolated:
+                previous = self.root
+                self.root = Path(isolated).resolve()
+                try:
+                    self.run_probe(scenario)
+                finally:
+                    self.root = previous
+
+    def test_raw_import_ambiguous_publication_recovers_pretransaction_bytes(self):
+        self.run_probe('raw_rollback')
+
     def test_symlinks_and_hardlinks_refused_without_target_changes(self):
         self.run_probe('links')
 
