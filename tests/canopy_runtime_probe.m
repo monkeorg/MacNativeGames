@@ -195,6 +195,14 @@ int main(int argc,char **argv) {
                 if(!strcmp(mode,"lifecycle-joined")){mainLifecycle.phase=CANOPY_TOTK_MAIN_JOINED;mainLifecycle.main_joined=1;mainLifecycle.owned_guest_children=0;mainLifecycle.joining_guest_children=0;}
                 if(!strcmp(mode,"lifecycle-join-error")){mainLifecycle.phase=CANOPY_TOTK_MAIN_OBSERVATION_FAILED;mainLifecycle.join_error=EINVAL;}
                 if(!strcmp(mode,"lifecycle-invalid-state"))malformedLifecycle=YES;
+                if(!strcmp(mode,"lifecycle-diagnostics")) {
+                    NSDictionary *observed=runtime.diagnosticMetrics;
+                    Check([observed[@"mainWorkerPhase"] isEqual:@"cleanupObserved"] && [runtime.state isEqual:@"failed"] && !focus,"diagnostics observes and captures ended worker");
+                }
+                if(!strcmp(mode,"lifecycle-settings")) {
+                    NSDictionary *observed=[runtime applyDesiredSettings:@{@"fpsLimit":@30}];
+                    Check([observed[@"fpsLimit"][@"state"] isEqual:@"rejected"] && fps==60 && [runtime.state isEqual:@"failed"] && !focus,"settings cannot write ended worker before tick");
+                }
                 Check(![runtime tick:&error] && [runtime.state isEqual:@"failed"] && !focus && clears>before,"ended worker fails and captures real input/focus");
                 Check(![runtime restoreInput:&error] && ![runtime close:&error] && !focus,"worker end never grants restore or teardown");
                 NSDictionary *metrics=runtime.diagnosticMetrics;

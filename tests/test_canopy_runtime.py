@@ -201,7 +201,7 @@ class CanopyRuntimeTests(unittest.TestCase):
 
     def test_main_worker_end_and_join_observations_keep_protections(self):
         for mode in ('lifecycle-ended', 'lifecycle-returned', 'lifecycle-joined', 'lifecycle-join-error',
-                     'lifecycle-invalid-state', 'lifecycle-start-ended', 'lifecycle-start-invalid', 'lifecycle-not-started'):
+                     'lifecycle-invalid-state', 'lifecycle-diagnostics', 'lifecycle-settings', 'lifecycle-start-ended', 'lifecycle-start-invalid', 'lifecycle-not-started'):
             with self.subTest(mode=mode):
                 self.assertEqual(self.scenario(mode)['starts'], 1)
 
