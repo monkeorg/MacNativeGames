@@ -248,6 +248,18 @@
       },
       "patch": "0021-specialization-evaluator-bounds.patch",
       "sha256": "92948e54a24275640e5a22228545d8be3c8236736091cdc4131026b52aa06f32"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "8b4b4a11a16a1141d88f626b99a77c79d8fb78adaf04ae283d829efcec4d228e",
+        "spirv_msl.cpp": "d7d40b66bef0ab153d4916228ad100f72bedb1fea6b6979b7cc0dc6f8ec7682e"
+      },
+      "before": {
+        "spirv_glsl.cpp": "0417f71df49d93983e6a9db12b86b5c342bb144ac6c4468fd9158191580d2497",
+        "spirv_msl.cpp": "070d26a08a2c61dcbf0c5cec91c87029febcdb38a0944169f101e069bde992fa"
+      },
+      "patch": "0022-expression-dependency-loop-checkpoints.patch",
+      "sha256": "a34d4a13b319dec52d3a056c3882a43ebc509effba42db9de5c86c99f39ef7b2"
     }
   ],
   "schemaVersion": 1

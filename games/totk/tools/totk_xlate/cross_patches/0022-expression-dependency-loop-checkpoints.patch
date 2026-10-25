@@ -1,0 +1,81 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -5989,8 +5989,11 @@
+ 		// and see that we should not forward reads of the original variable.
+ 		auto &expr = get<SPIRExpression>(id);
+ 		for (uint32_t dep : expr.expression_dependencies)
++		{
++			canopy_cross_budget::step();
+ 			if (invalid_expressions.find(dep) != end(invalid_expressions))
+ 				handle_invalid_expression(dep);
++		}
+ 	}
+ 
+ 	if (register_expression_read)
+@@ -8527,7 +8530,10 @@
+ 
+ 	emit_op(result_type_id, id, expr, forward);
+ 	for (auto &inherit : inherited_expressions)
++	{
++		canopy_cross_budget::step();
+ 		inherit_expression_dependencies(id, inherit);
++	}
+ 
+ 	// Do not register sparse ops as control dependent as they are always lowered to a temporary.
+ 	switch (op)
+@@ -12408,11 +12414,20 @@
+ {
+ 	// Impure functions can modify globals and aliased variables, so invalidate them as well.
+ 	for (auto global : global_variables)
++	{
++		canopy_cross_budget::step();
+ 		flush_dependees(get<SPIRVariable>(global));
++	}
+ 	for (auto aliased : aliased_variables)
++	{
++		canopy_cross_budget::step();
+ 		flush_dependees(get<SPIRVariable>(aliased));
++	}
+ 	for (auto ptr : buffer_pointer_variables)
++	{
++		canopy_cross_budget::step();
+ 		flush_dependees(get<SPIRExpression>(ptr));
++	}
+ }
+ 
+ void CompilerGLSL::register_call_out_argument(uint32_t id)
+@@ -13717,7 +13732,10 @@
+ 			// Function calls are implicit loads from all variables in question.
+ 			// Set dependencies for them.
+ 			for (uint32_t i = 0; i < length; i++)
++			{
++				canopy_cross_budget::step();
+ 				register_read(id, arg[i], forward);
++			}
+ 
+ 			// If we're going to forward the temporary result,
+ 			// put dependencies on every variable that must not change.
+@@ -13848,7 +13866,10 @@
+ 		{
+ 			emit_op(result_type, id, constructor_op, forward);
+ 			for (uint32_t i = 0; i < length; i++)
++			{
++				canopy_cross_budget::step();
+ 				inherit_expression_dependencies(id, elems[i]);
++			}
+ 		}
+ 		break;
+ 	}
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -13613,7 +13613,10 @@
+ 				uint32_t temp_id = ir.increase_bound_by(1);
+ 				emit_op(result_type_id, temp_id, inner_expr, false);
+ 				for (auto &inherit : inherited_expressions)
++				{
++					canopy_cross_budget::step();
+ 					inherit_expression_dependencies(temp_id, inherit);
++				}
+ 				inherited_expressions.clear();
+ 				inherited_expressions.push_back(temp_id);
+ 
