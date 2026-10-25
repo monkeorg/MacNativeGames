@@ -34,7 +34,7 @@ static NSMutableDictionary<NSString *, id<MTLBinaryArchive>> *g_par_open; // ope
 static int g_par_on, g_par_valid;                                        // valid: files of this OS / GPU / chain exist
 static _Atomic uint64_t g_par_written, g_par_write_failed;
 static _Atomic int par_filling;                                          // the background fill (warm_fill_archive)
-static __thread int par_on_fill_thread;                                  // set on that fill's own thread: it writes in place
+static __thread int par_write_in_place;                                  // the fill's and the start-up warm-up's thread: they write at once
 
 static int par_enabled(void) {
     static int on = -1;
@@ -161,7 +161,7 @@ static id<MTLBinaryArchive> par_archive_for(id<MTLDevice> dev, NSString *key) {
     return a;
 }
 // One pipeline as its own file (a temporary name, then renamed). Adding compiles the pipeline once more, through the
-// compiler service the game uses too, so outside the fill this runs only while the game is idle (par_drain).
+// compiler service the game uses too: iOS writes during fill/start-up warm-up; Mac retains its idle gameplay queue.
 static void par_write(id<MTLDevice> dev, NSString *key, id desc) {
     pthread_mutex_lock(&g_par_mu); BOOL have = [g_par_have containsObject:key]; pthread_mutex_unlock(&g_par_mu);
     if (have) return;   // another variant under the same key: keep the first
@@ -183,6 +183,8 @@ static void par_write(id<MTLDevice> dev, NSString *key, id desc) {
     uint64_t n = atomic_fetch_add(&g_par_written, 1) + 1;
     if (n % 500 == 0) MLOG("管线存档：这次已写 %llu 条（删掉 Metal 留下的工作目录 %llu 个）", (unsigned long long)n, (unsigned long long)atomic_load(&g_par_ga_removed));
 }
+#if !TARGET_OS_IPHONE
+// Standalone Mac retains its existing gameplay idle queue and archive timing.
 enum { PAR_IDLE_NS = 3000000000u };
 static _Atomic uint64_t g_par_last_compile_ns;   // set by pso_new / cs_new when they compiled
 static int par_game_idle(void);                  // nvn_mtl.m: in the world, warm-up done, no compile for PAR_IDLE_NS
@@ -207,13 +209,17 @@ static void par_drain(id<MTLDevice> dev) {
         }
     });
 }
-// Called after a pipeline the archive did not have was compiled.
+#endif
+// Called after a pipeline the archive did not have was compiled. On iOS only warm/fill workers write; gameplay records
+// pso_user.tsv for the next startup. Mac preserves the original deferred idle drain outside the dedicated fill worker.
 static void par_add(id<MTLDevice> dev, NSString *key, id desc) {
     if (!g_par_on || !key) return;
-    if (par_on_fill_thread) { par_write(dev, key, desc); return; }
+    if (par_write_in_place) { par_write(dev, key, desc); return; }
+#if !TARGET_OS_IPHONE
     pthread_mutex_lock(&g_par_mu);
     if (!g_par_pending) g_par_pending = [NSMutableArray array];
     [g_par_pending addObject:@[key, [desc copy]]];
     pthread_mutex_unlock(&g_par_mu);
     if (!atomic_exchange(&g_par_draining, 1)) par_drain(dev);
+#endif
 }
