@@ -1,0 +1,97 @@
+--- a/spirv_parser.cpp
++++ b/spirv_parser.cpp
+@@ -256,6 +256,63 @@
+ 	return extract_string(spirv.data() + offset, spirv.size() - offset);
+ }
+ 
++// Closed source-access floors for supported type declarations and constants.
++// These are operand availability checks, not full SPIR-V grammar validation.
++static uint32_t declaration_constant_operand_minimum(Op op)
++{
++	switch (op)
++	{
++	case OpTypeVoid:
++	case OpTypeBool:
++	case OpTypeSampler:
++	case OpTypeStruct:
++	case OpTypeAccelerationStructureKHR:
++	case OpTypeRayQueryKHR:
++		return 1;
++
++	case OpTypeFloat:
++	case OpTypeRuntimeArray:
++	case OpTypeSampledImage:
++	case OpTypeUntypedPointerKHR:
++	case OpTypeForwardPointer:
++	case OpTypeFunction:
++	case OpTypeTensorARM:
++	case OpTypeBufferEXT:
++	case OpUndef:
++	case OpSpecConstantFalse:
++	case OpConstantFalse:
++	case OpSpecConstantTrue:
++	case OpConstantTrue:
++	case OpConstantNull:
++	case OpSpecConstantComposite:
++	case OpConstantComposite:
++	case OpConstantDataKHR:
++	case OpSpecConstantDataKHR:
++		return 2;
++
++	case OpTypeInt:
++	case OpTypeVector:
++	case OpTypeMatrix:
++	case OpTypeCooperativeVectorNV:
++	case OpTypeArray:
++	case OpTypePointer:
++	case OpSpecConstant:
++	case OpConstant:
++	case OpConstantCompositeReplicateEXT:
++	case OpSpecConstantCompositeReplicateEXT:
++	case OpConstantSizeOfEXT:
++	case OpSpecConstantOp:
++		return 3;
++
++	case OpTypeCooperativeMatrixKHR:
++		return 6;
++	case OpTypeImage:
++		return 8;
++	default:
++		return 0;
++	}
++}
++
+ void Parser::parse(const Instruction &instruction)
+ {
+ 	auto *ops = stream(instruction);
+@@ -270,6 +327,9 @@
+ 		if (op == OpReturn || op == OpBranch || op == OpUnreachable)
+ 			return;
+ 	}
++
++	if (length < declaration_constant_operand_minimum(op))
++		SPIRV_CROSS_THROW("Type declaration or constant lacks required operands.");
+ 
+ 	switch (op)
+ 	{
+@@ -770,7 +830,7 @@
+ 		}
+ 		else if (width == 8)
+ 		{
+-			if (length < 2)
++			if (length < 3)
+ 				SPIRV_CROSS_THROW("Missing encoding for OpTypeFloat 8.");
+ 			else if (ops[2] == FPEncodingFloat8E4M3EXT)
+ 				type.basetype = SPIRType::FloatE4M3;
+@@ -1187,7 +1247,11 @@
+ 		{
+ 
+ 			if (type.width > 32)
++			{
++				if (length < 4)
++					SPIRV_CROSS_THROW("Wide scalar constant lacks its second literal word.");
+ 				set<SPIRConstant>(id, ops[0], ops[2] | (uint64_t(ops[3]) << 32), op == OpSpecConstant);
++			}
+ 			else
+ 				set<SPIRConstant>(id, ops[0], ops[2], op == OpSpecConstant);
+ 		}
