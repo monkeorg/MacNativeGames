@@ -15,20 +15,31 @@ exact revisions, jobs, source ownership and integration status, and
 No complete-product, arbitrary-game compatibility or physical gameplay claim is
 made. A source feature or fixture is not a checked product acceptance box.
 
-Current source is [#100](https://github.com/monkeorg/MacNativeGames/pull/100),
+Current source handoff is [#150](https://github.com/monkeorg/MacNativeGames/pull/150),
+`feat/canopy-shader-specialization-composite-bounds` at
+`6f166e738a4748dde8e0a844a3b1acc327c3ddd5`. Later app corrections preserve
+friendly names (#110/#119), expire storage UI intent (#120) and expire save
+dialogs while retaining accepted Files export data (#122). Finite source audits
+found no further demonstrated supported app-flow defect after these fixes.
+Compiler follow-ups through #150 have independent source reviews and exact
+patch/input/output hashes, with no new tests, probes or builds. The original
+loop inventory is classified, and the separately found array-length and selected
+specialization-composite contracts are source-fixed in #149/#150. Runtime stays
+off. General ID/grammar/other-operator validation, allocator/noexcept isolation,
+managed/static/parity and Apple/private/device acceptance remain open gates;
+the source batch does not establish arbitrary-input or complete-app readiness.
+
+The detailed app/issue table below is the historical snapshot through
+[#100](https://github.com/monkeorg/MacNativeGames/pull/100),
 `feat/canopy-shader-removal-recovery` at
 `62dd868c5e66d830ca1f5973462c4725a56aa759`. All label/editor/pack/removal
 cohorts are published. #88–#100 are source-reviewed, `[skip ci]`, unbuilt/untested.
 #99 corrects the preflight source implicated by later #85 red CI; #100 supplies
 recorded shader-identity removal recovery. Both are UNRUN, not verified fixes.
-Goal remains ACTIVE. The compiler assessments identified two bounded source slices.
-Native owns the frozen two-function query depth patch 0005 and its SHA/coverage/docs;
-execution and root reviewed it. Execution owns the subsequent five PHI-query loop
-checks only after 0005 is committed. No compiler tests/builds or runtime enablement
-are authorized by this source work. There is no other demonstrated broken
-supported flow after the reviewed source corrections, but compiler debt remains
-source work, not only a hardware gate. Runtime translation remains disabled and
-product/Apple/private/device/signing acceptance is separate.
+The earlier #100 compiler queue is superseded by the source handoff above.
+No issue acceptance box is closed by these source reviews. The overall product
+goal remains open for its named contracts and real validation; do not relabel
+broader translator gates as fixed or enable runtime capability from this ledger.
 
 ## Original iPad track: #1–#9
 
