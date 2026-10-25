@@ -92,6 +92,18 @@ class Apply(unittest.TestCase):
         self.assertAlmostEqual(field(self.blob, self.members, 'Up', 'N_A', 'y'), 10.0)
         self.assertAlmostEqual(field(self.blob, self.members, 'Mid', 'N_B', 'sy'), 1 / K, places=5)
 
+    def test_four_three_preserves_widget_proportions_at_both_heights(self):
+        for width, height in ((960, 720), (1440, 1080)):
+            with self.subTest(width=width, height=height):
+                blob = bytearray(self.blob)
+                tall.apply(blob, self.members, width, height)
+                root_scale = field(blob, self.members, 'Mid', 'RootPane', 'sy')
+                inverse_scale = field(blob, self.members, 'Mid', 'N_B', 'sy')
+                self.assertAlmostEqual(root_scale, 0.75)
+                self.assertAlmostEqual(root_scale * inverse_scale, 1.0, places=5)
+                self.assertAlmostEqual(field(blob, self.members, 'Up', 'RootPane', 'y'), 135.0)
+                self.assertAlmostEqual(field(blob, self.members, 'Keep', 'RootPane', 'sy'), 1.0)
+
     def test_a_pane_that_is_not_as_shipped_stops_the_script(self):
         blob, members = archive({name: [pane('RootPane'), pane('N_A', y=11.0), pane('N_B')] for name in ('Up', 'Down', 'Mid', 'Keep')})
         with self.assertRaises(SystemExit): tall.apply(blob, members, 2560, 1600)

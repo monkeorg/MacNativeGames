@@ -3,7 +3,11 @@
 #include <sys/mman.h>
 #define CHECK(x) do { if(!(x)){fprintf(stderr,"line %d: %s\n",__LINE__,#x);return 1;} } while(0)
 _Noreturn void runtime_fail(const char *message){fprintf(stderr,"refused: %s\n",message);exit(78);}
-void *runtime_symbol(const char *name){(void)name;return NULL;}
+void *runtime_symbol(const char *name){
+    if(!strcmp(name,"tanf"))return (void *)(uintptr_t)tanf;
+    if(!strcmp(name,"atanf"))return (void *)(uintptr_t)atanf;
+    return NULL;
+}
 void runtime_survey_init(Module *module){(void)module;}
 uint64_t runtime_now_ns(void){return 1;}
 void runtime_oe_push_message(uint32_t message){(void)message;}
@@ -18,6 +22,9 @@ int main(int argc,char **argv){
     setenv("TOTK_RENDER_RES",baseline?"1280x720":"1440x1080",1);
     setenv("TOTK_ASPECT",baseline?"0":"display",1);
     unsetenv("TOTK_ASPECT_VERT");
+#ifdef TOTK_TEST_VERT
+    setenv("TOTK_ASPECT_VERT","1",1);setenv("TOTK_IOS_ASPECT_VERT","1",1);
+#endif
     if(!strcmp(argv[1],"stock")){
         unsetenv("TOTK_IOS_DISPLAY_SETTINGS");setenv("TOTK_OUTPUT_RES","0",1);setenv("TOTK_RENDER_RES","0",1);
     }
@@ -28,7 +35,14 @@ int main(int argc,char **argv){
     CHECK(m.base!=MAP_FAILED);
     uint64_t data=0xc08000,stub=0xc00100;
     static const uint64_t projection[]={0x100,0x200};
-    const uint32_t original=0x1e211800;
+    const uint32_t original=0xbd400000|(0x140/4<<10)|(19<<5);
+    for(unsigned i=0;i<2;i++){
+        word(&m,projection[i]-64,0xbd400000|(0x13c/4<<10)|(19<<5));
+        word(&m,projection[i]-60,0x1e210800);
+        word(&m,projection[i]-56,0xbd000000|(0xa0/4<<10)|(20<<5));
+        word(&m,projection[i]-4,0xbd000000|(0xac/4<<10)|(20<<5));
+        word(&m,projection[i]+4,0xbd000000|(0xb0/4<<10)|(20<<5));
+    }
 #if TARGET_OS_IPHONE && defined(TOTK_IOS_DISPLAY_SETTINGS)
     word(&m,0xbdb578,0xd2800008|(1920<<5));word(&m,0xbdb584,0xf2c00008|(1080<<5));
     word(&m,0x3dcb28,branch(0x3dcb28,stub+16));
@@ -43,6 +57,12 @@ int main(int argc,char **argv){
         uint32_t code[8];uint64_t at=stub+48+ASPECT_STUB*i;
         CHECK(!aspect_stub(original,at,projection[i],data,code));
         memcpy(m.base+at,code,sizeof code);word(&m,projection[i],aspect_b(projection[i],at));
+#ifdef TOTK_TEST_VERT
+        uint32_t vcode[74];uint64_t vs=stub+320+ASPECT_VSTUB*i;
+        uint32_t load;memcpy(&load,m.base+projection[i]-64,4);
+        CHECK(!aspect_vstub(load,vs,projection[i]-64,data,vcode));
+        memcpy(m.base+vs,vcode,sizeof vcode);word(&m,projection[i]-64,aspect_b(projection[i]-64,vs));
+#endif
     }
 #else
     word(&m,0xbdb578,0xd280f008);word(&m,0xbdb584,0xf2c08708);
@@ -59,6 +79,9 @@ int main(int argc,char **argv){
     if(!strcmp(argv[1],"bad_render"))word(&m,0x585e50,0);
     if(!strcmp(argv[1],"bad_fixed"))word(&m,0x5848a8,0);
     if(!strcmp(argv[1],"bad_aspect"))word(&m,projection[0],0);
+    if(!strcmp(argv[1],"bad_vert_veneer"))word(&m,stub+324,0xffffffff);
+    if(!strcmp(argv[1],"bad_vert_branch"))word(&m,projection[0]-64,0);
+    if(!strcmp(argv[1],"bad_vert_pattern"))word(&m,projection[0]-4,0);
 #if TARGET_OS_IPHONE
     // A device must validate signed text, never modify it.
     CHECK(!mprotect(m.base,data,PROT_READ));
@@ -72,7 +95,13 @@ int main(int argc,char **argv){
     }
     runtime_aspect_view(1440,1080);
     patch_output_res(&m);patch_render_res(&m);patch_fixed_res(&m);
-    aspect_install(&m,"synthetic",projection,2,0,stub+48,0,data);
+    aspect_install(&m,"synthetic",projection,2,
+#ifdef TOTK_TEST_VERT
+                   2,stub+48,stub+320,
+#else
+                   0,stub+48,0,
+#endif
+                   data);
     uint64_t expected=baseline?pack_size(1280,720):pack_size(1440,1080);
     CHECK(runtime_output_size_current()==expected);
     unsigned w=0,h=0;CHECK(runtime_output_res(&w,&h)&&w==1920&&h==1080);
@@ -81,6 +110,10 @@ int main(int argc,char **argv){
     float scene[2];memcpy(scene,m.base+data+16,sizeof scene);
     CHECK(scene[0]==(baseline?1280:1440)&&scene[1]==(baseline?720:1080));
     CHECK(baseline?runtime_aspect_now()==0:fabsf(runtime_aspect_now()-4.0f/3.0f)<0.00001f);
+#ifdef TOTK_TEST_VERT
+    CHECK(g_aspect_vert);
+    CHECK(baseline?atomic_load(g_aspect_vert)==0:fabsf(aspect_bits_float(atomic_load(g_aspect_vert))-4.0f/3.0f)<0.00001f);
+#endif
     #if TARGET_OS_IPHONE
     /* Keyboard commands cannot separate the fixed canvas, render size and projection. */
     float aspect=runtime_aspect_now();

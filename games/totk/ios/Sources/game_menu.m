@@ -2,6 +2,7 @@
 #import "launcher_settings.h"
 #import "launcher.h"
 #import "mouse_input.h"
+#import "keyboard_input.h"
 #import <QuartzCore/CAMetalLayer.h>
 #include "fps_overlay.h"
 
@@ -16,7 +17,7 @@
 }
 @end
 
-@interface TOTKGameMenu : UIViewController
+@interface TOTKGameMenu : UIViewController <UIGestureRecognizerDelegate>
 @property(nonatomic,strong) UIButton *gear;
 @property(nonatomic,strong) UIView *card;
 @property(nonatomic,strong) UINavigationController *settingsNavigation;
@@ -68,6 +69,9 @@
     self.card.hidden = YES;
     [self.view addSubview:self.card];
     [self.settingsNavigation didMoveToParentViewController:self];
+    UITapGestureRecognizer *outsideTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(closeMenu)];
+    outsideTap.delegate = self;
+    [self.view addGestureRecognizer:outsideTap];
 
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     NSLayoutConstraint *width = [self.card.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-24];
@@ -87,11 +91,20 @@
         [self.card.heightAnchor constraintLessThanOrEqualToAnchor:safe.heightAnchor constant:-24],
     ]];
 }
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldReceiveTouch:(UITouch *)touch {
+    if (!((TOTKMenuView *)self.view).expanded) return NO;
+    if (self.settingsNavigation.presentedViewController || self.settingsNavigation.topViewController.presentedViewController) return NO;
+    CGPoint point = [touch locationInView:self.view];
+    if ([self.card pointInside:[self.card convertPoint:point fromView:self.view] withEvent:nil]) return NO;
+    if ([self.gear pointInside:[self.gear convertPoint:point fromView:self.view] withEvent:nil]) return NO;
+    return YES;
+}
 - (void)openMenu {
     TOTKMenuView *shield = (TOTKMenuView *)self.view;
     if (shield.expanded) return;
     self.mouseInputWasEnabled = TOTKMouseInputEnabled();
     TOTKSetMouseInputEnabled(NO);
+    TOTKSetKeyboardInputEnabled(NO);
     [self.settingsNavigation popToRootViewControllerAnimated:NO];
     for (UIView *control in self.view.superview.subviews) {
         if (control == self.view) continue;
@@ -120,9 +133,25 @@
     self.view.accessibilityViewIsModal = NO;
     self.card.hidden = YES;
     self.gear.hidden = NO;
+    TOTKSetKeyboardInputEnabled(YES);
+    [self becomeFirstResponder];
     UIAccessibilityPostNotification(UIAccessibilityScreenChangedNotification, self.gear);
 }
 - (BOOL)canBecomeFirstResponder { return YES; }
+- (void)forwardPresses:(NSSet<UIPress *> *)presses event:(UIPressesEvent *)event down:(BOOL)down cancelled:(BOOL)cancelled {
+    NSMutableSet<UIPress *> *unhandled = [NSMutableSet set];
+    for (UIPress *press in presses) if (!TOTKKeyboardPress(press,down)) [unhandled addObject:press];
+    if (!unhandled.count) return;
+    if (down) [super pressesBegan:unhandled withEvent:event];
+    else if (cancelled) [super pressesCancelled:unhandled withEvent:event];
+    else [super pressesEnded:unhandled withEvent:event];
+}
+- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event { [self forwardPresses:presses event:event down:YES cancelled:NO]; }
+- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event { [self forwardPresses:presses event:event down:NO cancelled:NO]; }
+- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    [self forwardPresses:presses event:event down:NO cancelled:YES];
+    TOTKClearKeyboardInput();
+}
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [self becomeFirstResponder];
@@ -163,6 +192,7 @@ void TOTKAttachGameMenu(UIViewController *gameController) {
         if ([child isKindOfClass:TOTKGameMenu.class]) return;
     }
     TOTKGameMenu *menu = [TOTKGameMenu new];
+    TOTKStartKeyboardInput(gameController);
     [gameController addChildViewController:menu];
     menu.view.frame = gameController.view.bounds;
     menu.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;

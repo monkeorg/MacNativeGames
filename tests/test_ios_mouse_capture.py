@@ -12,4 +12,4 @@ class IOSMouseCaptureTests(unittest.TestCase):
     def test_capture_interruption_sequence(self):
         run_probe(self, ['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                          f'-I{ROOT}/games/totk/ios/Sources',
-                         str(ROOT / 'tests/ios_mouse_capture_probe.c')])
+                         str(ROOT / 'tests/ios_mouse_capture_probe.c'), '-lm'])

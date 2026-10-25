@@ -1,20 +1,23 @@
-# iPad controller and mouse preferences
+# iPad keyboard, controller and mouse preferences
 
 Issue: [Adapt Mac controls and mouse input for iPad](https://github.com/monkeorg/MacNativeGames/issues/5).
 
-This source adds persistent pre-Play controls preferences. It has not been compiled, installed, or exercised on a device. No tests, probes, or simulators were run for this change, following the current task instruction. The prior launcher/save and input acceptance records do not validate these new controls.
+This source adds persistent controls preferences. Apple compilation and synthetic input checks run during the authorized local continuation. New keyboard and mouse changes still require physical acceptance; earlier device results do not validate them.
 
 ## Launcher controls
 
 Open **Controls** before Play:
 
-- **Touch controls:** Automatic keeps the existing controller-dependent touch visibility. Off still requires an extended gamepad before Play; a mouse alone cannot replace all movement controls.
+- **Touch controls:** Automatic keeps the existing controller-dependent touch visibility. Off requires an extended gamepad or a detected GCKeyboard before Play. Keep Automatic for Universal Control if it exposes only UIKit key presses. A mouse alone cannot replace movement controls.
 - **Controller type:** Automatic uses the existing device detection. Xbox and PlayStation use face-button positions; Switch uses the existing Nintendo label convention. The default remains Automatic.
 - **Mouse sensitivity:** accepts an integer from 1 through 100. The default remains 50. Invalid stored values fall back to 50; the editor disables Save for invalid input.
 - **Invert mouse Y:** switches vertical mouse direction. The default remains Off.
 - **Button mappings:** opens separate Controller and Mouse lists. Choose a Switch button, None, or Default for each physical button. The controller list includes face positions, sticks, shoulders, triggers, menu/view, D-pad, and supported touchpad click. The mouse list includes left/right/middle and the first two auxiliary buttons exposed by the system.
+- **Keyboard mappings:** provides 24 actions for movement, camera and Switch buttons. The default movement keys are WASD; camera keys are arrows. Assign a supported physical key or None. A key already assigned elsewhere must first be freed. Escape and Command remain reserved.
 
-These choices persist and apply at Play. Reopen the app to change them for another session. The in-game menu continues to handle overlays and temporary input release; it does not apply new mappings or sensitivity during gameplay.
+These choices persist. Keyboard mappings apply live to the next press. Other control choices apply at Play and show a restart prompt after changes during gameplay. Reopen the app to apply them. In-game rows distinguish Live, Restart and Restart required.
+
+The keyboard bridge accepts GameController keyboard events and UIKit press events, including the path used when Universal Control exposes UIKit input. It merges duplicate sources, remembers each press's original mapping for release, and clears keys plus queued keyboard edges on menu, focus loss, disconnect, and text entry. It forwards only game actions, so a mapped number key cannot trigger Mac graphics shortcuts. Physical Universal Control behavior remains unverified.
 
 **Default** restores the existing mapping and its existing mode. Default mouse left attacks, right draws the bow, and middle targets. Left click shoots while default right click is held. The two auxiliary buttons are unbound by default. Custom mappings hold the chosen Switch button while the physical button is down; custom right-click mapping replaces the default aim/fire mode. Touch buttons keep their standard Switch layout.
 
@@ -42,11 +45,13 @@ Implementation states below describe source availability. Every device-dependent
 | Relative mouse, buttons, capture and camera look | Implemented iOS adapter plus existing shared mouse-look/right-stick and synthetic-motion paths. Primary/middle and up to two auxiliary buttons are forwarded. Direction, sensitivity, gyro effect, pointer-lock behavior and real extra-button identity remain unverified physically. |
 | Mouse sensitivity, inversion and button mapping | Persistent pre-Play choices implemented here. Advanced decay/counterweight/minimum decay/mouse-gyro options remain developer environment settings; no new persistent advanced controls are claimed. |
 | Mapping modes and mouse enable shortcut | Default modes are preserved; custom in-app mappings use Hold. Advanced Tap/Toggle/Aim remain available through `TOTK_CONTROLS`. Mac key 7 is not wired as an iPad shortcut; iPad capture is requested during gameplay and released temporarily by the menu/focus policy. |
-| Keyboard movement and Mac shortcuts | Desktop NSEvent keyboard dispatch is unavailable in UIKit. The iPad currently wires Escape to the menu; it does not promise the desktop movement or keys 1–7. Game overlay choices are in the native menu; graphics shortcuts follow their separate acceptance gates. |
+| Keyboard movement and Mac shortcuts | Native UIKit/GCKeyboard bridge supplies configurable movement, camera and Switch actions. Escape controls the menu; Mac debug/graphics shortcuts are not forwarded. Physical acceptance remains pending. |
 | Game text entry | Unavailable: `runtime/frontend_ios.m:runtime_front_text_test` cancels game keyboard requests. Keyboard notifications release capture defensively; they do not implement the desktop entry bar. |
 | Touch visibility and interruption release | Implemented iOS Automatic/Off behavior and cancellation policy. Controller input can still reach gameplay while the live menu is open; the menu does not pause. Physical lifecycle acceptance remains pending. |
 
-Controller haptics/motion, desktop keyboard emulation and advanced persistent tuning are not silently included in the delivered preferences. The issue's inventory distinguishes these unavailable paths from its specifically requested sensitivity, inversion, mapping and touch controls. Any later expansion needs its own supported API path, source review and real accessory evidence; the current work does not claim complete Mac input parity.
+Controller haptics/motion, Mac debug shortcuts and advanced persistent tuning remain unavailable. The current work does not claim complete Mac input parity.
+
+The iOS mouse adapter ignores zero and nonfinite movement reports. Zero reports otherwise renew the shared mouse-look counterweight and sustain residual camera movement. Regression checks cover that case without changing sensitivity, decay or counterweight. `TOTKMouseInputDiagnostics()` exposes aggregate event counts, focus and pointer-lock state for local debugging; it records no coordinates or device identifiers. This correction does not establish reliable raw mouse input over Universal Control.
 
 ## Requirement-to-code map
 

@@ -14,6 +14,7 @@ Tap a settings row to open its choices. Tap a choice to apply it.
 - **Controller type:** Automatic, Xbox, PlayStation, or Switch selects the existing face-button convention.
 - **Mouse:** persistent sensitivity from 1–100 and vertical inversion reuse the existing mouse-look settings.
 - **Button mappings:** choose Default, a Switch button, or None for controller buttons and up to five mouse buttons. Custom bindings use hold behavior; Default retains existing modes, including bow/left-click fire.
+- **Keyboard mappings:** change movement, camera and Switch-button keys. WASD moves, arrow keys turn the camera, and Escape opens the game menu. These mappings apply to the next key press.
 - **Language:** uses the same preference as the app's pane in iPad Settings. System follows the device language.
 
 Preferences persist between launches. Resolution, aspect ratio, controls, and language apply at Play. Invalid stored values return to defaults. A developer-supplied `TOTK_LANG` environment value still takes precedence.
@@ -22,19 +23,19 @@ The controller/mouse settings compiled with the Apple SDK. Physical behavior rem
 
 Resolution and aspect controls require the TOTK 1.4.3 build option `--ios-display-settings`. It adds `TOTKIOSDisplaySettingsVersion = 1`, backed by the signed `TOTK_IOS_DISPLAY_SETTINGS` profile. Other builds disable these choices and retain 1280×720 at 16:9. A saved preference cannot add this capability.
 
-The height label refers to the requested game render and output canvas, not the Metal drawable or physical screen resolution. At 16:9, the choices request 1280×720 or 1920×1080. Full display uses the actual landscape aspect; a 4:3 display requests 960×720 or 1440×1080. Other display aspects produce different widths. Confirm actual render targets and drawable dimensions separately.
+The height label refers to the requested game render and output canvas, not the Metal drawable or physical screen resolution. At 16:9, the choices request 1280×720 or 1920×1080. Full display requires a 4:3 display and the bundled 4:3 layout profile; it requests 960×720 or 1440×1080. Other aspects, or a missing profile, fall back to 16:9. Confirm actual render targets and drawable dimensions separately.
 
-**Full display is experimental.** It applies the existing camera-aspect patch. World-object markers and pixel-snapped UI positions have known limitations. The default preserves vertical field of view; a narrower aspect shows less at the sides. This is not a claim of complete graphics parity or stable native 60 FPS. See the [baseline protocol](ipados-baseline.md).
+**Full display is experimental.** The signed profile reuses the existing Vert+ camera patch: it preserves the 16:9 horizontal view and expands the vertical field of view at 4:3. A separate layout overlay corrects UI proportions and positions instead of applying the older draw-time UI squeeze. Its generator passed against the local original TOTK 1.4.3 archive; physical appearance remains unverified. World-object markers, pixel-snapped positions, UI effects, inventory, lighting and cutscenes need visual checks. Prerendered movies have no separate aspect correction. This is not a claim of complete graphics parity or stable native 60 FPS. See the [baseline protocol](ipados-baseline.md).
 
 On the tested iPad, the native HUD appeared with `MTL_HUD_ENABLED=1` supplied at process launch. The saved preference alone did not activate it. Enable **Settings → Developer → Graphics HUD → Show Graphics HUD** once. The user confirmed the in-app switch works after this device setting was enabled.
 
 ## During gameplay
 
-Tap the floating **gear** or press **Escape** on a connected keyboard to open the Liquid Glass game menu. Use **Resume game**, the close button, or Escape to dismiss it.
+Tap the floating **gear** or press **Escape** on a connected keyboard to open the Liquid Glass game menu. Use **Resume game**, the close button, Escape, or a tap outside the settings card to dismiss it. Outside taps do not pass through to the game. An open choice sheet or alert keeps its own dismissal behavior.
 
 The menu does **not pause the game**. It blocks touch input to the game and releases mouse capture while open. Controller input can still reach the game.
 
-Change **Performance overlay** between Full, FPS only, and Off, or **Apple Metal HUD**, without a restart. These choices persist. Resolution, aspect, controls, button mappings, and language remain editable in the overlay and apply at the next game start. The running game keeps its current values. Saves remain visible but disabled during play; restart the app before any transfer, backup, or restore.
+Rows marked **Live** apply without a restart: Performance overlay, Apple Metal HUD, and keyboard mappings. These choices persist. Resolution, aspect, touch controls, controller type, mouse preferences, controller/mouse button mappings, and language remain editable but require an app restart. A changed value shows **Restart required** and a prompt. Save game progress, close TOTK from the App Switcher, and reopen it. Reverting to the current session's value clears the pending badge. Saves remain visible but disabled during play; restart the app before any transfer, backup, restore, or save edit.
 
 A connected mouse uses the existing Mac camera controls while the app has focus and the system grants pointer lock. The default bindings use left click to attack, right click to draw the bow, and middle click to target. Left click shoots while right click stays held. Mouse motion uses the existing sensitivity and decay behavior.
 
@@ -44,7 +45,15 @@ The game menu releases mouse buttons and camera input. Dismissal restores the pr
 
 ## Save transfers
 
-The Saves section supports folder import, folder export through Files, local backups, and backup restoration. These actions are available only before Play.
+The Saves section supports folder import, folder export through Files, local backups, backup restoration, and **Edit this save**. These actions are available only before Play.
+
+### Online save editor
+
+Choose **Edit this save**, then a slot. The app opens [Marc Robledo's TOTK editor](https://www.marcrobledo.com/savegame-editors/zelda-totk/) with a copy of that slot's `progress.sav` already loaded. Use the editor's **Save changes** action, then confirm **Apply edited save** to return the result to the app. Close the editor to discard changes.
+
+The editor needs a network connection. Website scripts can access the selected copy; this is not an offline editor. Save bytes are not placed in the URL. The embedded browser uses a temporary website data store and accepts returned saves only from the editor's main frame and origin.
+
+The app accepts the editor's supported v1.4.x file size and header. This check does not certify every possible edit as compatible with the game. The app changes only the selected `progress.sav` in a complete snapshot, refuses an outdated snapshot, and backs up the current save before atomic replacement. Other slot files and account identity remain unchanged. Restore the backup if the game rejects an edit.
 
 Select the console save directory containing complete slots, rather than the entire app profile or one slot:
 

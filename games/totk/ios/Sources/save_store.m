@@ -162,6 +162,23 @@ static BOOL validate(NSURL *root, NSError **error) {
     return YES;
 }
 
+/* Both trees are private, bounded copies made by copyTree. Compare contents and empty folders, not timestamps. */
+static BOOL equalTrees(NSURL *left, NSURL *right) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSArray *a = [fm contentsOfDirectoryAtPath:left.path error:NULL];
+    NSArray *b = [fm contentsOfDirectoryAtPath:right.path error:NULL];
+    if (!a || !b || ![[a sortedArrayUsingSelector:@selector(compare:)] isEqual:[b sortedArrayUsingSelector:@selector(compare:)]]) return NO;
+    for (NSString *name in a) {
+        NSURL *x = [left URLByAppendingPathComponent:name], *y = [right URLByAppendingPathComponent:name];
+        NSString *xt = [fm attributesOfItemAtPath:x.path error:NULL][NSFileType];
+        NSString *yt = [fm attributesOfItemAtPath:y.path error:NULL][NSFileType];
+        if (![xt isEqual:yt]) return NO;
+        if ([xt isEqual:NSFileTypeDirectory]) { if (!equalTrees(x,y)) return NO; }
+        else if (![xt isEqual:NSFileTypeRegular] || ![fm contentsEqualAtPath:x.path andPath:y.path]) return NO;
+    }
+    return YES;
+}
+
 @implementation TOTKSaveStore {
     NSURL *_active, *_backups;
     BOOL _sealed;
@@ -213,6 +230,31 @@ static BOOL validate(NSURL *root, NSError **error) {
         else { int fd = openDirectory(parent); if (fd >= 0) { fsync(fd); close(fd); } }
     }
     [fm removeItemAtURL:stage error:nil];
+    return ok;
+} }
+- (BOOL)applyEditedProgress:(NSData *)data slot:(NSString *)slot expectedDirectory:(NSURL *)snapshot error:(NSError **)error { @synchronized(self) {
+    if (![self available:error]) return NO;
+    if (![slot isKindOfClass:NSString.class] || slot.length != 7 || ![slot hasPrefix:@"slot_0"] ||
+        [slot characterAtIndex:6] < '0' || [slot characterAtIndex:6] > '5')
+        return failure(error,@"Select a supported slot_00 through slot_05.");
+    if (![data isKindOfClass:NSData.class]) return failure(error,@"The edited progress file is missing.");
+    const unsigned char *bytes = data.bytes;
+    if (data.length != 2307856 || bytes[4] != 0x46 || bytes[5] != 0xe9 || bytes[6] != 0x49 || bytes[7] != 0)
+        return failure(error,@"The edited progress file has an unsupported size or header.");
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSURL *workspace = [[_active URLByDeletingLastPathComponent] URLByAppendingPathComponent:
+        [@".edit-" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
+    if (![fm createDirectoryAtURL:workspace withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error]) return NO;
+    NSURL *current = [workspace URLByAppendingPathComponent:@"current" isDirectory:YES];
+    NSURL *incoming = [workspace URLByAppendingPathComponent:@"incoming" isDirectory:YES];
+    BOOL ok = copyTree(_active,current,error) && copyTree(snapshot,incoming,error);
+    if (ok) ok = validate(incoming,error);
+    if (ok && !equalTrees(current,incoming)) ok = failure(error,@"The current save changed. Export it again before applying edits.");
+    NSURL *progress = [[incoming URLByAppendingPathComponent:slot] URLByAppendingPathComponent:@"progress.sav"];
+    if (ok && ![fm fileExistsAtPath:progress.path]) ok = failure(error,@"The selected slot is missing from the save snapshot.");
+    if (ok) ok = [data writeToURL:progress options:NSDataWritingAtomic error:error];
+    if (ok) ok = [self importDirectory:incoming error:error];
+    [fm removeItemAtURL:workspace error:nil];
     return ok;
 } }
 - (BOOL)restore:(NSURL *)backup error:(NSError **)error { @synchronized(self) {

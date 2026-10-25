@@ -125,6 +125,20 @@ void runtime_shortcut_help_toggle(void) {}
         CGSize viewSize = g_active_window.bounds.size;
         if (TOTKLauncherDisplaySize(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.infoDictionary,
                                    viewSize.width, viewSize.height, &width, &height, &fullDisplay)) {
+            NSString *layout = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"GameData/romfs-patches-4x3"];
+            id layoutVersion = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TOTKIOSFourThreeLayoutVersion"];
+            BOOL tallLayout = fullDisplay && width * 3 == height * 4 &&
+                [layoutVersion isKindOfClass:NSNumber.class] &&
+                CFGetTypeID((__bridge CFTypeRef)layoutVersion) != CFBooleanGetTypeID() && [layoutVersion isEqual:@1] &&
+                [NSFileManager.defaultManager fileExistsAtPath:[layout stringByAppendingPathComponent:@"manifest.tsv"]];
+            if (fullDisplay && !tallLayout) {
+                fprintf(stderr,"[totk] Full display requires the signed 4:3 layout profile; using 16:9\n");
+                fullDisplay = NO; width = height * 16 / 9;
+            }
+            if (tallLayout) {
+                setenv("TOTK_ROMFS_PATCHES",layout.fileSystemRepresentation,1);
+                setenv("TOTK_UI_SQUEEZE","0",1);   // Layout roots already correct the 4:3 UI proportions.
+            }
             char size[32], drawableHeight[16];
             snprintf(size,sizeof size,"%ux%u",width,height);
             snprintf(drawableHeight,sizeof drawableHeight,"%u",height);

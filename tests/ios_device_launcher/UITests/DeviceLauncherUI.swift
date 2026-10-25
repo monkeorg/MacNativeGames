@@ -9,7 +9,7 @@ final class DeviceLauncherUI: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
         app = XCUIApplication(bundleIdentifier: "com.smartvelo.totk")
-        if name.contains("test05ExistingGameTouch") || name.contains("test06") {
+        if name.contains("test05ExistingGameTouch") || name.contains("test06") || name.contains("test07ExistingGameSnapshot") {
             XCTAssertNotEqual(app.state, .notRunning, "Keep the existing game process for this input")
             app.activate()
             if name.contains("test06") {
@@ -18,7 +18,7 @@ final class DeviceLauncherUI: XCTestCase {
             return
         }
         if name.contains("test04PlayAndNativeHUD") {
-            app.launchEnvironment = ["DM_NVN_TSV": "milestone-1-timings.tsv", "DM_NVN_TSV_CALLS": "0"]
+            app.launchEnvironment = ["DM_NVN_TSV": "milestone-1-timings.tsv", "DM_NVN_TSV_CALLS": "0", "TOTK_AUTOLOAD": "1"]
         }
         app.launch()
         XCTAssertTrue(app.navigationBars["Tears of the Kingdom"].waitForExistence(timeout: 20))
@@ -78,11 +78,26 @@ final class DeviceLauncherUI: XCTestCase {
         XCTAssertFalse(app.navigationBars["Settings"].exists)
     }
 
-    private func choose(_ title: String, for row: String) {
+    private func timingBadge(for row: String) -> XCUIElement {
+        _ = cell(row)
+        let badge = app.staticTexts["TOTKSettingTiming." + row]
+        XCTAssertTrue(badge.waitForExistence(timeout: 5))
+        return badge
+    }
+
+    private func choose(_ title: String, for row: String, restartRequired: Bool = false) {
         cell(row).tap()
         let choice = app.buttons[title]
         expectHittable(choice)
         choice.tap()
+        let restart = app.alerts["Restart required"]
+        if restartRequired {
+            XCTAssertTrue(restart.waitForExistence(timeout: 5))
+            record("Restart required after changing " + row)
+            restart.buttons["Keep playing"].tap()
+        } else {
+            XCTAssertFalse(restart.exists, "Live, same-value, and reverted settings must not require restart confirmation")
+        }
         XCTAssertEqual(cell(row).value as? String, title)
     }
 
@@ -167,17 +182,34 @@ final class DeviceLauncherUI: XCTestCase {
         cell("Export save folder").tap()
         let filename = app.textFields["DOCPicker.filenameTextField"]
         XCTAssertTrue(filename.waitForExistence(timeout: 30))
+        let local = app.cells["DOC.sidebar.item.On My iPad"]
+        XCTAssertTrue(local.waitForExistence(timeout: 10), "Stop before export if local storage is unavailable")
+        local.tap()
+        let documents = app.collectionViews.staticTexts.matching(
+            NSPredicate(format: "label IN %@", ["TOTK", "Tears of the Kingdom"])
+        ).firstMatch
+        XCTAssertTrue(documents.waitForExistence(timeout: 10), "Choose this app's local Documents folder")
+        documents.tap()
+        let localProvider = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+            "DOC.browsingRoot Source: com.apple.FileProvider.LocalStorage, Title: ")).firstMatch
+        let localFolder = app.buttons.matching(NSPredicate(format: "label IN %@", [
+            "TOTK, Actions Menu", "Tears of the Kingdom, Actions Menu"
+        ])).firstMatch
+        record("Local export picker before destination verification")
+        XCTAssertTrue(localProvider.waitForExistence(timeout: 10), "Stop before Save unless the provider is local storage")
+        XCTAssertTrue(localFolder.waitForExistence(timeout: 10), "Stop before Save unless the local app folder is current")
         filename.tap()
         let old = filename.value as? String ?? "TOTK Save"
         filename.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count) + transferName)
         XCTAssertEqual(filename.value as? String, transferName)
         record("Own save export destination")
+        XCTAssertTrue(localProvider.exists && localFolder.exists, "The verified local destination must remain current before Save")
         app.buttons["DOCPicker.actionButton"].tap()
         XCTAssertTrue(filename.waitForNonExistence(timeout: 30))
         record("Own save exported through Files")
     }
 
-    func test03bImportOwnExportThroughFiles() {
+    private func enterLocalImportFolder(_ folderName: String) {
         cell("Import save folder").tap()
         let local = app.cells["DOC.sidebar.item.On My iPad"]
         XCTAssertTrue(local.waitForExistence(timeout: 15))
@@ -187,12 +219,19 @@ final class DeviceLauncherUI: XCTestCase {
         ).firstMatch
         XCTAssertTrue(documents.waitForExistence(timeout: 10))
         documents.tap()
-        let folder = app.staticTexts[transferName].firstMatch
+        let localProvider = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+            "DOC.browsingRoot Source: com.apple.FileProvider.LocalStorage, Title: ")).firstMatch
+        XCTAssertTrue(localProvider.waitForExistence(timeout: 10), "Import source must be local storage")
+        let folder = app.staticTexts[folderName].firstMatch
         XCTAssertTrue(folder.waitForExistence(timeout: 30), app.debugDescription)
         folder.doubleTap()
-        let location = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", transferName + ",")).firstMatch
+        let location = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", folderName + ",")).firstMatch
         XCTAssertTrue(location.waitForExistence(timeout: 10), "Enter the exported folder before selecting it")
         XCTAssertTrue(app.staticTexts["slot_00"].firstMatch.waitForExistence(timeout: 10))
+    }
+
+    func test03bImportOwnExportThroughFiles() {
+        enterLocalImportFolder(transferName)
         let select = app.buttons["DOCPicker.actionButton"]
         XCTAssertTrue(select.waitForExistence(timeout: 10))
         record("Own exported folder selected for import")
@@ -214,6 +253,50 @@ final class DeviceLauncherUI: XCTestCase {
         app.alerts.buttons["Restore"].tap()
         XCTAssertTrue(app.alerts.staticTexts["Save ready. Press Play to load it."].waitForExistence(timeout: 30))
         record("Own backup restored")
+        app.alerts.buttons["OK"].tap()
+    }
+
+    func test03dCancelImportPicker() {
+        cell("Import save folder").tap()
+        let select = app.buttons["DOCPicker.actionButton"]
+        XCTAssertTrue(select.waitForExistence(timeout: 10))
+        record("Import picker before cancellation")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(select.waitForNonExistence(timeout: 10))
+        XCTAssertFalse(app.alerts["Import save?"].exists)
+        XCTAssertTrue(cell("Play").isEnabled)
+        record("Import cancelled without replacement")
+    }
+
+    func test03eRejectIncompleteLocalSave() {
+        enterLocalImportFolder("TOTKInvalidSave710b23d")
+        record("Incomplete local save selected")
+        app.buttons["DOCPicker.actionButton"].tap()
+        let confirmation = app.alerts["Import save?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
+        confirmation.buttons["Import"].tap()
+        let error = "Each slot needs progress.sav, caption.sav, footprint.sav, and direct_file_save_related.sav."
+        XCTAssertTrue(app.alerts.staticTexts[error].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.alerts.staticTexts["Save ready. Press Play to load it."].exists)
+        record("Incomplete save rejected with required-file error")
+        app.alerts.buttons["OK"].tap()
+        XCTAssertTrue(cell("Play").isEnabled)
+    }
+
+    func test03fImportPostGSIFixture() throws {
+        guard let folder = ProcessInfo.processInfo.environment["TOTK_TEST_POST_GSI_FOLDER"], !folder.isEmpty else {
+            throw XCTSkip("An explicitly staged post-GSI fixture folder is required")
+        }
+        XCTAssertFalse(folder.contains("/"))
+        XCTAssertFalse(folder.contains("\\"))
+        enterLocalImportFolder(folder)
+        record("Verified local post-GSI fixture before import")
+        app.buttons["DOCPicker.actionButton"].tap()
+        let confirmation = app.alerts["Import save?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
+        confirmation.buttons["Import"].tap()
+        XCTAssertTrue(app.alerts.staticTexts["Save ready. Press Play to load it."].waitForExistence(timeout: 30))
+        record("Post-GSI fixture import completed before Play")
         app.alerts.buttons["OK"].tap()
     }
 
@@ -246,7 +329,10 @@ final class DeviceLauncherUI: XCTestCase {
         }
         XCTAssertTrue((0...1).contains(x) && (0...1).contains(y))
         record("Existing game before reviewed touch")
-        app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)).tap()
+        XCTAssertFalse(app.navigationBars["Tears of the Kingdom"].exists, "A reviewed game control must not become a prelaunch settings tap")
+        XCTAssertTrue(app.otherElements["TOTKTouchControls"].exists, "Require the game touch-control view before a coordinate press")
+        XCTAssertGreaterThan(app.windows.firstMatch.frame.width, app.windows.firstMatch.frame.height)
+        app.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)).press(forDuration: 0.15)
         let response = expectation(description: "Allow the existing game to respond")
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { response.fulfill() }
         wait(for: [response], timeout: 15)
@@ -278,11 +364,11 @@ final class DeviceLauncherUI: XCTestCase {
         record("Shared settings button mappings shield game input")
         mappings.buttons["Settings"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        for title in ["Import save folder", "Export save folder", "Back up save", "Restore backup"] {
+        for title in ["Import save folder", "Export save folder", "Back up save", "Restore backup", "Edit this save"] {
             XCTAssertFalse(cell(title).isEnabled, "Save transfers must stay sealed during play")
         }
         XCTAssertTrue(cell("Game language").isEnabled)
-        XCTAssertTrue(app.staticTexts["Language changes apply next launch."].exists)
+        XCTAssertTrue(app.staticTexts["Language changes require an app restart."].exists)
         record("Full game settings with sealed saves and next-launch language")
         top()
         cell("Resume game").tap()
@@ -296,6 +382,8 @@ final class DeviceLauncherUI: XCTestCase {
         openGameMenu()
         let close = app.buttons["Close game menu"]
         defer { if close.isHittable { close.tap() } }
+        XCTAssertEqual(timingBadge(for: "Performance overlay").label, "Live")
+        XCTAssertEqual(timingBadge(for: "Apple Metal HUD").label, "Live")
         for title in ["Full", "FPS only", "Off"] {
             choose(title, for: "Performance overlay")
             closeGameMenu()
@@ -321,18 +409,69 @@ final class DeviceLauncherUI: XCTestCase {
 
     func test06cExistingGameNextLaunchControlPreference() {
         openGameMenu()
-        let original = cell("Invert mouse Y").value as? String ?? "Off"
+        let row = "Invert mouse Y"
+        let original = cell(row).value as? String ?? "Off"
+        XCTAssertEqual(timingBadge(for: row).label, "Restart", "Start with the current session preference unchanged")
         defer {
+            if app.alerts["Restart required"].exists { app.alerts["Restart required"].buttons["Keep playing"].tap() }
             if !app.buttons["Close game menu"].isHittable { openGameMenu() }
-            choose(original, for: "Invert mouse Y")
+            choose(original, for: row)
             closeGameMenu()
         }
+        choose(original, for: row)
+        XCTAssertEqual(timingBadge(for: row).label, "Restart")
+        cell(row).tap()
+        app.buttons["Cancel"].tap()
+        XCTAssertEqual(cell(row).value as? String, original)
+        XCTAssertFalse(app.alerts["Restart required"].exists)
         let changed = original == "On" ? "Off" : "On"
-        choose(changed, for: "Invert mouse Y")
-        XCTAssertTrue(app.staticTexts["Control changes apply next launch. Current input is unchanged. Developer overrides take precedence."].exists)
-        record("Control preference explicitly applies next launch")
+        choose(changed, for: row, restartRequired: true)
+        XCTAssertEqual(timingBadge(for: row).label, "Restart required")
+        choose(changed, for: row)
         closeGameMenu()
         openGameMenu()
-        XCTAssertEqual(cell("Invert mouse Y").value as? String, changed)
+        XCTAssertEqual(cell(row).value as? String, changed)
+        XCTAssertEqual(timingBadge(for: row).label, "Restart required")
+        choose(original, for: row)
+        XCTAssertEqual(timingBadge(for: row).label, "Restart")
+        record("Reverted preference clears pending restart without a prompt")
     }
+
+    func test06dExistingGameOutsideDismissalProtectsModal() {
+        let touch = app.otherElements["TOTKTouchControls"]
+        expectHittable(touch)
+        openGameMenu()
+        let close = app.buttons["Close game menu"]
+        defer {
+            if app.alerts["Mouse sensitivity"].exists { app.alerts["Mouse sensitivity"].buttons["Cancel"].tap() }
+            if close.isHittable { close.tap() }
+        }
+        let window = app.windows.firstMatch
+        let card = app.otherElements["TOTKGameMenuCard"]
+        XCTAssertGreaterThan(card.frame.minX - window.frame.minX, 4)
+        let outside = window.coordinate(withNormalizedOffset: CGVector(
+            dx: (card.frame.minX - window.frame.minX) / window.frame.width / 2, dy: 0.5))
+        outside.tap()
+        expectHittable(app.buttons["Game menu"])
+        expectHittable(touch)
+        openGameMenu()
+        cell("Mouse sensitivity").tap()
+        let editor = app.alerts["Mouse sensitivity"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        outside.tap()
+        XCTAssertTrue(editor.exists, "Outside dismissal must not bypass an active modal")
+        XCTAssertTrue(app.navigationBars["Settings"].exists)
+        XCTAssertFalse(touch.isHittable)
+        record("Settings modal retains input shield after outside tap")
+        editor.buttons["Cancel"].tap()
+        outside.tap()
+        expectHittable(app.buttons["Game menu"])
+        expectHittable(touch)
+        record("Outside dismissal restores game hit testing")
+    }
+
+    func test07ExistingGameSnapshot() {
+        record("Current existing game without input or relaunch")
+    }
+
 }

@@ -119,6 +119,7 @@ void runtime_vpool_probe(void);
 void runtime_memory_probe(void);
 
 void runtime_input_key(unsigned code,int down);
+void runtime_input_keyboard_clear(void);   /* Release keyboard state and queued presses without clearing controller or touch input. */
 void runtime_input_clear(void);
 int runtime_handheld_mode(void);   /* TOTK_OPERATION_MODE=handheld (runtime/services.c) */
 void *runtime_input_override(const char *name);

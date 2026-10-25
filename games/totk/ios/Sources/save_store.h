@@ -9,4 +9,5 @@
 - (NSArray<NSURL *> *)backups:(NSError **)error;
 - (BOOL)importDirectory:(NSURL *)source error:(NSError **)error;
 - (BOOL)restore:(NSURL *)backup error:(NSError **)error;
+- (BOOL)applyEditedProgress:(NSData *)data slot:(NSString *)slot expectedDirectory:(NSURL *)snapshot error:(NSError **)error;
 @end
