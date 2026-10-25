@@ -121,3 +121,10 @@ For the reviewed public fixture, stage `PostGSI-ParagliderGear` in the app's loc
 The test requires local storage, the current folder title, and `slot_00` before normal import confirmation.
 It uses the production import backup. It does not create a full profile backup or synthesize save files.
 Verify the staged fixture against its private provenance manifest before this test. Do not run it as part of an unfiltered suite.
+
+`test03gOpenEditorAndCancelBeforePlay` opens original slot_00 in the web editor and waits up to 45 seconds for readable Rupees content.
+It closes without Apply and requires Play to remain enabled. Visible web content alone does not prove correct save prefill.
+Compare the original active save hashes independently after this test. Run it before post-GSI import when the original 1.4.3 save is required.
+`test06eKeyboardMappingsApplyLive` checks default WASD/arrow mappings, Live badges, conflicting A disabled, and reserved keys absent.
+It changes Move forward to the unbound R key and restores W without a restart alert. It sends no game key input.
+The Play runner accepts `TOTK_TEST_TIMINGS_FILE` for a candidate-specific diagnostic filename; the default remains milestone-1-timings.tsv.

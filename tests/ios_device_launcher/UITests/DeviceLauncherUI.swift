@@ -18,7 +18,9 @@ final class DeviceLauncherUI: XCTestCase {
             return
         }
         if name.contains("test04PlayAndNativeHUD") {
-            app.launchEnvironment = ["DM_NVN_TSV": "milestone-1-timings.tsv", "DM_NVN_TSV_CALLS": "0", "TOTK_AUTOLOAD": "1"]
+            let timings = ProcessInfo.processInfo.environment["TOTK_TEST_TIMINGS_FILE"] ?? "milestone-1-timings.tsv"
+            XCTAssertFalse(timings.isEmpty || timings.contains("/") || timings.contains("\\"))
+            app.launchEnvironment = ["DM_NVN_TSV": timings, "DM_NVN_TSV_CALLS": "0", "TOTK_AUTOLOAD": "1"]
         }
         app.launch()
         XCTAssertTrue(app.navigationBars["Tears of the Kingdom"].waitForExistence(timeout: 20))
@@ -300,6 +302,25 @@ final class DeviceLauncherUI: XCTestCase {
         app.alerts.buttons["OK"].tap()
     }
 
+    func test03gOpenEditorAndCancelBeforePlay() {
+        cell("Edit this save").tap()
+        let slot = app.buttons["slot_00"]
+        XCTAssertTrue(slot.waitForExistence(timeout: 10))
+        slot.tap()
+        let close = app.buttons["Close save editor"]
+        defer { if close.exists { close.tap() } }
+        XCTAssertTrue(close.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Save editor"].exists)
+        let rupees = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "Rupees")).firstMatch
+        XCTAssertTrue(rupees.waitForExistence(timeout: 45), "Require readable editor web content, not only its native title")
+        record("Online save editor content loaded before cancellation")
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 10))
+        XCTAssertFalse(app.alerts["Apply edited save?"].exists)
+        XCTAssertTrue(cell("Play").isEnabled)
+        record("Save editor cancelled without apply")
+    }
+
     func test04PlayAndNativeHUD() {
         cell("Performance overlay").tap()
         app.buttons["Off"].tap()
@@ -468,6 +489,52 @@ final class DeviceLauncherUI: XCTestCase {
         expectHittable(app.buttons["Game menu"])
         expectHittable(touch)
         record("Outside dismissal restores game hit testing")
+    }
+
+    func test06eKeyboardMappingsApplyLive() {
+        openGameMenu()
+        XCTAssertEqual(timingBadge(for: "Keyboard mappings").label, "Live")
+        cell("Keyboard mappings").tap()
+        let mappings = app.navigationBars["Keyboard mappings"]
+        XCTAssertTrue(mappings.waitForExistence(timeout: 5))
+        var remapped = false
+        defer {
+            if app.buttons["Cancel"].exists { app.buttons["Cancel"].tap() }
+            if remapped && mappings.exists {
+                cell("Move forward").tap()
+                app.buttons["W"].tap()
+            }
+            if mappings.exists { mappings.buttons["Settings"].tap() }
+            if app.buttons["Close game menu"].isHittable { closeGameMenu() }
+        }
+        for (action, key) in [("Move forward", "W"), ("Move left", "A"), ("Move backward", "S"), ("Move right", "D"),
+                              ("Camera up", "Up arrow"), ("Camera left", "Left arrow"), ("Camera down", "Down arrow"), ("Camera right", "Right arrow")] {
+            XCTAssertEqual(cell(action).value as? String, key)
+            XCTAssertEqual(timingBadge(for: action).label, "Live")
+        }
+        cell("Move forward").tap()
+        XCTAssertTrue(app.buttons["A"].exists)
+        XCTAssertFalse(app.buttons["A"].isEnabled, "A already belongs to Move left")
+        for reserved in ["Escape", "Command", "Left Command", "Right Command"] {
+            XCTAssertFalse(app.buttons[reserved].exists)
+        }
+        XCTAssertTrue(app.buttons["R"].isEnabled, "R must be unbound before this reversible test")
+        app.buttons["R"].tap()
+        remapped = true
+        XCTAssertFalse(app.alerts["Restart required"].exists)
+        XCTAssertEqual(cell("Move forward").value as? String, "R")
+        XCTAssertEqual(timingBadge(for: "Move forward").label, "Live")
+        XCTAssertFalse(app.otherElements["TOTKTouchControls"].isHittable)
+        record("Live keyboard mapping changed without game key input")
+        cell("Move forward").tap()
+        app.buttons["W"].tap()
+        remapped = false
+        XCTAssertEqual(cell("Move forward").value as? String, "W")
+        XCTAssertFalse(app.alerts["Restart required"].exists)
+        mappings.buttons["Settings"].tap()
+        XCTAssertEqual(timingBadge(for: "Keyboard mappings").label, "Live")
+        closeGameMenu()
+        record("Keyboard defaults restored after live mapping test")
     }
 
     func test07ExistingGameSnapshot() {
