@@ -1,0 +1,72 @@
+--- a/spirv_common.hpp
++++ b/spirv_common.hpp
+@@ -1546,6 +1546,23 @@
+ 		m.c[0].r[0].u64 = v0;
+ 		m.c[0].vecsize = 1;
+ 		m.columns = 1;
++	}
++
++	// Caller-side preflight, before Variant/ObjectPool acquires a constructor
++	// slot. This checks fixed storage availability, not full type equivalence.
++	static void validate_fixed_composite_storage(const SPIRType &result_type,
++	                                             const SPIRConstant *const *elements, uint32_t count)
++	{
++		if (!elements || count == 0 || count > 4 || result_type.columns == 0 ||
++		    result_type.columns > 4 || result_type.vecsize == 0 || result_type.vecsize > 4)
++			SPIRV_CROSS_THROW("Composite constant exceeds fixed storage or has no elements.");
++		// count is already bounded to 1..4; no input-loop inventory credit.
++		for (uint32_t i = 0; i < count; i++)
++		{
++			if (!elements[i] || elements[i]->m.columns == 0 || elements[i]->m.columns > 4 ||
++			    elements[i]->m.c[0].vecsize == 0 || elements[i]->m.c[0].vecsize > 4)
++				SPIRV_CROSS_THROW("Composite constituent exceeds fixed storage or is unavailable.");
++		}
+ 	}
+ 
+ 	// Construct vectors and matrices.
+--- a/spirv_parser.cpp
++++ b/spirv_parser.cpp
+@@ -1221,6 +1221,8 @@
+ 	case OpSpecConstantComposite:
+ 	case OpConstantComposite:
+ 	{
++		if (length < 2)
++			SPIRV_CROSS_THROW("Composite constant lacks type and result operands.");
+ 		uint32_t id = ops[1];
+ 		uint32_t type = ops[0];
+ 
+@@ -1236,6 +1238,8 @@
+ 		}
+ 		else
+ 		{
++			if (elements == 0)
++				SPIRV_CROSS_THROW("Fixed composite constant has no constituents.");
+ 			SPIRConstant remapped_constant_ops[4];
+ 			const SPIRConstant *c[4];
+ 			for (uint32_t i = 0; i < elements; i++)
+@@ -1267,6 +1271,7 @@
+ 				else
+ 					c[i] = &get<SPIRConstant>(ops[2 + i]);
+ 			}
++			SPIRConstant::validate_fixed_composite_storage(ctype, c, elements);
+ 			set<SPIRConstant>(id, type, c, elements, op == OpSpecConstantComposite);
+ 		}
+ 		break;
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -951,6 +951,7 @@
+ 						                           &get<SPIRConstant>(execution.workgroup_size.id_y),
+ 						                           &get<SPIRConstant>(execution.workgroup_size.id_z) };
+ 					bool specialized = init[0]->specialization || init[1]->specialization || init[2]->specialization;
++					SPIRConstant::validate_fixed_composite_storage(get<SPIRType>(type_id), init, 3);
+ 					set<SPIRConstant>(var_id, type_id, init, 3, specialized);
+ 					execution.workgroup_size.constant = var_id;
+ 				}
+@@ -962,6 +963,7 @@
+ 						&set<SPIRConstant>(offset + 1, get_uint_type_id(), execution.workgroup_size.y, false),
+ 						&set<SPIRConstant>(offset + 2, get_uint_type_id(), execution.workgroup_size.z, false)
+ 					};
++					SPIRConstant::validate_fixed_composite_storage(get<SPIRType>(type_id), init, 3);
+ 					set<SPIRConstant>(var_id, type_id, init, 3, false);
+ 					execution.workgroup_size.constant = var_id;
+ 				}

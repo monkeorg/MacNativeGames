@@ -9,6 +9,11 @@
       "function": "precharge_member_metadata_growth",
       "patch": "0035-member-metadata-growth-bounds.patch",
       "reason": "required <=262144, actual N0 capacity starts at least1 on growth and doubles under size/payload checks: at most18 iterations. No checkpoint or original-loop inventory credit; allocator/noexcept operations unchanged."
+    },
+    {
+      "function": "SPIRConstant::validate_fixed_composite_storage",
+      "patch": "0042-fixed-composite-caller-storage-preflight.patch",
+      "reason": "Shared caller-only fixed-storage preflight rejects count outside1..4 before pointer-array access; its sole loop visits at most4 constituents. No original-loop checkpoint credit; constructor/ObjectPool/noexcept unchanged."
     }
   ],
   "boundedMacroWrappersExcluded": [
@@ -763,7 +768,8 @@
     "Three ParsedIR member metadata writers: uint64 index-plus-one, size_t/reserve/count/256MiB checks before meta[]; actual N0 capacity replacement payload, old-row moves/new-row work and delta nodes precharged before resize; local combined-decoration type member index guard after metadata bounds, annotations may precede types",
     "Six metadata writers share ordinary ParsedIR::prepare_member_metadata exactly once: existing0035 planner then map insertion/resize; three Compiler qualified/extended set/unset paths now use same bounds while preserving row-creating unset and variable-ID/pre-type metadata",
     "Three conditional GLSL flattening helpers: member-path indices before reads/naming, recursive member-count narrowing, I/O Struct refusal and leaf nonempty path/primary-alias final member bounds; empty root store path preserved, not global ID or flattening validation",
-    "ensure_struct_members_valid_vecsizes only: parent-member index before write, dimension-count narrowing and once-evaluated uint32 products, zero advances preserved and positive interface cursor result strictly below unknown sentinel; no hardware/type-format/global layout validity claim"
+    "ensure_struct_members_valid_vecsizes only: parent-member index before write, dimension-count narrowing and once-evaluated uint32 products, zero advances preserved and positive interface cursor result strictly below unknown sentinel; no hardware/type-format/global layout validity claim",
+    "Fixed composite caller storage availability: two Parser composite opcodes check minimum2operands before access/subtraction, fixedbranch nonzero count, shared result/source dimensions andnonnull1..4 constituents before3pointer-constructor set sites; Struct/array/longvectorID-list andReplicatedEXT unchanged"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
