@@ -55,7 +55,11 @@ class CanopyBuildTests(unittest.TestCase):
         command_text = json.dumps(plan['commands'])
         self.assertIn('arm64-apple-ios16.0', command_text)
         self.assertIn('UniformTypeIdentifiers', command_text)
-        self.assertNotIn('games/', command_text)
+        self.assertEqual([name for name in builder.SOURCES if name.startswith('games/')],
+                         ['games/totk/ios/Sources/save_validation.m'])
+        self.assertNotIn('games/totk/runtime/canopy_host.m', command_text)
+        self.assertIn('Metal', command_text)
+        self.assertIn('QuartzCore', command_text)
         self.assertNotIn('gen_embed', command_text)
         self.assertNotIn('codesign', ' '.join(plan['commands'][0]))
         self.assertFalse(self.output.exists())

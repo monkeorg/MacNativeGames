@@ -44,6 +44,31 @@ jobs:
           python-version: '3.14'
       - name: Install synthetic native-preparation fixture dependencies
         run: python -m pip install -r games/totk/requirements.txt
+      - name: Select an installed stable Xcode for Metal 4 checks when available
+        if: runner.os == 'macOS'
+        # Reuse the project selector. This changes only this job's environment;
+        # no SDK is installed and the public host can still build with SDK18.5.
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('canopy_apple_tools', 'games/totk/ios/tools/build_sources.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          previous = os.environ.pop('DEVELOPER_DIR', None)
+          try:
+              selected = module.apple_toolchain(None)
+          except (RuntimeError, OSError) as error:
+              print('No eligible installed Xcode26: retain the current toolchain; Metal4-only checks remain unavailable.')
+          else:
+              with Path(os.environ['GITHUB_ENV']).open('a') as environment:
+                  environment.write('DEVELOPER_DIR=' + selected['developer_dir'] + '\n')
+              print('Selected installed stable iPhoneOS SDK ' + selected['sdk_version'])
+          finally:
+              if previous is not None:
+                  os.environ['DEVELOPER_DIR'] = previous
+          PY
       - name: Configure portable Canopy CLI
         run: cmake -S launcher -B "$RUNNER_TEMP/canopy-cli" -DCMAKE_BUILD_TYPE=Release
       - name: Compile portable Canopy CLI
