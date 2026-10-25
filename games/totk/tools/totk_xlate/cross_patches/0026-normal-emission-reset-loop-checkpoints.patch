@@ -1,0 +1,68 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -18507,7 +18507,10 @@
+ 	}
+ 
+ 	for (auto &line : current_function->fixup_hooks_in)
++	{
++		canopy_cross_budget::step();
+ 		line();
++	}
+ 
+ 	emit_block_chain(entry_block);
+ 
+@@ -19175,7 +19178,10 @@
+ void CompilerGLSL::flush_undeclared_variables(SPIRBlock &block)
+ {
+ 	for (auto &v : block.dominated_variables)
++	{
++		canopy_cross_budget::step();
+ 		flush_variable_declaration(v);
++	}
+ }
+ 
+ void CompilerGLSL::emit_hoisted_temporaries(SmallVector<pair<TypeID, ID>> &temporaries)
+@@ -19410,7 +19416,10 @@
+ 	{
+ 		force_recompile_guarantee_forward_progress();
+ 		for (auto var : block.loop_variables)
++		{
++			canopy_cross_budget::step();
+ 			get<SPIRVariable>(var).loop_variable = false;
++		}
+ 		block.loop_variables.clear();
+ 	}
+ 
+@@ -19810,7 +19819,10 @@
+ 	case SPIRBlock::Return:
+ 	{
+ 		for (auto &line : current_function->fixup_hooks_out)
++		{
++			canopy_cross_budget::step();
+ 			line();
++		}
+ 
+ 		if (processing_entry_point)
+ 			emit_fixup();
+@@ -20072,7 +20084,10 @@
+ 	// Just like for deferred declaration, we need to forget about loop variable enable
+ 	// if our block chain is reinstantiated later.
+ 	for (auto &var_id : block.loop_variables)
++	{
++		canopy_cross_budget::step();
+ 		get<SPIRVariable>(var_id).loop_variable_enable = false;
++	}
+ }
+ 
+ void CompilerGLSL::begin_scope()
+@@ -20481,7 +20496,10 @@
+ void CompilerGLSL::reset_name_caches()
+ {
+ 	for (auto &preserved : preserved_aliases)
++	{
++		canopy_cross_budget::step();
+ 		set_name(preserved.first, preserved.second);
++	}
+ 
+ 	preserved_aliases.clear();
+ 	resource_names.clear();

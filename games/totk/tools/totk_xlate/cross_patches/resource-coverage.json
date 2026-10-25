@@ -589,6 +589,36 @@
       "file": "spirv_msl.cpp",
       "originalInventoryAnchor": "spirv_msl.cpp:15553",
       "originalSourceLine": 15553
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:18294",
+      "originalSourceLine": 18295
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:19565",
+      "originalSourceLine": 19565
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:19819",
+      "originalSourceLine": 19822
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:19181",
+      "originalSourceLine": 19181
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:18953",
+      "originalSourceLine": 18953
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:20229",
+      "originalSourceLine": 20229
     }
   ],
   "explicitArithmetic": [
@@ -625,8 +655,8 @@
     "ParsedIR null-constant requested reference slots for temporary plus subconstants (logical charges before noexcept constructors, not actual capacity/heap guarantees)"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 473,
-  "instrumentedOriginallyUnbracedLoops": 116,
+  "instrumentedLoopCheckpoints": 479,
+  "instrumentedOriginallyUnbracedLoops": 122,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -683,7 +713,7 @@
       "reason": "Exactly 16 iterations: analyze_argument_buffers resets the source-defined uint32_t argument_buffer_ids[kMaxArgumentBuffers] array, with kMaxArgumentBuffers=16. Stable inventory anchor20378 points to the function comments; actual original range-for line20385. Source unchanged; no checkpoint added."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 33,
+  "unbracedLoopsInputDependentOrUnprovenCount": 27,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:2746",
     "spirv_cross.cpp:3505",
@@ -710,12 +740,6 @@
     "spirv_glsl.cpp:17150",
     "spirv_glsl.cpp:17264",
     "spirv_glsl.cpp:17268",
-    "spirv_glsl.cpp:18294",
-    "spirv_glsl.cpp:18953",
-    "spirv_glsl.cpp:19181",
-    "spirv_glsl.cpp:19565",
-    "spirv_glsl.cpp:19819",
-    "spirv_glsl.cpp:20229",
     "spirv_glsl.cpp:20694",
     "spirv_glsl.cpp:20775",
     "spirv_glsl.cpp:20782",
@@ -732,7 +756,7 @@
     "spirv_msl.cpp:19930",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 46,
+  "unbracedLoopsNotInstrumentedCount": 40,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",
