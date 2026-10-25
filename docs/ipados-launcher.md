@@ -1,6 +1,6 @@
 # iPad launcher and saves
 
-The compact Liquid Glass launcher appears before the game starts. Press **Play** after you choose settings or manage saves. Close and reopen the app to return to the launcher.
+The full Liquid Glass settings menu appears before the game starts. Press **Play** after you choose settings or manage saves. During play, the floating gear opens the same Graphics, Controls, Saves, and Language sections as an overlay.
 
 ## Preferences
 
@@ -18,7 +18,7 @@ Tap a settings row to open its choices. Tap a choice to apply it.
 
 Preferences persist between launches. Resolution, aspect ratio, controls, and language apply at Play. Invalid stored values return to defaults. A developer-supplied `TOTK_LANG` environment value still takes precedence.
 
-The new controller/mouse settings have been source-reviewed but are unbuilt and untested. See [Controls implementation and limits](ipados-controls.md) for environment precedence, optional auxiliary buttons and the later local acceptance steps. They do not apply live during gameplay.
+The controller/mouse settings compiled with the Apple SDK. Physical behavior remains unverified. See [Controls implementation and limits](ipados-controls.md) for environment precedence, optional auxiliary buttons and the later local acceptance steps. They do not apply live during gameplay.
 
 Resolution and aspect controls require the TOTK 1.4.3 build option `--ios-display-settings`. It adds `TOTKIOSDisplaySettingsVersion = 1`, backed by the signed `TOTK_IOS_DISPLAY_SETTINGS` profile. Other builds disable these choices and retain 1280×720 at 16:9. A saved preference cannot add this capability.
 
@@ -30,15 +30,15 @@ On the tested iPad, the native HUD appeared with `MTL_HUD_ENABLED=1` supplied at
 
 ## During gameplay
 
-Tap the floating **gear** or press **Escape** on a connected keyboard to open the Liquid Glass game menu. Use **Close menu**, the close button, or Escape to dismiss it.
+Tap the floating **gear** or press **Escape** on a connected keyboard to open the Liquid Glass game menu. Use **Resume game**, the close button, or Escape to dismiss it.
 
 The menu does **not pause the game**. It blocks touch input to the game and releases mouse capture while open. Controller input can still reach the game.
 
-Change **Game overlay** between Full, FPS, and Off, or toggle **Metal performance HUD**, without a restart. These choices also persist. Resolution, aspect ratio, and language changes require a return to the launcher after an app restart.
+Change **Performance overlay** between Full, FPS only, and Off, or **Apple Metal HUD**, without a restart. These choices persist. Resolution, aspect, controls, button mappings, and language remain editable in the overlay and apply at the next game start. The running game keeps its current values. Saves remain visible but disabled during play; restart the app before any transfer, backup, or restore.
 
 A connected mouse uses the existing Mac camera controls while the app has focus and the system grants pointer lock. The default bindings use left click to attack, right click to draw the bow, and middle click to target. Left click shoots while right click stays held. Mouse motion uses the existing sensitivity and decay behavior.
 
-Menu opening, focus loss and touch-view removal clear tracked touch buttons and sticks. Late movement from canceled fingers is ignored; mouse clicks do not also operate the virtual touch pad. Mouse capture also releases for scene/key-window changes and keyboard entry. These paths still require the next Apple build and physical regression run.
+Menu opening, focus loss and touch-view removal clear tracked touch buttons and sticks. Late movement from canceled fingers is ignored; mouse clicks do not also operate the virtual touch pad. Mouse capture also releases for scene/key-window changes and keyboard entry. These paths compiled with the Apple SDK and still require a physical regression run.
 
 The game menu releases mouse buttons and camera input. Dismissal restores the prior capture preference; the system decides whether to grant pointer lock again. Background, disconnect, and lock loss also release mouse input. Physical mouse behavior remains unverified.
 

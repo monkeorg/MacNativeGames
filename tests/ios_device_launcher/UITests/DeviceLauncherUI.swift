@@ -39,12 +39,12 @@ final class DeviceLauncherUI: XCTestCase {
         let element = app.cells[title]
         if !element.isHittable {
             for _ in 0..<6 {
-                if app.cells["Play"].isHittable { break }
+                if app.cells["Play"].isHittable || app.cells["Resume game"].isHittable { break }
                 app.tables.firstMatch.swipeDown()
             }
         }
         for _ in 0..<8 {
-            if element.exists && element.isHittable { return element }
+            if element.exists && (element.isHittable || (!element.isEnabled && element.frame.intersects(app.tables.firstMatch.frame))) { return element }
             app.tables.firstMatch.swipeUp()
         }
         XCTFail("Missing launcher row: \(title)")
@@ -53,7 +53,7 @@ final class DeviceLauncherUI: XCTestCase {
 
     private func top() {
         for _ in 0..<8 {
-            if app.cells["Play"].isHittable { return }
+            if app.cells["Play"].isHittable || app.cells["Resume game"].isHittable { return }
             app.tables.firstMatch.swipeDown()
         }
     }
@@ -75,31 +75,31 @@ final class DeviceLauncherUI: XCTestCase {
     private func closeGameMenu() {
         app.buttons["Close game menu"].tap()
         expectHittable(app.buttons["Game menu"])
-        XCTAssertFalse(app.segmentedControls["Game overlay"].exists)
+        XCTAssertFalse(app.navigationBars["Settings"].exists)
     }
 
-    private func setMetalHUD(_ enabled: Bool) {
-        let control = app.switches["Metal performance HUD"]
-        let value = enabled ? "1" : "0"
-        XCTAssertTrue(["0", "1"].contains(control.value as? String ?? ""))
-        if control.value as? String != value { control.tap() }
-        XCTAssertEqual(control.value as? String, value)
+    private func choose(_ title: String, for row: String) {
+        cell(row).tap()
+        let choice = app.buttons[title]
+        expectHittable(choice)
+        choice.tap()
+        XCTAssertEqual(cell(row).value as? String, title)
     }
 
     func test00CompactPrelaunchGlass() {
         let card = app.otherElements["TOTKPrelaunchCard"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
-        XCTAssertLessThanOrEqual(card.frame.width, 501)
+        XCTAssertLessThanOrEqual(card.frame.width, 961)
         XCTAssertLessThanOrEqual(card.frame.height, 761)
         XCTAssertEqual(card.frame.midX, app.windows.firstMatch.frame.midX, accuracy: 1)
-        XCTAssertLessThanOrEqual(app.tables.firstMatch.frame.width, 501)
+        XCTAssertLessThanOrEqual(app.tables.firstMatch.frame.width, 961)
         XCTAssertGreaterThan(app.windows.firstMatch.frame.width, app.windows.firstMatch.frame.height)
         record("Compact prelaunch glass card")
     }
 
     func test01PreferencesLayoutAndLifecycle() {
         let table = app.tables.firstMatch
-        XCTAssertLessThanOrEqual(table.frame.width, 501)
+        XCTAssertLessThanOrEqual(table.frame.width, 961)
         XCTAssertGreaterThan(app.windows.firstMatch.frame.width, app.windows.firstMatch.frame.height)
         record("Prelaunch centered menu")
         let oldLanguage = cell("Game language").value as? String
@@ -261,42 +261,78 @@ final class DeviceLauncherUI: XCTestCase {
         defer { if close.isHittable { close.tap() } }
         let card = app.otherElements["TOTKGameMenuCard"]
         XCTAssertTrue(card.waitForExistence(timeout: 5))
-        XCTAssertLessThanOrEqual(card.frame.width, 341)
+        XCTAssertLessThanOrEqual(card.frame.width, 1009)
         XCTAssertLessThan(card.frame.height, app.windows.firstMatch.frame.height)
-        XCTAssertTrue(app.segmentedControls["Game overlay"].exists)
-        XCTAssertTrue(app.switches["Metal performance HUD"].exists)
+        XCTAssertLessThanOrEqual(app.tables.firstMatch.frame.width, 961)
         XCTAssertFalse(touch.isHittable)
-        record("Compact game glass card shields game input")
-        closeGameMenu()
+        XCTAssertFalse(app.cells["Play"].exists)
+        for title in ["Render resolution", "Aspect ratio", "Performance overlay", "Apple Metal HUD",
+                      "Touch controls", "Controller type", "Mouse sensitivity", "Invert mouse Y", "Button mappings"] {
+            XCTAssertTrue(cell(title).exists)
+        }
+        cell("Button mappings").tap()
+        let mappings = app.navigationBars["Button mappings"]
+        XCTAssertTrue(mappings.waitForExistence(timeout: 5))
+        XCTAssertFalse(touch.isHittable)
+        XCTAssertTrue(cell("South face button").isEnabled)
+        record("Shared settings button mappings shield game input")
+        mappings.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        for title in ["Import save folder", "Export save folder", "Back up save", "Restore backup"] {
+            XCTAssertFalse(cell(title).isEnabled, "Save transfers must stay sealed during play")
+        }
+        XCTAssertTrue(cell("Game language").isEnabled)
+        XCTAssertTrue(app.staticTexts["Language changes apply next launch."].exists)
+        record("Full game settings with sealed saves and next-launch language")
+        top()
+        cell("Resume game").tap()
+        expectHittable(app.buttons["Game menu"])
         expectHittable(touch)
-        record("Game menu closed and touch hit testing restored")
+        XCTAssertFalse(app.navigationBars["Settings"].exists)
+        record("Resume restores game touch hit testing")
     }
 
     func test06bExistingGameMenuLiveHUDPersistence() {
         openGameMenu()
         let close = app.buttons["Close game menu"]
         defer { if close.isHittable { close.tap() } }
-        for title in ["Full", "FPS", "Off"] {
-            let choice = app.segmentedControls["Game overlay"].buttons[title]
-            choice.tap()
-            XCTAssertTrue(choice.isSelected)
+        for title in ["Full", "FPS only", "Off"] {
+            choose(title, for: "Performance overlay")
             closeGameMenu()
+            record("Live custom overlay " + title)
             openGameMenu()
-            XCTAssertTrue(app.segmentedControls["Game overlay"].buttons[title].isSelected)
+            XCTAssertEqual(cell("Performance overlay").value as? String, title)
         }
-        setMetalHUD(true)
-        setMetalHUD(false)
+        choose("On", for: "Apple Metal HUD")
+        choose("Off", for: "Apple Metal HUD")
+        closeGameMenu()
         record("Native HUD disabled live")
-        closeGameMenu()
         openGameMenu()
-        XCTAssertEqual(app.switches["Metal performance HUD"].value as? String, "0")
-        setMetalHUD(true)
+        XCTAssertEqual(cell("Apple Metal HUD").value as? String, "Off")
+        choose("On", for: "Apple Metal HUD")
+        closeGameMenu()
         record("Native HUD enabled live")
+        openGameMenu()
+        XCTAssertEqual(cell("Performance overlay").value as? String, "Off")
+        XCTAssertEqual(cell("Apple Metal HUD").value as? String, "On")
+        closeGameMenu()
+        record("Live HUD preferences retained after reopening shared settings")
+    }
+
+    func test06cExistingGameNextLaunchControlPreference() {
+        openGameMenu()
+        let original = cell("Invert mouse Y").value as? String ?? "Off"
+        defer {
+            if !app.buttons["Close game menu"].isHittable { openGameMenu() }
+            choose(original, for: "Invert mouse Y")
+            closeGameMenu()
+        }
+        let changed = original == "On" ? "Off" : "On"
+        choose(changed, for: "Invert mouse Y")
+        XCTAssertTrue(app.staticTexts["Control changes apply next launch. Current input is unchanged. Developer overrides take precedence."].exists)
+        record("Control preference explicitly applies next launch")
         closeGameMenu()
         openGameMenu()
-        XCTAssertTrue(app.segmentedControls["Game overlay"].buttons["Off"].isSelected)
-        XCTAssertEqual(app.switches["Metal performance HUD"].value as? String, "1")
-        closeGameMenu()
-        record("Live HUD preferences retained after reopening menu")
+        XCTAssertEqual(cell("Invert mouse Y").value as? String, changed)
     }
 }

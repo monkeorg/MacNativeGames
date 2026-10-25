@@ -68,16 +68,17 @@ The Play test enables the existing timing-only `DM_NVN_TSV` diagnostic in the la
 The optional existing-process touch test skips unless explicit normalized coordinates are supplied.
 Review a current screenshot before each such touch. Use it only for a known control; never select New Game.
 
-## Compact menu regression tests
+## Shared settings overlay regression tests
 
 These tests require the updated app. Build and sign the small runner locally, then wait for device ownership before installation.
 
 | Test | Checks | App lifecycle |
 |---|---|---|
-| `test00CompactPrelaunchGlass` | Centered card, maximum 500-point width and 760-point height, landscape, screenshot | Launch |
+| `test00CompactPrelaunchGlass` | Centered card, maximum 960-point width and 760-point height, landscape, screenshot | Launch |
 | `test01bDisplayPreferencesPersistWhenSupported` | Capability gate, 720/1080 choice, 16:9/full-display choice, persisted 1080/full display | Relaunch |
-| `test06aExistingGameMenuOpenCloseRestoresHitTesting` | Gear, compact 340-point card, input shield, restored touch hit testing after close | Activate existing game |
-| `test06bExistingGameMenuLiveHUDPersistence` | Full/FPS/Off runtime selection, native HUD switch, retained state after menu reopen | Activate existing game |
+| `test06aExistingGameMenuOpenCloseRestoresHitTesting` | Full settings rows, mapping navigation, disabled save transfers, input shield, Resume restores touch hit testing | Activate existing game |
+| `test06bExistingGameMenuLiveHUDPersistence` | Full/FPS-only/Off action sheets, native HUD action sheet, retained values and screenshots after menu reopen | Activate existing game |
+| `test06cExistingGameNextLaunchControlPreference` | Next-launch control label, preference retained across menu reopen, original value restored | Activate existing game |
 
 The display preference test skips when the signed capability is absent or the screen is wider than supported.
 It leaves 1080/full-display selected when supported. It does not prove projection correctness or actual render dimensions.
@@ -85,13 +86,15 @@ It leaves 1080/full-display selected when supported. It does not prove projectio
 The live tests require an existing game process. They call `activate()`, never `launch()` or `terminate()`.
 The hit-testing test requires touch controls enabled. It verifies routing without a game-input tap.
 The HUD test leaves the custom overlay off, native HUD on, and the menu closed.
-Menu reopen checks use runtime state for the custom overlay and persisted defaults for the native switch.
+Menu reopen checks verify persisted row values. Screenshots require visual inspection to establish live HUD behavior.
+The next-launch control test changes only a preference; it cannot prove runtime input remained unchanged.
 Screenshots provide separate evidence of native HUD visibility and the glass appearance.
 
 Stable accessibility identifiers required by the tests:
 
 - `TOTKPrelaunchCard` on the prelaunch glass card.
-- `TOTKGameMenuCard` on the live glass card.
+- `TOTKGameMenuCard` on the live navigation container.
+- `Close game menu` as the live settings close button accessibility label.
 - `TOTKTouchControls` on the touch-control view.
 
-The new regression tests are prepared for the updated build. They have not run on a device yet.
+These shared-overlay regression tests have not run on a device yet. They do not import, export, back up, or restore saves.
