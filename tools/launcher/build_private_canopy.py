@@ -9,12 +9,14 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import mmap
 import os
 from pathlib import Path
 import re
 import shlex
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -24,6 +26,8 @@ RECIPE = 'canopy-private-native-ios26-icon-v2'
 FRAMEWORKS = ('UIKit', 'Metal', 'MetalFX', 'Foundation', 'QuartzCore', 'ImageIO',
               'CoreGraphics', 'CoreText', 'UniformTypeIdentifiers', 'CoreFoundation',
               'AudioToolbox', 'GameController', 'AVFAudio', 'Security', 'WebKit', 'CoreHaptics')
+SHADER_SYSTEM_LIBRARIES = {'-lSystem', '-lobjc', '-lc++', '-liconv', '-lz', '-licucore', '-lcompression', '-lresolv'}
+SHADER_SYSTEM_FRAMEWORKS = set(FRAMEWORKS) | {'CFNetwork', 'GSS', 'Network', 'SystemConfiguration'}
 DISPLAY_HEAP = 'romfs-patches-out/1920x1080-scene-1920x1080'
 DISPLAY_LAYOUT = 'romfs-patches-4x3'
 DISPLAY_EXPORT = {'TOTK_IOS_DISPLAY_SETTINGS': '1', 'TOTK_RENDER_RES': '1280x720',
@@ -117,6 +121,7 @@ def source_names(repo, version):
             if path.suffix in ('.c', '.m', '.S') and path.name not in excluded:
                 names.add(str(path.relative_to(repo)))
     names.add('games/totk/ios/Sources/save_validation.m')
+    names.add('launcher/apple/Sources/CanopyShaderTranslator.m')
     return tuple(sorted(names))
 
 
@@ -418,7 +423,339 @@ def stage_codecs(source, destination):
     return records
 
 
-def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, display_profile=None):
+def shader_native_option(source, report_sha):
+    require((source is None) == (report_sha is None),
+            'native shader products and their explicit build-report SHA256 are required together')
+    require(report_sha is None or re.fullmatch('[0-9a-f]{64}', report_sha) is not None,
+            'invalid native shader build-report pin')
+
+
+def inspect_shader_autolink(data, start, end):
+    """An object cannot smuggle dependencies around the closed link plan."""
+    require(12 <= end - start <= 65536, 'native autolink command exceeds bounds')
+    count = struct.unpack_from('<I', data, start + 8)[0]
+    require(count <= 128, 'native autolink token count exceeds limit')
+    tokens, at = [], start + 12
+    for _ in range(count):
+        stop = data.find(b'\0', at, min(end, at + 257))
+        require(stop >= at, 'native autolink token is missing or excessive')
+        tokens.append(data[at:stop].decode('ascii'));at = stop + 1
+    require(all(byte == 0 for byte in data[at:end]), 'unexpected native autolink trailing bytes')
+    index = 0
+    while index < len(tokens):
+        token = tokens[index];index += 1
+        if token in SHADER_SYSTEM_LIBRARIES:
+            continue
+        require(token in ('-framework', '-weak_framework') and index < len(tokens) and
+                tokens[index] in SHADER_SYSTEM_FRAMEWORKS,
+                'hidden native dependency or linker directive refused')
+        index += 1
+
+
+def inspect_shader_archive(path):
+    """Inspect every real archive object, not report/RID/filename assertions.
+
+    No compiler/tool invocation. Thin archives, bitcode, fat objects, arm64e,
+    simulator/macOS and objects without explicit iOS build metadata refuse.
+    """
+    require(8 <= path.stat().st_size <= 512 << 20, 'native shader archive exceeds bounds')
+    objects, members, names, tables = 0, 0, set(), set()
+    with path.open('rb') as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        require(data[:8] == b'!<arch>\n', 'native shader input is not a self-contained archive')
+        at, string_table = 8, b''
+        while at < len(data):
+            members += 1
+            require(members <= 4112, 'native archive total member count exceeds limit')
+            require(at + 60 <= len(data) and data[at + 58:at + 60] == b'`\n', 'invalid archive header')
+            raw_name = data[at:at + 16].decode('ascii').strip()
+            raw_size = data[at + 48:at + 58].decode('ascii').strip()
+            require(raw_size.isdecimal(), 'invalid archive member size')
+            size = int(raw_size);start = at + 60;end = start + size
+            require(end <= len(data), 'truncated archive member')
+            name = raw_name
+            if raw_name.startswith('#1/'):
+                require(raw_name[3:].isdecimal(), 'invalid BSD archive name')
+                length = int(raw_name[3:]);require(0 < length <= 255 and length <= size, 'excessive archive name')
+                name = data[start:start + length].rstrip(b'\0').decode('ascii');start += length
+            elif raw_name == '//':
+                require(size <= 1 << 20, 'archive string table exceeds bounds')
+                string_table = data[start:end]
+            elif raw_name.startswith('/') and raw_name[1:].isdecimal():
+                offset = int(raw_name[1:]);require(offset < len(string_table), 'invalid archive name offset')
+                stop = string_table.find(b'/\n', offset)
+                require(stop >= offset and stop - offset <= 255, 'invalid archive long name')
+                name = string_table[offset:stop].decode('ascii')
+            metadata = name in ('/', '//', '/SYM64/', '__.SYMDEF', '__.SYMDEF SORTED',
+                                '__.SYMDEF_64', '__.SYMDEF_64 SORTED')
+            if metadata:
+                require(name not in tables, 'duplicate native archive metadata table')
+                tables.add(name)
+            else:
+                name = name[:-1] if name.endswith('/') else name
+                require(name and '/' not in name and len(name) <= 255 and
+                        all(32 <= ord(c) < 127 for c in name) and name not in names,
+                        'unsafe or duplicate native archive member')
+                names.add(name);objects += 1;require(objects <= 4096, 'native archive member count exceeds limit')
+                require(end - start >= 32, 'native archive member is not Mach-O')
+                magic, cpu, subtype, kind, count, command_bytes, _, _ = struct.unpack_from('<8I', data, start)
+                require(magic == 0xfeedfacf and cpu == 0x0100000c and subtype == 0 and kind == 1 and
+                        0 < count <= 4096 and command_bytes <= 1 << 20 and start + 32 + command_bytes <= end,
+                        'native shader object is not bounded plain arm64 Mach-O')
+                cursor, builds = start + 32, 0
+                for _ in range(count):
+                    require(cursor + 8 <= start + 32 + command_bytes, 'truncated Mach-O load command')
+                    command, length = struct.unpack_from('<2I', data, cursor)
+                    require(length >= 8 and length % 4 == 0 and cursor + length <= start + 32 + command_bytes,
+                            'invalid Mach-O load command size')
+                    plain_command = command & 0x7fffffff
+                    require(plain_command not in (0x24, 0x25, 0x2f, 0x30),
+                            'legacy/contradictory native platform metadata refused')
+                    require(plain_command not in (0x0c, 0x0d, 0x0e, 0x0f, 0x18, 0x1c, 0x1f, 0x20, 0x23, 0x27),
+                            'dynamic dependency/rpath/environment command in native object refused')
+                    if plain_command == 0x2d:  # LC_LINKER_OPTION
+                        inspect_shader_autolink(data, cursor, cursor + length)
+                    if command == 0x32:  # LC_BUILD_VERSION, PLATFORM_IOS
+                        require(length >= 24, 'truncated native build version')
+                        platform, minimum, _, tools = struct.unpack_from('<4I', data, cursor + 8)
+                        require(platform == 2 and 0 < minimum <= 0x00100000 and 24 + tools * 8 <= length,
+                                'native shader object target is not supported iPhoneOS16-or-earlier')
+                        builds += 1
+                    cursor += length
+                require(cursor == start + 32 + command_bytes and builds == 1,
+                        'native shader object lacks one exact platform identity')
+            at = end + (size & 1)
+        require(at == len(data) and objects, 'empty or malformed native archive')
+    return {'objects': objects, 'architecture': 'arm64', 'platform': 'IOS', 'maximumMinimumOS': '16.0'}
+
+
+def stage_shader_native(source, destination, report_sha, repo):
+    """Explicit local executable-input admission, never runtime/import JSON.
+
+    The operator pins the publisher report. Actual captured archive bytes and
+    every runtime archive determine the compiled cache recipe. Link plans are
+    parsed into a closed argument grammar; never forwarded or shell-executed.
+    """
+    source = Path(source).absolute();destination.mkdir(mode=0o700)
+    report_bytes = stable_bytes(source / 'native-build.json', 8 << 20)
+    require(hashlib.sha256(report_bytes).hexdigest() == report_sha, 'native shader report pin mismatch')
+    report = json.loads(report_bytes)
+    require(isinstance(report, dict) and type(report.get('schema')) is int and report['schema'] == 1 and report.get('rid') == 'ios-arm64' and
+            report.get('kind') == 'Static' and all(report.get(k) is True for k in
+                ('crossCompiled', 'nativeAotCompiled', 'staticConsumerLinked')),
+            'native shader products lack a real static iPhoneOS consumer build')
+    here = repo / 'games/totk/tools/totk_xlate'
+    recipe = hashlib.sha256()
+    paths = sorted([*here.glob('*.cs'), *here.glob('*.csproj'), *here.glob('inprocess_cross.*'),
+                    *here.glob('canopy_cross_budget.*'), *here.glob('patches/*'), *here.glob('cross_patches/*'),
+                    here / 'checked_patches.py', here / 'publish_library.py'])
+    for path in paths:
+        require(path.is_file(), 'unexpected native shader source recipe member')
+        relative = path.relative_to(here).as_posix()
+        recipe.update(relative.encode() + b'\0' + PUBLIC.public_input(repo, str(path.relative_to(repo))) + b'\0')
+    require(report.get('bridgeRecipeSHA256') == recipe.hexdigest() and
+            report.get('crossCommit') == 'aa217aeb6c9f0ace7a0ab233b28807edf45eb165',
+            'native shader products do not match current checked source recipe')
+    plan_bytes = stable_bytes(source / 'native-link.args', 1 << 20)
+    require(hashlib.sha256(plan_bytes).hexdigest() == report.get('nativeLinkPlanSHA256'), 'native dependency plan changed')
+    property_bytes = stable_bytes(source / 'native-link.args.properties', 64 << 10)
+    properties = property_bytes.decode('utf-8-sig').splitlines()
+    require(properties == report.get('nativeToolchainProperties') and len(properties) <= 32,
+            'native toolchain property observation changed')
+    parsed = {}
+    keys = {'NETCoreSdkVersion', 'RuntimeIdentifier', 'TargetFramework', 'PublishAotUsingRuntimePack',
+            'AppleMinOSVersion', 'IlcHostPackagePath', 'IlcFrameworkNativePath'}
+    for line in properties:
+        if not line:
+            continue
+        key, equal, value = line.partition('=')
+        require(equal and key in keys and key not in parsed and len(value) <= 4096 and '\0' not in value,
+                'invalid native toolchain property')
+        parsed[key] = value
+    require(parsed.get('RuntimeIdentifier') == 'ios-arm64' and parsed.get('TargetFramework') == 'net10.0' and
+            parsed.get('PublishAotUsingRuntimePack', '').lower() == 'true' and
+            re.fullmatch(r'16\.0(?:\.0)?', parsed.get('AppleMinOSVersion', '')) and
+            parsed.get('NETCoreSdkVersion', '').startswith('10.'), 'unsupported native runtime-pack contract')
+    roots = [source]
+    for key in ('IlcHostPackagePath', 'IlcFrameworkNativePath'):
+        value = parsed.get(key, '')
+        require(value and Path(value).is_absolute(), 'native dependency root is missing')
+        roots.append(Path(os.path.abspath(value)))
+    records, admitted, runtime_roots_used = {}, {}, set()
+    primary_archives = {source / 'native/CanopyShaderNative.a', source / 'libcanopy_spirv_cross.a'}
+    def archive(path, expected=None):
+        require(Path(path).is_absolute(), 'relative native dependency archive refused')
+        path = Path(os.path.abspath(path))
+        require(any(path.is_relative_to(root) for root in roots) and path.suffix == '.a',
+                'native dependency escapes explicit product/runtime-pack roots')
+        if path in admitted:
+            return admitted[path]
+        if path not in primary_archives:
+            owners = [root for root in roots[1:] if path.is_relative_to(root)]
+            require(owners, 'extra product archive has no admitted runtime-package notice contract')
+            runtime_roots_used.add(max(owners, key=lambda root: len(root.parts)))
+        require(len(admitted) < 128, 'too many native shader dependency archives')
+        target = destination / f'archive-{len(admitted):03d}.a'
+        remaining = (2 << 30) - sum(record['size'] for record in records.values())
+        sha = digest(path, target, expected, min(512 << 20, remaining))
+        record = {'sha256': sha, 'size': target.stat().st_size, 'target': inspect_shader_archive(target)}
+        records[target.name] = record;admitted[path] = str(target)
+        return str(target)
+    require(isinstance(report.get('managedArtifacts'), dict) and isinstance(report.get('crossArtifacts'), dict),
+            'native artifact tables are missing')
+    managed_record = report.get('managedArtifacts', {}).get('CanopyShaderNative.a', {})
+    cross_record = report.get('crossArtifacts', {}).get('libcanopy_spirv_cross.a', {})
+    for record in (managed_record, cross_record):
+        require(isinstance(record, dict) and isinstance(record.get('sha256'), str) and
+                re.fullmatch('[0-9a-f]{64}', record['sha256']), 'native archive identity is missing')
+    managed = archive(source / 'native/CanopyShaderNative.a', managed_record['sha256'])
+    cross = archive(source / 'libcanopy_spirv_cross.a', cross_record['sha256'])
+    require(Path(managed).stat().st_size == managed_record.get('size') and
+            Path(cross).stat().st_size == cross_record.get('size'), 'native archive size observation differs')
+    arguments = []
+    for line in plan_bytes.decode('utf-8-sig').splitlines():
+        require('\0' not in line, 'invalid native link plan')
+        arguments.extend(shlex.split(line))
+    require(0 < len(arguments) <= 4096, 'native dependency argument count exceeds limit')
+    normalized, cursor = [], 0
+    while cursor < len(arguments):
+        token = arguments[cursor];cursor += 1
+        if token == '-Xlinker':
+            require(cursor < len(arguments), 'truncated native linker transport')
+            token = arguments[cursor];cursor += 1
+        normalized.append(token)
+    arguments, search_directories, cursor = [], [], 0
+    while cursor < len(normalized):
+        token = normalized[cursor];cursor += 1
+        if token == '-L' or token.startswith('-L'):
+            if token == '-L':
+                require(cursor < len(normalized), 'missing native library search directory')
+                value = normalized[cursor];cursor += 1
+            else:
+                value = token[2:]
+            require(Path(value).is_absolute(), 'relative native library search directory refused')
+            folder = Path(os.path.abspath(value))
+            require(any(folder.is_relative_to(root) for root in roots) and folder.is_dir(),
+                    'native library search escapes explicit product/runtime roots')
+            for parent in (folder, *folder.parents):
+                require(not parent.is_symlink(), 'linked native library search directory refused')
+            require(len(search_directories) < 64, 'too many native library search directories')
+            search_directories.append(folder)
+        else:
+            arguments.append(token)
+    allowed_libraries = SHADER_SYSTEM_LIBRARIES
+    allowed_frameworks = SHADER_SYSTEM_FRAMEWORKS
+    harmless = {'-dead_strip', '-dead_strip_dylibs', '-Wl,-dead_strip', '-Wl,-dead_strip_dylibs',
+                '-Wl,-no_deduplicate', '-Wl,-pie', '-pie', '-fPIC', '-fobjc-arc', '-pthread'}
+    link, index, dependencies = [], 0, 0
+    while index < len(arguments):
+        arg = arguments[index];index += 1
+        if arg in allowed_libraries or arg in harmless:
+            link.append(arg)
+        elif re.fullmatch(r'-l[A-Za-z0-9_.-]{1,128}', arg):
+            name = 'lib' + arg[2:] + '.a'
+            selected = next((folder / name for folder in search_directories + roots[1:]
+                             if (folder / name).exists()), None)
+            require(selected is not None, 'native static library is unavailable in explicit roots')
+            captured = archive(selected)
+            if captured not in (managed, cross):
+                link.append(captured);dependencies += 1
+        elif arg in ('-framework', '-weak_framework'):
+            require(index < len(arguments) and arguments[index] in allowed_frameworks, 'unsupported native framework')
+            link.extend((arg, arguments[index]));index += 1
+        elif arg in ('-arch', '-target', '-isysroot', '-o'):
+            require(index < len(arguments), 'truncated native link option')
+            value = arguments[index];index += 1
+            require(arg == '-o' or (arg == '-arch' and value == 'arm64') or
+                    (arg == '-target' and re.fullmatch(r'arm64-apple-ios16\.0(?:\.0)?', value)) or
+                    (arg == '-isysroot' and Path(value).is_absolute() and re.fullmatch(r'iPhoneOS(?:[0-9]+(?:\.[0-9]+)*)?\.sdk', Path(value).name)),
+                    'conflicting native toolchain target')
+        elif re.fullmatch(r'-miphoneos-version-min=16\.0(?:\.0)?', arg):
+            pass
+        elif arg.endswith('.a') and not arg.startswith('-'):
+            captured = archive(arg)
+            if captured not in (managed, cross):
+                link.append(captured);dependencies += 1
+        elif arg == '-force_load' or arg.startswith('-Wl,-force_load,'):
+            if arg == '-force_load':
+                require(index < len(arguments), 'missing force-load archive');value = arguments[index];index += 1
+            else:
+                value = arg[len('-Wl,-force_load,'):]
+            link.extend(('-Xlinker', '-force_load', '-Xlinker', archive(value)));dependencies += 1
+        elif arg == '-u' or arg.startswith('-Wl,-u,'):
+            if arg == '-u':
+                require(index < len(arguments), 'missing native root symbol');value = arguments[index];index += 1
+            else:
+                value = arg[len('-Wl,-u,'):]
+            require(re.fullmatch(r'_[A-Za-z0-9_.$]{1,255}', value), 'invalid native root symbol')
+            link.extend(('-u', value))
+        elif arg.endswith('.o') and not arg.startswith('-'):
+            require(Path(arg).name == 'CanopyShaderNative.o' and Path(os.path.abspath(arg)).is_relative_to(source),
+                    'unrepresented native object input')  # Supplied by its captured static archive.
+        else:
+            raise ValueError('unsupported native link-plan argument; no flags were forwarded')
+    require(dependencies > 0 and runtime_roots_used, 'native static runtime dependency archives were not represented')
+    # Include adapter source as well as actual archive bytes in cache identity.
+    consumers = ('launcher/apple/Sources/CanopyShaderTranslator.m',
+                 'launcher/apple/Sources/CanopyShaderTranslator.h',
+                 'games/totk/third_party/d2r_gfx/gfx/nvn/totk_shader_provider.h',
+                 'games/totk/third_party/d2r_gfx/gfx/nvn/totk_shader_rt.m',
+                 'games/totk/third_party/d2r_gfx/gfx/nvn/totk_shader_rt.h',
+                 'games/totk/third_party/d2r_gfx/gfx/nvn/nvn_mtl.m',
+                 'games/totk/runtime/canopy_host.h', 'games/totk/runtime/canopy_host.m')
+    consumer_sha = {name: hashlib.sha256(PUBLIC.public_input(repo, name)).hexdigest() for name in consumers}
+    identity = {'buildReportSHA256': report_sha, 'bridgeRecipeSHA256': recipe.hexdigest(),
+                'consumerSHA256': consumer_sha, 'archives': records,
+                'linkPlanSHA256': hashlib.sha256(plan_bytes).hexdigest(),
+                'dependencyPropertiesSHA256': hashlib.sha256(property_bytes).hexdigest()}
+    licenses = destination / 'licenses';licenses.mkdir(mode=0o700)
+    license_records = {}
+    for name in ('SPIRV-Cross-LICENSE', 'translator-MIT.txt', 'Ryujinx-MIT.txt'):
+        license_records[name] = digest(source / 'licenses' / name, licenses / name, limit=1 << 20)
+    license_root = source / 'licenses/SPIRV-Cross-LICENSES'
+    require(license_root.is_dir() and not license_root.is_symlink(), 'native shader license inventory missing')
+    license_entries = []
+    for path in license_root.iterdir():
+        require(len(license_entries) < 29, 'native shader license directory exceeds entry bound')
+        license_entries.append(path)
+    for path in sorted(license_entries):
+        require(len(license_records) < 32 and re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', path.name),
+                'native shader license inventory exceeds bounds')
+        name = 'SPIRV-Cross-LICENSES/' + path.name
+        license_records[name] = digest(path, licenses / name, limit=1 << 20)
+    require(len(license_records) > 3, 'native shader license texts missing')
+    runtime_notices = {}
+    for index, root in enumerate(sorted(runtime_roots_used)):
+        # The exact package layout is admitted, not guessed by ancestor search.
+        if root == roots[2]:
+            require(root.parts[-3:] == ('runtimes', 'ios-arm64', 'native'),
+                    'unknown native runtime package notice layout')
+            notice_root = root.parents[2]
+        else:
+            require(root == roots[1], 'unrepresented native runtime notice root')
+            notice_root = root
+        prefix = f'runtime-{index:03d}'
+        license_name = prefix + '/LICENSE.TXT'
+        license_records[license_name] = digest(notice_root / 'LICENSE.TXT', licenses / license_name, limit=1 << 20)
+        candidates = []
+        for name in ('THIRD-PARTY-NOTICES.TXT', 'ThirdPartyNotices.txt'):
+            path = notice_root / name
+            if path.exists():
+                candidates.append((path, digest(path, limit=8 << 20)))
+        require(candidates and len({sha for _, sha in candidates}) == 1,
+                'runtime third-party notices missing or ambiguous')
+        third_name = prefix + '/THIRD-PARTY-NOTICES.TXT'
+        license_records[third_name] = digest(candidates[0][0], licenses / third_name,
+                                             candidates[0][1], 8 << 20)
+        runtime_notices[prefix] = {'licenseSHA256': license_records[license_name],
+                                  'thirdPartySHA256': license_records[third_name]}
+    identity['runtimeNoticeSHA256'] = runtime_notices
+    identity['licenseSHA256'] = license_records
+    identity['recipeSHA256'] = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return {'observation': identity, 'libraries': [managed, cross], 'arguments': link + ['-lc++'],
+            'licenses': licenses}
+
+
+def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, display_profile=None, shader_native=None):
     display_option(version, display_profile is not None)
     selected = PROFILES.version_profile(stage, version)[1]
     require(profile == selected['_expected'], 'compiler profile differs from staged registry')
@@ -429,6 +766,10 @@ def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, 
             '-DCANOPY_HOST_TITLE_ID=0x' + profile['title_id'] + 'ULL',
             '-DCANOPY_HOST_ORIGINAL_MAIN_SHA256="' + profile['exefs_sha256']['main'] + '"',
             '-DCANOPY_HOST_SHADER_SEED_MANIFEST_SHA256="' + seed_sha + '"']
+    if shader_native is not None:
+        recipe = shader_native['observation']['recipeSHA256']
+        require(re.fullmatch('[0-9a-f]{64}', recipe), 'native shader product recipe is missing')
+        base += ['-DCANOPY_LINKED_SHADER_TRANSLATOR=1', '-DCANOPY_SHADER_PROVIDER_RECIPE_SHA256="' + recipe + '"']
     if display_profile is not None:
         require(isinstance(display_profile, dict) and all(isinstance(display_profile.get(key), str) and
                 re.fullmatch('[0-9a-f]{64}', display_profile[key]) for key in
@@ -491,6 +832,9 @@ def package_app_icon(stage, work, app, run):
 def build(args):
     # Refuse unsupported opt-ins before inspecting private paths or Apple tools.
     display_settings = getattr(args, 'display_settings', False)
+    native_source = getattr(args, 'shader_native_products', None)
+    native_pin = getattr(args, 'shader_native_build_sha256', None)
+    shader_native_option(native_source, native_pin)
     display_option(getattr(args, 'version', None), display_settings)
     require(sys.platform == 'darwin' and os.uname().machine == 'arm64', 'private build requires an Apple silicon Mac')
     repo = ROOT
@@ -571,14 +915,25 @@ def build(args):
             codec_snapshot = work / 'codecs'
             observation['codecInputs'] = stage_codecs(deps, codec_snapshot)
             libraries = [str(codec_snapshot / f'lib/lib{name}.a') for name in ('opus', 'vpx')]
-            commands, objects = compiler_commands(stage, work, toolchain, args.version, profile, args.shader_manifest_sha256, codec_snapshot, display_profile)
+            shader_native = stage_shader_native(native_source, work / 'native-shader', native_pin, repo) if native_source else None
+            native_arguments = []
+            if shader_native is not None:
+                for name, sha in shader_native['observation']['consumerSHA256'].items():
+                    require(observation['publicInputs'].get(name) == sha,
+                            'native shader consumer differs from captured compiled source')
+                observation['nativeShaderProvider'] = shader_native['observation']
+                libraries.extend(shader_native['libraries'])
+                native_arguments = shader_native['arguments']
+            commands, objects = compiler_commands(stage, work, toolchain, args.version, profile, args.shader_manifest_sha256, codec_snapshot, display_profile, shader_native)
             for command in commands:
                 run(command)
             link = [toolchain['clang'], '-target', 'arm64-apple-ios26.0', '-isysroot', toolchain['sdk'],
-                    *objects, *libraries, *flags, '-Wl,-no_adhoc_codesign']
+                    *objects, *libraries, *native_arguments, *flags, '-Wl,-no_adhoc_codesign']
             for framework in FRAMEWORKS:
                 link += ['-framework', framework]
             run(link + ['-o', str(app / 'Canopy')])
+            if shader_native is not None:
+                shutil.copytree(shader_native['licenses'], app / 'NativeShaderLicenses')
             import plistlib
             icons, observation['appIcon'] = package_app_icon(stage, work, app, run)
             info = plistlib.loads(PUBLIC.plist(args.bundle_id, icons));info['MinimumOSVersion'] = '26.0'
@@ -608,6 +963,8 @@ def main():
     parser.add_argument('--deps', type=Path, help='local iPhoneOS codec prefix with include/ and lib/')
     parser.add_argument('--shader-seed', type=Path)
     parser.add_argument('--shader-manifest-sha256', help='explicit independently reviewed seed-manifest pin')
+    parser.add_argument('--shader-native-products', type=Path, help='opt-in trusted local publish_library.py ios-arm64 Static output')
+    parser.add_argument('--shader-native-build-sha256', help='explicit independently reviewed native-build.json SHA256')
     parser.add_argument('--developer-dir')
     parser.add_argument('--out', type=Path)
     args = parser.parse_args()
@@ -615,10 +972,15 @@ def main():
         parser.error('select exactly one of --plan or --build')
     try:
         display_option(args.version, args.display_settings)
+        shader_native_option(args.shader_native_products, args.shader_native_build_sha256)
     except ValueError as error:
         parser.error(str(error))
     if args.plan:
-        print(json.dumps(build_plan(version=args.version, identifier=args.bundle_id, display_settings=args.display_settings), indent=2))
+        plan = build_plan(version=args.version, identifier=args.bundle_id, display_settings=args.display_settings)
+        plan['nativeShaderProvider'] = {'requested': args.shader_native_products is not None,
+            'status': 'plan only; no native products read or linked', 'default': 'seed only',
+            'requires': 'explicit pinned real ios-arm64 static archives and closed native dependency plan'}
+        print(json.dumps(plan, indent=2))
     else:
         if not all((args.tree, args.deps, args.shader_seed, args.shader_manifest_sha256, args.out)):
             parser.error('--build requires --tree, --deps, --shader-seed, --shader-manifest-sha256 and --out')
