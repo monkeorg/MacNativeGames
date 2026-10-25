@@ -312,7 +312,9 @@
     "block-chain emission",
     "variable-scope dependency traversal",
     "combined-image sampler dependency hierarchy",
-    "function purity and control-dependence call-graph queries"
+    "function purity and control-dependence call-graph queries",
+    "parser structural type equivalence",
+    "compiler type-alias name resolution"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",

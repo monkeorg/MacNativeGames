@@ -1,0 +1,20 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -331,6 +331,7 @@
+ 
+ string Compiler::to_name(uint32_t id, bool allow_alias) const
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	if (allow_alias && ir.ids[id].get_type() == TypeType)
+ 	{
+ 		// If this type is a simple alias, emit the
+--- a/spirv_parser.cpp
++++ b/spirv_parser.cpp
+@@ -1615,6 +1615,7 @@
+ 
+ bool Parser::types_are_logically_equivalent(const SPIRType &a, const SPIRType &b) const
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	if (a.basetype != b.basetype)
+ 		return false;
+ 	if (a.width != b.width)
