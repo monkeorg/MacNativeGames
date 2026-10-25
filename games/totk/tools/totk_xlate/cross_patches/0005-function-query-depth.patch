@@ -1,0 +1,18 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -356,6 +356,7 @@
+ 
+ bool Compiler::function_is_pure(const SPIRFunction &func)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	for (auto block : func.blocks)
+ 		if (!block_is_pure(get<SPIRBlock>(block)))
+ 			return false;
+@@ -365,6 +366,7 @@
+ 
+ bool Compiler::function_is_control_dependent(const SPIRFunction &func)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	for (auto block : func.blocks)
+ 		if (block_is_control_dependent(get<SPIRBlock>(block)))
+ 			return true;
