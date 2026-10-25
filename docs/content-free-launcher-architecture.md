@@ -81,7 +81,7 @@ TOTK app results do not validate this separate launcher.
 
 | Requirement | Required evidence | Dependency / present status |
 |---|---|---|
-| Content-free public IPA | File inventory and reviewed source/build provenance; no derived game sections/resources; installed artifact hashes | Public host target not built; checker alone cannot certify provenance |
+| Content-free public IPA | File inventory and reviewed source/build provenance; no derived game sections/resources; installed artifact hashes | Unsigned inspection host built; full gameplay host remains unimplemented; checker alone cannot certify provenance |
 | Standalone native execution | Signed native fixture and exact-version imported title enters real gameplay on iPad | Blocked on Apple signing/loading feasibility and private local inputs |
 | Local import/setup | Real security-scoped folder and declared supported container import, explicit failures, bounded progress/cancel | Native parser first; decryption/update/shader pipeline still needed |
 | Base/update/DLC identity | Exact title/version dependencies, integrity verification and mismatch refusal before publication | Native import and private preparation contract |
@@ -145,3 +145,15 @@ iPad distribution to execute private native code absent from the public app's
 signed executable. The existing loader cannot do so. The cloud cannot resolve
 that gate by drawing a library or extracting another container. No speculative
 user-facing backend or compatibility entry is enabled.
+
+
+## Canopy inspection app follow-up
+
+The user requested further construction after the first blocked checkpoint.
+A separate real inspection utility now provides the CLI and iPad metadata library
+without claiming any title executable or exposing a fake Play operation. Its
+unsigned iPhoneOS target and original-source platform probe compile in macOS CI.
+The [current build record](canopy-inspection.md) contains exact source, tests,
+download identity and remaining physical gates. This advances read-only import
+inspection and library metadata; it does not close the native gameplay,
+preparation, save, shader/update or multiplayer requirements.

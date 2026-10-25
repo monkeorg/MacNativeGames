@@ -73,12 +73,12 @@ make -C games/totk probe-call
 
 `probe-call` builds an original-source fixture and executes 20,000 calls across four pthreads, checks real Darwin TLS and observed return addresses (`scripts/native_call_probe.c:34–78`). Its `mprotect` executable-memory path (`:56–67`) differs from iOS's signed remap. The separate `probe` target reads private TOTK v0 ELF data (`Makefile:29–35`, `scripts/native_leaf_probe.c:1–3`, `42–80`); do not use it in the cloud or label it content-free.
 
-An isolated platform-permission probe and unsigned builder now exist in `tools/launcher/fixture/`; see its [README](../tools/launcher/fixture/README.md) for build and local signing/install commands. It shares generated artifacts and the Apple compatibility header, not the production loader or relocation implementation. It remains unbuilt and unexecuted on Apple hardware. A shared production runtime harness is still pending. Use a distinct probe identity and keep the working app intact. Record Xcode/SDK versions, device/OS, source revision, distribution/provisioning mode, public artifact hashes, fixture hashes, mapped protections, computed results and negative-control failures. Keep signing credentials local.
+An isolated platform-permission probe and unsigned builder now exist in `tools/launcher/fixture/`; see its [README](../tools/launcher/fixture/README.md) for build and local signing/install commands. It shares generated artifacts and the Apple compatibility header, not the production loader or relocation implementation. It has since compiled in public macOS CI (see the [Canopy build record](canopy-inspection.md)); physical execution remains unperformed. A shared production runtime harness is still pending. Use a distinct probe identity and keep the working app intact. Record Xcode/SDK versions, device/OS, source revision, distribution/provisioning mode, public artifact hashes, fixture hashes, mapped protections, computed results and negative-control failures. Keep signing credentials local.
 
 ## Gates
 
 - [x] Portable original-source rewrite and executable-section tests pass; branch/call-prefix/MOD0/truncated-text negative controls fail as expected. See the checkpoint results in [validation](content-free-launcher-validation.md).
-- [ ] Independent harness builds for iPhoneOS; no proprietary input is needed.
+- [ ] Production-loader integration harness builds for iPhoneOS; no proprietary input is needed. The separate platform probe has compiled.
 - [ ] Signed embedded fixture executes natively on a physical device with observed permissions and results; run without debugger.
 - [ ] Content-free public artifact inventory excludes all prohibited game-derived content.
 - [ ] External private fixture, absent from public executable sections, executes through a demonstrated permitted native mechanism under the intended distribution mode.
@@ -86,3 +86,14 @@ An isolated platform-permission probe and unsigned builder now exist in `tools/l
 - [ ] Private data survives supported app updates; input, graphics, saves and required multiplayer acceptance pass separately.
 
 Only the portable artifact gate is evidenced; Apple execution and product gates remain pending. Historical Track A device success remains attached to its recorded revision and packaged-code architecture. It does not satisfy the external-code or content-free artifact gates here.
+
+
+## Apple compilation follow-up — 2026-10-25
+
+At `e8c5be9`, the isolated original-source permission probe compiled for arm64
+iPhoneOS with Xcode 16.4 / iPhoneOS 18.5 after 14 fixture tests passed on macOS.
+The separate Canopy inspection app also compiled. See the [build record](canopy-inspection.md).
+This resolves source compilation for those two targets only. No signing,
+installation, actual permission observation, production-loader integration,
+external native-code loading or title gameplay was performed. The open execution
+and physical acceptance gates above remain open.

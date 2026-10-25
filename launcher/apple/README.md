@@ -1,7 +1,7 @@
 # Canopy iPhoneOS inspection host
 
 This is a separate original host target for iPhone and iPad, with iOS 16.0 as its
-minimum deployment version. It links UIKit, Foundation and UniformTypeIdentifiers
+minimum deployment version. It links UIKit, Foundation, CoreFoundation and UniformTypeIdentifiers
 and the portable Canopy container/file inspection code. It does not link the TOTK
 runtime or package games, shaders, firmware fonts, keys, saves or private caches.
 The working TOTK target and bundle identity are unchanged.
@@ -56,7 +56,7 @@ Nintendo-derived bytes, validate signing or establish gameplay compatibility.
 The builder produces a `.app` directory, not an IPA, and performs no upload.
 
 Portable tests exercise planning and file-handling with a synthetic fake command
-runner. Those tests do not establish Apple compilation. Actual Xcode compilation,
-signing review and physical-device acceptance must be reported separately; they
-are unavailable in the current cloud environment. This target is an inspection
+runner. Those tests do not establish Apple compilation. The iPhoneOS host now compiles in the public macOS CI runner; see the
+[verified build record](../../docs/canopy-inspection.md). Signing review and
+physical-device acceptance remain separate and unperformed. This target is an inspection
 app and does not provide game execution, decryption or installation.
