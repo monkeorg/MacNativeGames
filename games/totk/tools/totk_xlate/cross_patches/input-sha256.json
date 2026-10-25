@@ -194,6 +194,16 @@
       },
       "patch": "0016-interface-location-offset-bounds.patch",
       "sha256": "e8865be51086ad703b472cb4252ab5db93c18e499188cb139ba15cd43030963f"
+    },
+    {
+      "after": {
+        "spirv_msl.cpp": "a4c2fb9edcc8e9376151a5c21c629acf6c3ff44173044837943e10a79796480a"
+      },
+      "before": {
+        "spirv_msl.cpp": "990e7e1a6cf90b9b0a0bfdfbe0c8ef2c50d2a66827babcf8f7c73715376b2f02"
+      },
+      "patch": "0017-composite-interface-depth.patch",
+      "sha256": "ae554a3362ce8aaa01312f22d68b05092b76392f4d6df8fbebfd71dd58228457"
     }
   ],
   "schemaVersion": 1

@@ -443,7 +443,8 @@
     "implied expression-read traversal",
     "invariant expression-dependency traversal",
     "global-read function-dependency traversal",
-    "type-location member traversal"
+    "type-location member traversal",
+    "MSL composite interface-member flattening"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
