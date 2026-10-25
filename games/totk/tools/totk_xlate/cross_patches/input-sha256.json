@@ -354,6 +354,16 @@
       },
       "patch": "0031-analysis-emission-wrapper-loop-checkpoints.patch",
       "sha256": "487e4ba5310433e2317e5a046d8fb17defc07106627e02146d023a705a2f8a35"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "e47622983d6e01e54415952e9e98944bdfe1bccd38658452a2fab80444fe3162"
+      },
+      "before": {
+        "spirv_cross.cpp": "2a72609c2976ecd6b54c06d527d41e2b78a657079a28124b8e109972c748edcd"
+      },
+      "patch": "0032-member-decoration-depth.patch",
+      "sha256": "a393bf2cf42f6aac49741f6a4a7fc7dd3e2f164ec678f309bc726ad6d5dd7bc1"
     }
   ],
   "schemaVersion": 1
