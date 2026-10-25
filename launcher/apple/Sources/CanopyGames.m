@@ -11,7 +11,7 @@
 #import "CanopyStorageController.h"
 #import "CanopyDiagnosticsController.h"
 #import "CanopyAddonsController.h"
-#import "../../../games/totk/ios/Sources/save_validation.h"
+#import "CanopyGameProfiles.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include "mng_preparation_selection.h"
 
@@ -29,6 +29,13 @@ static UITableViewCell *GamesCell(UITableView *table, NSString *title, NSString 
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
     cell.imageView.image = nil;
     return cell;
+}
+static NSString *GamesDisplayName(NSDictionary *entry, CanopySettings *settings) {
+    NSString *title = entry[@"titleID"];
+    return [settings displayNameForTitleID:title] ?: CanopyGameNameForTitleID(title) ?: entry[@"displayName"] ?: title;
+}
+static NSString *GamesVersion(NSDictionary *entry) {
+    return CanopyGameVersionLabel(entry[@"titleID"], [entry[@"titleVersion"] unsignedIntValue], [entry[@"versionIdentified"] boolValue]);
 }
 static NSString *PreparationIOSummary(NSDictionary *metrics) {
     if(![metrics isKindOfClass:NSDictionary.class] || ![metrics[@"scope"] isEqual:@"logicalPayloadIO"])return nil;
@@ -410,7 +417,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     return self;
 }
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title = _entry[@"displayName"];
+    [super viewDidLoad]; self.title = GamesDisplayName(_entry,_settings);
     self.tableView.rowHeight = UITableViewAutomaticDimension; self.tableView.estimatedRowHeight = 70;
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Rename" style:UIBarButtonItemStylePlain target:self action:@selector(rename)];
     NSURL *support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
@@ -437,8 +444,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         NSError *error=nil;NSDictionary *snapshot=[self->_profiles snapshotForTitleID:title error:&error];
         NSString *identifier=requested ?: snapshot[@"selectedID"],*name=nil;
         for(NSDictionary *row in snapshot[@"profiles"])if([row[@"identifier"] isEqual:identifier])name=row[@"displayName"];
-        CanopySaveValidator validator=nil;
-        if([title isEqualToString:@"0100f2c0115b6000"])validator=^BOOL(NSURL *directory,NSError **failure){return TOTKSaveValidateDirectory(directory,failure);};
+        CanopySaveValidator validator=CanopyGameSaveValidatorForTitleID(title);
         CanopySaveStore *candidate=nil;
         if(name)candidate=[identifier isEqual:oldID] ? old : [[CanopySaveStore alloc] initWithRootURL:root titleID:title profileID:identifier externalValidator:validator error:&error];
         dispatch_async(dispatch_get_main_queue(),^{
@@ -524,7 +530,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView;return section==3 ? (self.prepareUpdate ? 5:4) : section==2 ? 7 : section<3 ? 6:1;
+    (void)tableView;return section==3 ? (self.prepareUpdate ? 5:4) : section==2 ? 7 : section==0 ? 7 : section==1 ? 6:1;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Prepared assets",@"Graphics preferences",@"Control preferences",self.prepareUpdate ? @"Updates, saves & native session" : @"Saves & native session",@"Language"][(NSUInteger)section]; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -544,12 +550,12 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     if (path.section == 0) {
-        NSArray *titles = @[@"Title ID",@"Generation",@"Private assets",@"Integrity",_entry[@"sourceKind"] ? @"Consumed-member inventory SHA-256" : @"Source SHA-256",@"Preparation recipe"];
+        NSArray *titles = @[@"Title ID",@"Generation",@"Private assets",@"Integrity",_entry[@"sourceKind"] ? @"Consumed-member inventory SHA-256" : @"Source SHA-256",@"Preparation recipe",@"Prepared version"];
         NSDictionary *integrity = _entry[@"integrity"];
         NSString *checks = [NSString stringWithFormat:@"ExeFS %@ • RomFS %@ • signature not verified",[integrity[@"exefsVerified"] boolValue] ? @"verified" : @"unverified",[integrity[@"romfsVerified"] boolValue] ? @"verified" : @"unverified"];
         NSString *assets = [NSString stringWithFormat:@"%@ files • %@",_entry[@"assetCount"],[NSByteCountFormatter stringFromByteCount:[_entry[@"assetBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]];
         if ([_entry[@"sourceKind"] isEqual:@"asset-folder"]) checks=@"Asset hashes and RomFS structure checked • original NCA integrity and signature not verified";
-        NSArray *details = @[_entry[@"titleID"],_entry[@"generationID"],assets,checks,_entry[@"memberInventorySHA256"] ?: _entry[@"sourceSHA256"] ?: @"Unavailable",_entry[@"recipeID"]];
+        NSArray *details = @[_entry[@"titleID"],_entry[@"generationID"],assets,checks,_entry[@"memberInventorySHA256"] ?: _entry[@"sourceSHA256"] ?: @"Unavailable",_entry[@"recipeID"],GamesVersion(_entry)];
         UITableViewCell *cell = GamesCell(tableView,titles[(NSUInteger)path.row],details[(NSUInteger)path.row]); cell.selectionStyle = UITableViewCellSelectionStyleNone; return cell;
     }
     if (path.section == 3) {
@@ -611,7 +617,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (void)rename {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Rename prepared title" message:@"Changes only the local display name; prepared assets are unchanged." preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.text = [self->_settings displayNameForTitleID:self->_entry[@"titleID"]] ?: self->_entry[@"displayName"]; field.accessibilityLabel = @"Display name"; }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) { field.text = GamesDisplayName(self->_entry,self->_settings); field.accessibilityLabel = @"Display name"; }];
     __weak UIAlertController *weakAlert = alert;
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Save" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
@@ -859,7 +865,7 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section == 1) return @"The inspection history remains separate from prepared assets. Resetting title metadata changes only names and preferences; it never deletes prepared assets, saves or source files.";
-    NSMutableArray *messages = [NSMutableArray arrayWithObject:@"Prepared assets do not establish game compatibility. Gameplay is unavailable in this build."];
+    NSMutableArray *messages = [NSMutableArray arrayWithObject:@"Prepared assets may contain private game content. Preparation does not establish game compatibility; native execution requires an approved compiled host and matching verified assets."];
     if (_preparation.busy) [messages addObject:_progressText ?: @"Waiting for coordinated file access…"];
     if (_preparation.busy && _preparation.jobIdentifier) [messages addObject:[NSString stringWithFormat:@"Job %@",_preparation.jobIdentifier]];
     if (_refreshing) [messages addObject:@"Verifying prepared assets in the background…"];
@@ -871,11 +877,13 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     if (!path.section) {
         if (!_entries.count) {
-            UITableViewCell *cell = GamesCell(tableView,@"Your private game library",@"Choose your own NSP or XCI and a local key file to prepare verified private assets. No game content or keys are bundled with Canopy.");
+            UITableViewCell *cell = GamesCell(tableView,@"Your private game library",@"Prepare your own NSP/XCI, optionally with its update, or choose an NCA or extracted ExeFS/RomFS folder. Extracted ExeFS/RomFS folders need no keys; container and NCA-folder preparation requests a local key file. Preparation and native execution are separate checks.");
             cell.imageView.image = [UIImage imageNamed:@"Canopy.png"]; cell.selectionStyle = UITableViewCellSelectionStyleNone; return cell;
         }
         NSDictionary *entry = _entries[(NSUInteger)path.row];
-        UITableViewCell *cell = GamesCell(tableView,[_settings displayNameForTitleID:entry[@"titleID"]] ?: entry[@"displayName"],@"Prepared assets • gameplay unavailable");
+        BOOL backend=[CanopyRuntime trustedProfileForTitleID:entry[@"titleID"]] != nil;
+        NSString *status=backend ? @"Native host present; start checks required" : @"No reviewed native host present";
+        UITableViewCell *cell = GamesCell(tableView,GamesDisplayName(entry,_settings),[NSString stringWithFormat:@"Prepared assets • %@ • %@",GamesVersion(entry),status]);
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         if ([self working]) cell.selectionStyle = UITableViewCellSelectionStyleNone;
         return cell;
