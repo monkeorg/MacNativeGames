@@ -1,0 +1,10 @@
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -3277,6 +3277,7 @@
+                                                                    uint32_t &location, uint32_t &var_mbr_idx,
+                                                                    const Bitset &interpolation_qual)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	auto &entry_func = get<SPIRFunction>(ir.default_entry_point);
+ 
+ 	BuiltIn builtin = BuiltInMax;
