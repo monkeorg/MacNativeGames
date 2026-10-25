@@ -27,11 +27,12 @@ class CanopyRuntimeTests(unittest.TestCase):
         cls.build = Path(cls.temp.name).resolve()
         objects = []
         for name in ('mng_container', 'mng_file', 'mng_crypto', 'mng_keys', 'mng_prepare',
-                     'mng_store', 'mng_content', 'mng_bktr', 'mng_folder', 'mng_romfs', 'mng_romfs_runtime'):
+                     'mng_store', 'mng_content', 'mng_bktr', 'mng_folder', 'mng_romfs', 'mng_romfs_runtime', 'mng_addon', 'mng_install'):
             output = cls.build / (name + '.o')
             cls.compile(['xcrun', 'clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror',
                          '-I', str(ROOT / 'launcher/include'), '-c', str(ROOT / f'launcher/src/{name}.c'), '-o', str(output)])
             objects.append(str(output))
+        cls.objects = tuple(objects)
         cls.cli = cls.build / 'canopy'
         cls.compile(['xcrun', 'clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
                      '-I', str(ROOT / 'launcher/include'), str(ROOT / 'launcher/cli/main.c'),
@@ -142,6 +143,28 @@ class CanopyRuntimeTests(unittest.TestCase):
 
     def test_native_entry_failure_does_not_invent_teardown(self):
         self.assertTrue(self.scenario('entry-failure')['nativeEntryInvoked'])
+
+    def test_public_runtime_links_with_explicit_unavailable_provider(self):
+        source = self.build / 'public-runtime.m'
+        source.write_text(r'''#import <Foundation/Foundation.h>
+#import "CanopyRuntime.h"
+#include <stdio.h>
+int main(void) {@autoreleasepool {
+    CanopyRuntime *runtime=[[CanopyRuntime alloc] initWithPreparedRootURL:[NSURL fileURLWithPath:@"/not-used"]];
+    if([CanopyRuntime trustedProfileForTitleID:@"0100f2c0115b6000"]!=nil ||
+       [runtime.capabilities[@"available"] boolValue] || runtime.nativeEntryInvoked)return 2;
+    puts("{\"status\":\"pass\",\"available\":false}");return 0;
+}}
+''')
+        output = self.build / 'public-runtime'
+        self.compile(['xcrun', 'clang', '-O2', '-fobjc-arc', '-fblocks', '-Wall', '-Wextra', '-Werror',
+                      '-I', str(SOURCES), '-I', str(ROOT / 'launcher/include'), str(source),
+                      str(SOURCES / 'CanopyRuntime.m'), str(SOURCES / 'CanopyShaderCache.m'),
+                      *self.objects, '-framework', 'Foundation', '-framework', 'CoreFoundation',
+                      '-framework', 'Metal', '-framework', 'QuartzCore', '-o', str(output)])
+        run = subprocess.run([str(output)], capture_output=True, text=True, timeout=10)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(json.loads(run.stdout), {'status': 'pass', 'available': False})
 
     def test_actual_renderer_device_helper_has_no_private_fallback(self):
         source = self.build / 'renderer-device.m'

@@ -81,11 +81,13 @@ cannot safely unload a module that violates its thread teardown contract.
 `CanopyRuntime.h/.m` now owns a real, separate adapter to the existing compiled
 TOTK host. `games/totk/runtime/canopy_host.h/.m` supplies the original native host
 control descriptor only when explicitly built with `CANOPY_HOST_RUNTIME` into a
-private title host. The public launcher has a weak reference, no descriptor or
-private payload, and therefore no approved executable profile. Descriptor
+private title host. The public launcher links a weak provider that returns NULL,
+with no descriptor or private payload, and therefore no approved executable
+profile. The private host supplies the strong provider; native host builds
+require that provider at link time. Descriptor
 exposure additionally requires an explicit `CANOPY_HOST_TITLE_ID`, reviewed
 `CANOPY_HOST_ORIGINAL_MAIN_SHA256` and `CANOPY_HOST_SHADER_SEED_MANIFEST_SHA256`;
-their defaults expose no profile. The latter
+their defaults expose no profile. The original-main pin
 is the original plaintext ExeFS `main` NSO hash, **not** an encrypted-container
 SHA, rewritten image SHA or invented title-version approval. The host's existing
 `game_version.h`, generated `runtime_tables.h`, embedded-code checks and

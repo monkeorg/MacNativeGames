@@ -18,7 +18,12 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdatomic.h>
-extern const struct canopy_totk_host *totk_canopy_host_v1(void) __attribute__((weak_import));
+/* Public builds link an explicit unavailable provider. A private host (or the
+ * original-source fixture) supplies the strong definition at link time. Native
+ * host builds require that strong provider; they do not invent a fallback. */
+#if !defined(CANOPY_HOST_RUNTIME)
+__attribute__((weak,noinline)) const struct canopy_totk_host *totk_canopy_host_v1(void) {return NULL;}
+#endif
 static CanopyRuntime *activeRuntime;
 static NSError *CRError(NSInteger code,NSString *message) {
     return [NSError errorWithDomain:@"CanopyRuntime" code:code userInfo:@{NSLocalizedDescriptionKey:message}];
@@ -35,7 +40,6 @@ static BOOL CRBoolean(id value) {
 }
 static NSString *CRString(const char *s) {return s ? [NSString stringWithUTF8String:s]:nil;}
 static const struct canopy_totk_host *CRHost(void) {
-    if(!totk_canopy_host_v1)return NULL;
     const struct canopy_totk_host *h=totk_canopy_host_v1();
     if(!h || h->abi_version!=CANOPY_TOTK_HOST_ABI || h->size!=sizeof(*h) || !h->title_id ||
        !CRHex(CRString(h->original_main_sha256),64) || !CRHex(CRString(h->romfs_sha256),64) ||
