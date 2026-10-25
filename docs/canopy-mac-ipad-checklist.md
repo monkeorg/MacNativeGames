@@ -21,17 +21,17 @@ split is clarity cleanup, not a reproduced compiler failure; #77 compiled the ol
 form successfully. No new tests/probes run under this `/goal`; the steps below
 are the later authorized local handoff. A locked-iPad run executed no new-build checks.
 
-**Later local source starting point:** the dependent chain through #122,
-`feat/canopy-save-ui-intents` / `2c3f23e54c264cdda0cd78c1714e8c8b33b309e0`,
+**Later local source starting point:** the dependent chain through #133,
+`feat/canopy-shader-parser-alias-bounds` / `2468ba0da7c36ae828d0a598f7a18588238d81f5`,
 includes the friendly library/session title fixes (#110/#119), storage UI intent
 correction (#120), save UI intent correction (#122) and compiler source through
-#121. Inspect the actual latest recovery cursor before checkout; cloud source
+#133. Inspect the actual latest recovery cursor before checkout; cloud source
 work continues. None of these later changes inherits the earlier green CI.
 Both lifecycle corrections have two independent source reviews and no execution.
 
 | Order | Mac / iPad action | Evidence to retain locally |
 |---|---|---|
-| 1 · Mac source review | Use an isolated checkout of the exact dependent chain through #100. Preserve the working original TOTK checkout/app identity and separate Canopy `.canopy` identity. Review both source-fixed/unrun cohorts: #99 nonmutating retirement preflight and #100 interrupted shader-identity deletion recovery. | Exact revision/cohorts and source findings; no global complete claim and no old CI assigned to new source |
+| 1 · Mac source review | Use an isolated checkout of the exact recorded dependent chain through #133, or its explicitly reviewed successor in the live recovery cursor. Preserve the working original TOTK checkout/app identity and separate Canopy `.canopy` identity. Review source-fixed/unrun #99/#100 retirement recovery and newer #120/#122 lifecycle corrections separately. | Exact revision/cohorts and source findings; no global complete claim and no old CI assigned to new source |
 | 2 · Backup first | Immediately back up saves **and account identity** outside build/install targets; record SHA-256 inventory before any installation or test. | Compare again after installation against this immediate inventory; historical 35-file matches do not substitute |
 | 3 · Public/private builds | In the later authorized Mac validation phase, run existing suites and documented original iPad and Canopy builds separately. Follow `canopy-private-build.md`; inspect `python tools/launcher/build_private_canopy.py --plan --version v143`. Inspect actual generated-source/profile pins, compiler/link output, signed app metadata and fixed inventories before signing/installing locally. | Results for original/public/private targets separately. A plan/public app/profile row is not a private executable provider; new source needs its own Apple compilation; #97 is declaration clarity cleanup |
 | 4 · Default bundled route | First build and exercise the unchanged default bundled-shader route. Check normalized pipeline keys, existing warm-up/memory controls, bounded split warm lists and actual thermal reporting. Preserve experimental display defaults. | Actual seed/map/list identities, startup/cache behavior and thermal observations; no inferred speed, memory or FPS gain |
@@ -63,8 +63,8 @@ part of this handoff. Record exact revisions, unavailable checks and reproducibl
 failures. Source review and compilation never replace physical acceptance.
 
 Bounded compiler source assessment continues after the app snapshot: through
-#121 / `5a95607`, Cross has 457 loop checkpoints and 62 raw sites (12 fixed,
-50 input-dependent or unproven). These later source-only drafts have independent
+#133 / `2468ba0`, Cross has 485 loop checkpoints and 34 raw sites (13 fixed,
+21 input-dependent or unproven). These later source-only drafts have independent
 source reviews and still need actual build/execution validation; the runtime translator stays off. Other recursion,
 allocation and noexcept boundaries remain open. No new broken app flow has been
 demonstrated by that assessment, and it does not establish all cloud work complete.
@@ -81,3 +81,10 @@ are pending. Old intent must not revive on return. Already accepted backend work
 must settle, and an accepted Files export must retain its data until the matching
 picker finishes. Check the full-screen picker presentation too. These are local
 acceptance steps, not executed results.
+
+Later compiler validation must include the exact checked patch chain through
+#133: specialization/array bounds, null-constant planning, numeric bindings,
+parser type-copy amplification and direct self-alias refusals. Source precharges
+do not prove hard heap isolation or allocator failure recovery. The runtime
+translator stays disabled until the full existing build/resource/parity gates
+pass; do not enable it just because a source patch applies or a build links.
