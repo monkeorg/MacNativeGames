@@ -1,0 +1,50 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -5042,7 +5042,10 @@
+ 			if (invalid_initializers)
+ 			{
+ 				for (auto loop_variable : b.loop_variables)
++				{
++					canopy_cross_budget::step();
+ 					get<SPIRVariable>(loop_variable).loop_variable = false;
++				}
+ 				b.loop_variables.clear();
+ 			}
+ 		}
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -1432,8 +1432,11 @@
+ 	}
+ 
+ 	for (auto &cap : ir.declared_capabilities)
++	{
++		canopy_cross_budget::step();
+ 		if (cap == CapabilityRayTraversalPrimitiveCullingKHR)
+ 			statement("layout(primitive_culling);");
++	}
+ 
+ 	if (execution.flags.get(ExecutionModeQuadDerivativesKHR))
+ 		statement("layout(quad_derivatives) in;");
+@@ -13748,7 +13751,10 @@
+ 
+ 		bool forward = true;
+ 		for (uint32_t i = 0; i < length; i++)
++		{
++			canopy_cross_budget::step();
+ 			forward = forward && should_forward(elems[i]);
++		}
+ 
+ 		auto &out_type = get<SPIRType>(result_type);
+ 		auto *in_type = length > 0 ? &expression_type(elems[0]) : nullptr;
+@@ -14153,8 +14159,11 @@
+ 		// or in our case, T(0).
+ 		bool shuffle = false;
+ 		for (uint32_t i = 0; i < length; i++)
++		{
++			canopy_cross_budget::step();
+ 			if (elems[i] >= type0.vecsize || elems[i] == 0xffffffffu)
+ 				shuffle = true;
++		}
+ 
+ 		// Cannot use swizzles with packed expressions, force shuffle path.
+ 		if (!shuffle && has_extended_decoration(vec0, SPIRVCrossDecorationPhysicalTypePacked))
