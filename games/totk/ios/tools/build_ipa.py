@@ -1,9 +1,208 @@
 #!/usr/bin/env python3
 """Build an unsigned, sideloadable iPhone/iPad IPA from a prepared TOTK work tree."""
-import argparse, json, os, shutil, subprocess, sys
+import argparse, hashlib, json, os, plistlib, re, shutil, stat, subprocess, sys, tempfile
 from pathlib import Path
 from compile_seed import METAL_FLAGS
 from xcode_dir import developer_dir
+
+PACK_PART = 1 << 30
+PACK_TOTAL = 16 << 30
+PACK_FILE = 64 << 20
+PACK_COUNT = 262144
+
+def pack_require(condition, message):
+    if not condition: raise RuntimeError(message)
+
+def pack_file(path, consume=None, limit=PACK_FILE):
+    """Hash exactly the stable, unlinked bytes optionally consumed by the writer."""
+    path=Path(path)
+    pack_require(not any(p.is_symlink() for p in (path,*path.parents)), 'linked shader pack input')
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    try:
+        before=os.fstat(fd)
+        pack_require(stat.S_ISREG(before.st_mode) and before.st_nlink==1 and
+                     0<=before.st_size<=limit,'invalid shader pack file')
+        sha=hashlib.sha256();total=0
+        while block:=os.read(fd,65536):
+            total+=len(block)
+            pack_require(total<=before.st_size,'shader pack input grew')
+            sha.update(block)
+            if consume is not None: consume(block)
+        after=os.fstat(fd)
+        pack_require(total==before.st_size and all(getattr(before,k)==getattr(after,k) for k in
+                     ('st_dev','st_ino','st_mode','st_nlink','st_size','st_mtime_ns','st_ctime_ns')),
+                     'shader pack input changed')
+        return sha.hexdigest(),total
+    finally: os.close(fd)
+
+def pack_bytes(path, limit=PACK_FILE):
+    blocks=[];pack_file(path,blocks.append,limit);return b''.join(blocks)
+
+def pack_json(raw):
+    pack_require(len(raw)<=PACK_FILE,'shader pack metadata too large')
+    def unique(pairs):
+        result={}
+        for key,value in pairs:
+            pack_require(key not in result,'duplicate shader pack JSON field');result[key]=value
+        return result
+    return json.loads(raw,object_pairs_hook=unique,
+                      parse_constant=lambda value: pack_require(False,'nonfinite shader pack JSON'))
+
+def pack_name(name):
+    return isinstance(name,str) and re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.-]{0,126}',name) is not None
+
+def pack_entries(folder, limit):
+    names=set()
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            pack_require(len(names)<limit,'shader pack directory exceeds count limit')
+            names.add(entry.name)
+    return names
+
+def seed_pack_document(raw):
+    """Strict shared producer/installer schema; no external path fields exist."""
+    document=pack_json(raw)
+    pack_require(isinstance(document,dict) and set(document)=={
+        'schema','format','titleID','titleVersion','sourceRomFSSHA256','chain','manifestSHA256',
+        'streamSHA256','streamSize','partSize','parts','members'},'invalid shader pack fields')
+    def integer(value,low,high): return type(value) is int and low<=value<=high
+    def sha(value): return isinstance(value,str) and re.fullmatch('[0-9a-f]{64}',value) is not None
+    pack_require(type(document['schema']) is int and document['schema']==1 and
+        document['format']=='TOTKPACK1' and isinstance(document['titleID'],str) and
+        re.fullmatch('[0-9a-f]{16}',document['titleID']) is not None and document['titleID']!='0'*16 and
+        integer(document['titleVersion'],0,0xffffffff) and sha(document['sourceRomFSSHA256']) and
+        isinstance(document['chain'],str) and re.fullmatch('[ -~]{1,128}',document['chain']) is not None and
+        sha(document['manifestSHA256']) and sha(document['streamSHA256']) and
+        integer(document['streamSize'],11,PACK_TOTAL) and
+        type(document['partSize']) is int and document['partSize']==PACK_PART,
+        'invalid shader pack identity or limits')
+    parts=document['parts'];members=document['members']
+    pack_require(isinstance(parts,list) and len(parts)==(document['streamSize']+PACK_PART-1)//PACK_PART and
+        1<=len(parts)<=16 and isinstance(members,list) and 2<=len(members)<=PACK_COUNT,'invalid shader pack counts')
+    for i,part in enumerate(parts):
+        pack_require(isinstance(part,dict) and set(part)=={'index','size','sha256'} and
+            type(part['index']) is int and part['index']==i and
+            integer(part['size'],1,PACK_PART) and part['size']==min(PACK_PART,document['streamSize']-i*PACK_PART) and
+            sha(part['sha256']),'invalid shader pack part')
+    previous='';folded=set();manifest=None;has_map=False;stream_size=11
+    for member in members:
+        pack_require(isinstance(member,dict) and set(member)=={'name','size','sha256'} and
+            pack_name(member['name']) and member['name']>previous and member['name'].lower() not in folded and
+            integer(member['size'],0,PACK_FILE) and sha(member['sha256']),'invalid shader pack member')
+        previous=member['name'];folded.add(previous.lower())
+        stream_size+=2+len(previous)+8+member['size']
+        pack_require(stream_size<=PACK_TOTAL,'shader pack stream exceeds quota')
+        if previous=='seed-manifest.json': manifest=member['sha256']
+        if previous=='shader_map.tsv': has_map=True
+    pack_require(manifest==document['manifestSHA256'] and has_map and stream_size==document['streamSize'],
+                 'shader pack inventory does not bind its manifest/map/stream')
+    return document
+
+def verify_seed_pack(folder, raw):
+    document=seed_pack_document(raw);folder=Path(folder)
+    pack_require(not folder.is_symlink() and folder.is_dir() and
+        pack_entries(folder,2)=={'parts','shader-seed-pack.json'} and
+        pack_bytes(folder/'shader-seed-pack.json')==raw,'shader pack sidecar differs from bundled metadata')
+    parts=folder/'parts'
+    pack_require(not parts.is_symlink() and parts.is_dir() and
+        pack_entries(parts,16)=={f'{i:03d}' for i in range(len(document['parts']))},
+        'shader pack sidecar part inventory differs')
+    stream=hashlib.sha256()
+    for part in document['parts']:
+        digest,size=pack_file(parts/f'{part["index"]:03d}',stream.update,PACK_PART)
+        pack_require(digest==part['sha256'] and size==part['size'],'shader pack piece hash differs')
+    pack_require(stream.hexdigest()==document['streamSHA256'],'shader pack stream hash differs')
+    return document
+
+def make_seed_pack(seed, sidecar, identity):
+    """Emit exact original TOTKPACK1 bytes; publish only a fully hashed sidecar."""
+    seed=Path(seed);sidecar=Path(sidecar)
+    pack_require(not seed.is_symlink() and seed.is_dir(),'invalid shader seed directory')
+    names=[];folded=set()
+    with os.scandir(seed) as entries:
+        for entry in entries:
+            pack_require(len(names)<PACK_COUNT and pack_name(entry.name) and
+                entry.name.lower() not in folded and entry.is_file(follow_symlinks=False),'invalid shader seed inventory')
+            names.append(entry.name);folded.add(entry.name.lower())
+    names.sort()
+    pack_require('seed-manifest.json' in names and 'shader_map.tsv' in names,'shader seed manifest/map missing')
+    manifest_raw=pack_bytes(seed/'seed-manifest.json');manifest_document=pack_json(manifest_raw)
+    pack_require(isinstance(manifest_document,dict) and manifest_document.get('chain')==identity['chain'] and
+        manifest_document.get('source_romfs_sha256')==identity['sourceRomFSSHA256'] and
+        isinstance(manifest_document.get('files'),dict) and manifest_document['files'],
+        'shader seed manifest differs from selected source/chain')
+    pack_require(not any(p.is_symlink() for p in (sidecar,*sidecar.parents)),'linked shader sidecar directory')
+    sidecar.mkdir(parents=True,exist_ok=True,mode=0o700)
+    stage=Path(tempfile.mkdtemp(prefix='.seed-pack-stage-',dir=sidecar));(stage/'parts').mkdir(mode=0o700)
+    output=None;part_hash=None;part_bytes=0;total=0;stream=hashlib.sha256();parts=[];members=[]
+    def close_part():
+        nonlocal output
+        if output is not None:
+            output.flush();os.fsync(output.fileno());output.close();output=None
+            parts.append({'index':len(parts),'size':part_bytes,'sha256':part_hash.hexdigest()})
+    def write(block):
+        nonlocal output,part_hash,part_bytes,total
+        at=0
+        while at<len(block):
+            if output is None or part_bytes==PACK_PART:
+                close_part();pack_require(len(parts)<16,'too many shader pack parts')
+                output=(stage/'parts'/f'{len(parts):03d}').open('xb');part_hash=hashlib.sha256();part_bytes=0
+            count=min(len(block)-at,PACK_PART-part_bytes)
+            pack_require(total+count<=PACK_TOTAL,'shader pack exceeds stream quota')
+            chunk=block[at:at+count];output.write(chunk);part_hash.update(chunk);stream.update(chunk)
+            part_bytes+=count;total+=count;at+=count
+    try:
+        write(b'TOTKPACK1')
+        for name in names:
+            # First read fixes length/hash; the actual emitted read must match.
+            expected,size=pack_file(seed/name)
+            write(len(name).to_bytes(2,'little')+name.encode('ascii')+size.to_bytes(8,'little'))
+            actual,actual_size=pack_file(seed/name,write)
+            pack_require(actual==expected and actual_size==size,'shader seed changed between reads')
+            members.append({'name':name,'size':size,'sha256':actual})
+        pack_require(set(names)==pack_entries(seed,PACK_COUNT),'shader seed inventory changed')
+        write(b'\0\0');close_part()
+        manifest=next(member['sha256'] for member in members if member['name']=='seed-manifest.json')
+        pack_require(manifest==hashlib.sha256(manifest_raw).hexdigest(),'shader seed manifest changed')
+        actual_members={member['name']:member['sha256'] for member in members}
+        pack_require(all(pack_name(name) and actual_members.get(name)==sha
+            for name,sha in manifest_document['files'].items()),'shader seed member differs from its manifest')
+        document=dict(identity,schema=1,format='TOTKPACK1',manifestSHA256=manifest,
+            streamSHA256=stream.hexdigest(),streamSize=total,partSize=PACK_PART,parts=parts,members=members)
+        raw=(json.dumps(document,sort_keys=True,separators=(',',':'))+'\n').encode()
+        seed_pack_document(raw)
+        (stage/'shader-seed-pack.json').write_bytes(raw)
+        verify_seed_pack(stage,raw)
+        final=sidecar/document['streamSHA256']
+        pack_require(not final.is_symlink(),'linked shader pack identity directory')
+        if final.exists(): verify_seed_pack(final,raw)
+        else: stage.rename(final)
+        return raw
+    finally:
+        if output is not None: output.close()
+        shutil.rmtree(stage,ignore_errors=True)
+
+def seed_pack_identity(tree, version):
+    manifests={'v0':'1.0.0','v112':'1.1.2','v121':'1.2.1','v143':'1.4.3'}
+    expected=pack_json(pack_bytes(tree/'assets'/f'expected-v{manifests[version]}.json'))
+    header=pack_bytes(tree/'third_party/d2r_gfx/gfx/nvn/dmsh_chain.h').decode('ascii')
+    match=re.search(r'^#define DMSH_CHAIN "([ -~]{1,128})"$',header,re.M)
+    pack_require(match is not None,'missing compiled shader chain')
+    identity={'titleID':expected['title_id'].lower(),'titleVersion':expected['version'],
+        'sourceRomFSSHA256':expected['romfs']['sha256'],'chain':match.group(1)}
+    return identity,expected['display_version']
+
+def require_seed_pack_reader(app, env):
+    """Source/header markers alone cannot make a seedless app work."""
+    info=plistlib.loads(pack_bytes(app/'Info.plist'))
+    pack_require(type(info.get('TOTKShaderSeedPackReaderABI')) is int and
+                 info['TOTKShaderSeedPackReaderABI']==1,'built app lacks seed pack reader ABI1')
+    executable=info.get('CFBundleExecutable')
+    pack_require(pack_name(executable),'invalid built app executable name')
+    pack_file(app/executable,limit=512<<20)
+    symbols=subprocess.run(['xcrun','nm','-gjU',str(app/executable)],env=env,
+                           capture_output=True,text=True,check=True).stdout.splitlines()
+    pack_require('_TOTKShaderPackReaderABI' in symbols,'built app lacks actual seed pack reader symbol')
 
 def run(args, cwd, log, env):
     log.parent.mkdir(parents=True,exist_ok=True)
@@ -42,9 +241,11 @@ def main():
     p.add_argument('--tree',type=Path,required=True);p.add_argument('--out',type=Path,required=True)
     p.add_argument('--version',choices=['v0','v112','v121','v143'],required=True);p.add_argument('--logs',type=Path,required=True)
     p.add_argument('--display-settings',action='store_true',help='experimental v143 signed720/1080 scene/output and full-aspect profile')
+    p.add_argument('--seed-pack',action='store_true',help='opt-in verified Documents shader pack; requires --image-outside and a wired ABI1 reader')
     p.add_argument('--image-outside',action='store_true',help='leave romfs.bin out: the device keeps it in Documents/GameData');p.add_argument('--app-name',default='Tears of the Kingdom');p.add_argument('--bundle-id',default='org.macnativegames.totk')
     a=p.parse_args(); tree=a.tree.resolve(); ios=tree/'ios';gen=ios/'Gen';logs=a.logs.resolve(); out=a.out.resolve()
     if a.display_settings and a.version!='v143': raise RuntimeError('--display-settings supports only TOTK1.4.3')
+    if a.seed_pack and not a.image_outside: raise RuntimeError('--seed-pack requires --image-outside')
     if out.suffix.lower() not in ('.ipa','.app'): raise RuntimeError('iOS output path must end in .ipa (or .app: the unsigned folder)')
     env=dict(os.environ,DEVELOPER_DIR=developer_dir())
     sdk=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip()
@@ -138,6 +339,7 @@ def main():
         ios,logs/'xcodebuild-ios.log',env)
     app=derived/'Build/Products/Release-iphoneos/TOTK.app'
     if not app.is_dir(): raise RuntimeError(f'Xcode did not produce {app}')
+    if a.seed_pack: require_seed_pack_reader(app,env)
     # Carry the increased-memory-limit entitlement in the executable's ad-hoc signature so re-signing tools keep it;
     # the game's 3.2 GiB pool exceeds the default iOS footprint limit.
     run(['codesign','--force','--sign','-','--entitlements',ios/'Sources/TOTK.entitlements',app/'TOTK'],ios,logs/'ios-entitlements.log',env)
@@ -174,6 +376,40 @@ def main():
     if aliases.is_file():
         run([sys.executable,tree/'scripts/shader_list.py','rename',aliases,res/'shader-seed/pso_title.tsv',
              res/'shader-seed/pso_list.tsv'],tree,logs/'shader-list-rename.log',env)
+    # Bind the actual final exported/renamed lists (and map) before taking a
+    # transport or trusted-consumer raw-manifest pin. Previous approved pins
+    # cannot authorize these changed bytes.
+    final_seed=res/'shader-seed'
+    previous_manifest=pack_bytes(final_seed/'seed-manifest.json')
+    final_manifest=pack_json(previous_manifest)
+    pack_require(isinstance(final_manifest,dict) and isinstance(final_manifest.get('files'),dict),
+                 'invalid final shader seed manifest')
+    pso_hashes={name:pack_file(final_seed/name)[0] for name in ('pso_list.tsv','pso_title.tsv')}
+    final_manifest['files'].update(pso_hashes)
+    final_manifest['shader_map_sha256']=pack_file(final_seed/'shader_map.tsv')[0]
+    final_manifest_raw=(json.dumps(final_manifest,indent=2)+'\n').encode()
+    (final_seed/'seed-manifest.json').write_bytes(final_manifest_raw)
+    logs.mkdir(parents=True,exist_ok=True)
+    (logs/'ios-final-seed-observation.json').write_text(json.dumps({
+        'schema':1,'status':'source-prepared; no device acceptance',
+        'previousManifestSHA256':hashlib.sha256(previous_manifest).hexdigest(),
+        'manifestSHA256':hashlib.sha256(final_manifest_raw).hexdigest(),
+        'shaderMapSHA256':final_manifest['shader_map_sha256'],'finalPSOLists':pso_hashes,
+        'builderSHA256':pack_file(Path(__file__),limit=4<<20)[0]},indent=2)+'\n')
+    if a.seed_pack:
+        identity,game_version=seed_pack_identity(tree,a.version)
+        raw=make_seed_pack(res/'shader-seed',out.with_name(out.stem+'-shader-pack'),identity)
+        # App resources and these public identity facts are covered by the
+        # explicit install tool's final developer signature, not an env marker.
+        (res/'shader-seed-pack.json').write_bytes(raw)
+        info=plistlib.loads((dest/'Info.plist').read_bytes())
+        info.update(TOTKShaderSeedPackTitleID=identity['titleID'],
+            TOTKShaderSeedPackTitleVersion=identity['titleVersion'],
+            TOTKShaderSeedPackRomFSSHA256=identity['sourceRomFSSHA256'],
+            TOTKShaderSeedPackGameVersion=game_version,TOTKShaderSeedPackChain=identity['chain'],
+            TOTKShaderSeedPackMetadataSHA256=hashlib.sha256(raw).hexdigest())
+        (dest/'Info.plist').write_bytes(plistlib.dumps(info,fmt=plistlib.FMT_BINARY))
+        shutil.rmtree(res/'shader-seed')
     # Keep the first install self-contained; Documents shader transport is not
     # enabled until producer/reader integrity and publication contracts exist.
     if out.suffix=='.app':

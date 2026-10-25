@@ -16,6 +16,8 @@ built with the same bundle identifier and entitlements (-allowProvisioningUpdate
 import argparse, hashlib, json, os, plistlib, re, shutil, stat, subprocess, sys, tempfile, zipfile
 from datetime import timezone
 from pathlib import Path
+from build_ipa import (pack_bytes, pack_file, pack_require, seed_pack_document,
+                       verify_seed_pack, PACK_PART)
 
 ENTITLEMENT = 'com.apple.developer.kernel.increased-memory-limit'
 CACHE = Path.home()/'Library/Caches/MacNativeGames/ios-signing'
@@ -183,6 +185,44 @@ def push_game_data(dev, bundle_id, image):
         if src.read(1) or sent_sha.hexdigest() != sha: raise ValueError('local RomFS changed during transfer')
         (Path(d)/'romfs.sha256').write_text(sha + '\n'); copy(Path(d)/'romfs.sha256', 'romfs.sha256')
 
+def push_seed_pack(dev, bundle_id, folder, raw):
+    """Only signed-bundle inventory selects the fixed Documents input path."""
+    document=verify_seed_pack(folder,raw)
+    sub='Documents/GameData/shader-packs/'+document['streamSHA256']+'/parts'
+    expected={f'{part["index"]:03d}' for part in document['parts']}
+    have=device_files(dev,bundle_id,sub)
+    pack_require(not set(have)-expected,'unexpected device shader pack entries; no upload started')
+    with tempfile.TemporaryDirectory(prefix='totk-seed-upload-') as directory:
+        temporary=Path(directory).resolve()
+        def remote_matches(part):
+            name=f'{part["index"]:03d}';local=temporary/'readback'
+            local.unlink(missing_ok=True)
+            result=subprocess.run(['xcrun','devicectl','device','copy','from','--device',dev,
+                '--domain-type','appDataContainer','--domain-identifier',bundle_id,
+                '--source',sub+'/'+name,'--destination',local],capture_output=True)
+            pack_require(result.returncode==0,'cannot verify an existing device shader pack piece')
+            sha,size=pack_file(local,limit=PACK_PART)
+            local.unlink()
+            return sha==part['sha256'] and size==part['size']
+        for part in document['parts']:
+            name=f'{part["index"]:03d}'
+            if name in have and remote_matches(part): continue
+            local=temporary/'upload'
+            local.unlink(missing_ok=True)
+            # devicectl consumes this owned snapshot, never a previously hashed
+            # mutable sidecar path. Copy and hash the same descriptor stream.
+            with local.open('xb') as output:
+                sha,size=pack_file(folder/'parts'/name,output.write,PACK_PART)
+                output.flush();os.fsync(output.fileno())
+            pack_require(sha==part['sha256'] and size==part['size'],'local shader pack piece changed')
+            run(['xcrun','devicectl','device','copy','to','--device',dev,
+                '--domain-type','appDataContainer','--domain-identifier',bundle_id,
+                '--source',local,'--destination',sub+'/'+name],capture_output=True)
+            local.unlink()
+            pack_require(remote_matches(part),'uploaded shader pack piece failed readback')
+        pack_require(set(device_files(dev,bundle_id,sub))==expected,'incomplete device shader pack inventory')
+    print('shaders: verified every device pack piece; the app verifies and publishes its private seed')
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('ipa', type=Path, help='the unsigned IPA (or .app folder) from build_app.py --platform ios')
@@ -220,6 +260,20 @@ def main():
             run(['ditto','-x','-k',a.ipa,work])
             if file_sha256(a.ipa) != archive_sha: raise ValueError('IPA changed during extraction')
             stamp.write_text(archive_sha)
+    pack_metadata=app/'GameData/shader-seed-pack.json';pack_raw=None;pack_folder=None
+    if pack_metadata.exists():
+        pack_raw=pack_bytes(pack_metadata);pack_document=seed_pack_document(pack_raw)
+        bundled=plistlib.loads(pack_bytes(app/'Info.plist'))
+        pack_require(type(bundled.get('TOTKShaderSeedPackReaderABI')) is int and
+            bundled['TOTKShaderSeedPackReaderABI']==1,'shader pack requires actual reader ABI1')
+        pack_require(bundled.get('TOTKShaderSeedPackMetadataSHA256')==hashlib.sha256(pack_raw).hexdigest(),
+                     'bundled shader pack metadata pin differs')
+        for field,key in (('titleID','TOTKShaderSeedPackTitleID'),('titleVersion','TOTKShaderSeedPackTitleVersion'),
+                ('sourceRomFSSHA256','TOTKShaderSeedPackRomFSSHA256'),('chain','TOTKShaderSeedPackChain')):
+            pack_require(type(bundled.get(key)) is type(pack_document[field]) and
+                bundled[key]==pack_document[field],'bundled shader pack identity differs')
+        pack_folder=a.ipa.with_name(a.ipa.stem+'-shader-pack')/pack_document['streamSHA256']
+        verify_seed_pack(pack_folder,pack_raw)
     plist = app/'Info.plist'
     infoplist = plistlib.loads(plist.read_bytes()); infoplist['CFBundleIdentifier'] = bundle_id
     plist.write_bytes(plistlib.dumps(infoplist, fmt=plistlib.FMT_BINARY))
@@ -229,9 +283,12 @@ def main():
                                                                 'get-task-allow', ENTITLEMENT) if k in ents}))
     print('signing (a few minutes: every game file is hashed)')
     run(['codesign','--force','--sign',identity_of(signed),'--entitlements',entfile,'--generate-entitlement-der',app])
+    if pack_raw is not None:
+        pack_require(pack_bytes(pack_metadata)==pack_raw,'shader metadata changed during signing')
     print('installing (a few minutes over the cable)')
     run(['xcrun','devicectl','device','install','app','--device',dev['identifier'],app])
     if a.game_data: push_game_data(dev['identifier'], bundle_id, a.game_data)
+    if pack_raw is not None: push_seed_pack(dev['identifier'],bundle_id,pack_folder,pack_raw)
     print('installed. First time on this device: Settings > General > VPN & Device Management > trust your Apple ID.')
 
 if __name__ == '__main__': main()
