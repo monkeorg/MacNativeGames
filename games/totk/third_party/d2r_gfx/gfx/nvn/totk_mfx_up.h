@@ -16,6 +16,7 @@ int mfxup_enabled(void);   // TOTK_MFX_UPSCALE: default off; key 3 enables it in
 int mfxup_output_enabled(void);   // TOTK_MFX_OUTPUT: default off; key 3 enables the window output stage in the manual MetalFX picture mode
 void mfxup_output_set(int on);    // runtime: "flag mfx_output 0|1" (the output stage alone, for A/B)
 void mfxup_set(int on);    // runtime: "flag mfx_upscale 0|1"
+int mfxup_recent_activity(void);   // bit per context: successful encode within two seconds; not GPU completion
 /* Encodes a MetalFX spatial upscale of the top-left in_w x in_h region of src into cb (Metal 4; the caller has ended its
    render / compute encoders). dst nil: into the context's own out_w x out_h texture; otherwise into dst itself (its format
    and usage must suit MetalFX; out_w / out_h are dst's size). mode: an MTLFXSpatialScalerColorProcessingMode. Returns the

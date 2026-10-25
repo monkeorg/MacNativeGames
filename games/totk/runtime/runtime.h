@@ -106,6 +106,8 @@ unsigned runtime_ios_fps_limit(void);
 int runtime_ios_fps_limit_supported(unsigned fps);
 int runtime_ios_taa_supported(void);
 int runtime_ios_spatial_upscaling_supported(void);
+int runtime_ios_upscaling_activity(void);
+void runtime_ios_set_display_output_size(unsigned width, unsigned height);
 void runtime_ios_set_taa_enabled(int enabled);
 int runtime_ios_taa_enabled(void);
 void runtime_ios_set_thermal_hud_visible(int visible);

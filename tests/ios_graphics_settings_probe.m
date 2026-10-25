@@ -79,6 +79,55 @@ int main(int argc,const char **argv) {
             assert(TOTKLauncherDisplaySize(defaults,@{@"TOTKIOSDisplaySettingsVersion":@1},1366,1024,&w,&h,&full));
             assert(w==1200 && h==900 && full);
             [defaults removePersistentDomainForName:suite];
+        } else if ([test isEqual:@"plans"]) {
+            [defaults removePersistentDomainForName:suite];
+            NSDictionary *info=@{@"TOTKIOSDisplaySettingsVersion":@1};
+            [defaults setObject:@"display" forKey:@"TOTK_LAUNCHER_ASPECT"];
+            [defaults setObject:@"1440" forKey:@"TOTK_LAUNCHER_DISPLAY_OUTPUT"];
+            TOTKGraphicsPlan plan;
+            assert(TOTKLauncherGraphicsPlan(defaults,info,1376,1032,2,&plan));
+            assert(plan.inputWidth==960 && plan.inputHeight==720 && plan.displayWidth==1920 && plan.displayHeight==1440);
+            [defaults setObject:@"native" forKey:@"TOTK_LAUNCHER_DISPLAY_OUTPUT"];
+            [defaults setInteger:1080 forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+            assert(TOTKLauncherGraphicsPlan(defaults,info,1376,1032,2,&plan));
+            assert(plan.inputWidth==1440 && plan.inputHeight==1080 && plan.displayWidth==2752 && plan.displayHeight==2064);
+            [defaults setObject:@"input-scale" forKey:@"TOTK_LAUNCHER_RESOLUTION_MODE"];
+            [defaults setInteger:720 forKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
+            [defaults setDouble:2 forKey:@"TOTK_LAUNCHER_UPSCALE_FACTOR"];
+            assert(TOTKLauncherGraphicsPlan(defaults,info,1376,1032,2,&plan));
+            assert(plan.inputWidth==960 && plan.inputHeight==720 && plan.displayWidth==1920 && plan.displayHeight==1440);
+            [defaults setObject:@"output-scale" forKey:@"TOTK_LAUNCHER_RESOLUTION_MODE"];
+            assert(TOTKLauncherGraphicsPlan(defaults,info,1376,1032,2,&plan));
+            assert(plan.inputWidth==1376 && plan.inputHeight==1032 && plan.displayWidth==2752 && plan.displayHeight==2064);
+            [defaults setDouble:1 forKey:@"TOTK_LAUNCHER_UPSCALE_FACTOR"];
+            plan.inputWidth=123;
+            assert(!TOTKLauncherGraphicsPlan(defaults,info,1376,1032,2,&plan) && plan.inputWidth==123);
+            [defaults setDouble:2 forKey:@"TOTK_LAUNCHER_UPSCALE_FACTOR"];
+            [defaults setObject:@"16:9" forKey:@"TOTK_LAUNCHER_ASPECT"];
+            assert(TOTKLauncherGraphicsPlan(defaults,info,1920,1080,2,&plan));
+            assert(plan.inputWidth==1920 && plan.inputHeight==1080 && plan.displayWidth==3840 && plan.displayHeight==2160);
+            [defaults setObject:@"display" forKey:@"TOTK_LAUNCHER_ASPECT"];
+            [defaults setObject:@"2160" forKey:@"TOTK_LAUNCHER_DISPLAY_OUTPUT"];
+            assert(TOTKLauncherGraphicsPlan(defaults,info,1376,1032,2,&plan));
+            assert(plan.inputWidth==1440 && plan.inputHeight==1080 && plan.displayWidth==2880 && plan.displayHeight==2160);
+            [defaults setObject:@"native75" forKey:@"TOTK_LAUNCHER_DISPLAY_OUTPUT"];
+            [defaults setObject:@"input-output" forKey:@"TOTK_LAUNCHER_RESOLUTION_MODE"];
+            assert(TOTKLauncherGraphicsPlan(defaults,info,1376,1032,2,&plan));
+            assert(plan.displayWidth==2064 && plan.displayHeight==1548);
+            assert(!TOTKLauncherGraphicsPlan(defaults,info,NAN,1032,2,&plan));
+            assert(!TOTKLauncherGraphicsPlan(defaults,info,1376,1032,INFINITY,&plan));
+            assert(!TOTKLauncherGraphicsPlan(defaults,@{},1376,1032,2,&plan));
+            for (id invalid in @[@YES,@0,@0.5,@4.01,@"2",@[],@{},@(NAN),@(INFINITY)]) {
+                [defaults setObject:invalid forKey:@"TOTK_LAUNCHER_UPSCALE_FACTOR"];
+                assert(TOTKLauncherUpscaleFactor(defaults)==2 && ![defaults objectForKey:@"TOTK_LAUNCHER_UPSCALE_FACTOR"]);
+            }
+            for (NSString *key in @[@"TOTK_LAUNCHER_RESOLUTION_MODE",@"TOTK_LAUNCHER_DISPLAY_OUTPUT"]) {
+                [defaults setObject:@"invalid" forKey:key];
+                assert([TOTKLauncherResolutionMode(defaults) isEqual:@"input-output"]);
+                assert([TOTKLauncherPresentationMode(defaults) isEqual:@"game"] || [key isEqual:@"TOTK_LAUNCHER_RESOLUTION_MODE"]);
+                assert(![defaults objectForKey:key]);
+            }
+            [defaults removePersistentDomainForName:suite];
         } else if ([test isEqual:@"write"]) {
             [defaults setInteger:40 forKey:@"TOTK_LAUNCHER_FPS_LIMIT"];
             [defaults setBool:YES forKey:@"TOTK_LAUNCHER_TAA"];
@@ -86,11 +135,16 @@ int main(int argc,const char **argv) {
             [defaults setInteger:900 forKey:@"TOTK_LAUNCHER_CUSTOM_HEIGHT"];
             [defaults setInteger:600 forKey:@"TOTK_LAUNCHER_CUSTOM_SCENE_HEIGHT"];
             [defaults setBool:YES forKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"];
+            [defaults setObject:@"native" forKey:@"TOTK_LAUNCHER_DISPLAY_OUTPUT"];
+            [defaults setObject:@"input-scale" forKey:@"TOTK_LAUNCHER_RESOLUTION_MODE"];
+            [defaults setDouble:1.5 forKey:@"TOTK_LAUNCHER_UPSCALE_FACTOR"];
             assert([defaults synchronize]);
         } else if ([test isEqual:@"read"]) {
             assert(TOTKLauncherFPSLimit(defaults)==40 && TOTKLauncherTAA(defaults));
             assert(TOTKLauncherSceneScale(defaults)==67 && TOTKLauncherSpatialUpscaling(defaults));
             assert(TOTKLauncherRenderHeight(defaults)==900 && TOTKLauncherCustomSceneHeight(defaults)==600);
+            assert([TOTKLauncherPresentationMode(defaults) isEqual:@"native"] && [TOTKLauncherResolutionMode(defaults) isEqual:@"input-scale"]);
+            assert(TOTKLauncherUpscaleFactor(defaults)==1.5);
             [defaults removePersistentDomainForName:suite];
             assert([defaults synchronize]);
         } else assert(!"unknown test");

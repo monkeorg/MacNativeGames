@@ -174,30 +174,29 @@ final class DeviceLauncherUI: XCTestCase {
     }
 
     func test01bDisplayPreferencesPersistWhenSupported() throws {
-        let resolution = cell("Output resolution")
-        let aspect = cell("Aspect ratio")
-        guard resolution.isEnabled && aspect.isEnabled else {
-            XCTAssertEqual(resolution.value as? String, "1280 × 720")
-            XCTAssertEqual(aspect.value as? String, "16:9")
-            throw XCTSkip("This signed build does not expose display settings")
-        }
+        let resolution = cell("Resolution & scaling")
+        guard resolution.isEnabled else { throw XCTSkip("This signed build does not expose display settings") }
         let frame = app.windows.firstMatch.frame
-        guard max(frame.width, frame.height) / min(frame.width, frame.height) <= 16.0 / 9.0 else {
-            throw XCTSkip("Full display requires a supported screen aspect")
+        guard abs(max(frame.width, frame.height) / min(frame.width, frame.height) - 4.0 / 3.0) < 0.001 else {
+            throw XCTSkip("Full display requires a supported 4:3 screen")
         }
         resolution.tap()
+        cell("Mode").tap()
+        app.buttons["Input + output"].tap()
+        cell("Input").tap()
         app.buttons["720 high"].tap()
-        XCTAssertEqual(cell("Output resolution").value as? String, "720 high")
-        cell("Output resolution").tap()
+        XCTAssertEqual(cell("Input").value as? String, "720 high")
+        cell("Input").tap()
         app.buttons["1080 high"].tap()
-        cell("Aspect ratio").tap()
+        cell("Aspect").tap()
         app.buttons["16:9"].tap()
-        cell("Aspect ratio").tap()
+        cell("Aspect").tap()
         app.buttons["Full display"].tap()
         app.terminate()
         app.launch()
-        XCTAssertEqual(cell("Output resolution").value as? String, "1080 high")
-        XCTAssertEqual(cell("Aspect ratio").value as? String, "Full display")
+        cell("Resolution & scaling").tap()
+        XCTAssertEqual(cell("Input").value as? String, "1080 high")
+        XCTAssertEqual(cell("Aspect").value as? String, "Full display")
         record("1080 full-display preferences persist")
     }
 
@@ -411,7 +410,7 @@ final class DeviceLauncherUI: XCTestCase {
         XCTAssertLessThanOrEqual(app.tables.firstMatch.frame.width, 961)
         XCTAssertFalse(touch.isHittable)
         XCTAssertFalse(app.cells["Play"].exists)
-        for title in ["Output resolution", "Aspect ratio", "Performance overlay", "Apple Metal HUD",
+        for title in ["Resolution & scaling", "Performance overlay", "Apple Metal HUD",
                       "Touch controls", "Controller type", "Mouse sensitivity", "Invert mouse Y", "Button mappings"] {
             XCTAssertTrue(cell(title).exists)
         }
@@ -591,7 +590,7 @@ final class DeviceLauncherUI: XCTestCase {
             if !app.buttons["Close game menu"].isHittable { openGameMenu() }
             choose("60 FPS", for: fpsRow)
             if taaSupported {
-                choose(originalTAA, for: taaRow, expectedValue: originalTAA == "On" ? "On (requested)" : "Off")
+                choose(originalTAA, for: taaRow, expectedValue: originalTAA == "On" ? "On" : "Off")
             }
             choose("Automatic", for: "Touch controls")
             closeGameMenu()
@@ -611,16 +610,16 @@ final class DeviceLauncherUI: XCTestCase {
         record("Supported live target frame-rate choices retained")
 
         if taaSupported {
-            choose("On", for: taaRow, expectedValue: "On (requested)")
+            choose("On", for: taaRow, expectedValue: "On")
             closeGameMenu()
             let frames = expectation(description: "Allow requested TAA to reach subsequent gameplay frames")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { frames.fulfill() }
             wait(for: [frames], timeout: 5)
             record("Gameplay two seconds after TAA On request")
             openGameMenu()
-            XCTAssertEqual(cell(taaRow).value as? String, "On (requested)")
+            XCTAssertEqual(cell(taaRow).value as? String, "On")
             XCTAssertFalse(app.alerts["Restart required"].exists)
-            choose(originalTAA, for: taaRow, expectedValue: originalTAA == "On" ? "On (requested)" : "Off")
+            choose(originalTAA, for: taaRow, expectedValue: originalTAA == "On" ? "On" : "Off")
         } else {
             XCTAssertEqual(cell(taaRow).value as? String, "Unavailable")
         }

@@ -122,8 +122,11 @@ void runtime_shortcut_help_toggle(void) {}
         for (unsigned i=0;i<3 && fps_overlay_hud_mode()!=hud;i++) fps_overlay_toggle_hints();
         unsigned width, height; BOOL fullDisplay;
         CGSize viewSize = g_active_window.bounds.size;
-        if (TOTKLauncherDisplaySize(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.infoDictionary,
-                                   viewSize.width, viewSize.height, &width, &height, &fullDisplay)) {
+        UIScreen *screen = g_active_window.windowScene.screen;
+        TOTKGraphicsPlan graphics;
+        if (TOTKLauncherGraphicsPlan(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.infoDictionary,
+                                   viewSize.width, viewSize.height,screen.nativeScale,&graphics)) {
+            width=graphics.canvasWidth; height=graphics.canvasHeight; fullDisplay=graphics.fullDisplay;
             NSString *layout = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"GameData/romfs-patches-4x3"];
             id layoutVersion = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TOTKIOSFourThreeLayoutVersion"];
             BOOL tallLayout = fullDisplay && width * 3 == height * 4 &&
@@ -138,10 +141,8 @@ void runtime_shortcut_help_toggle(void) {}
                 setenv("TOTK_ROMFS_PATCHES",layout.fileSystemRepresentation,1);
                 setenv("TOTK_UI_SQUEEZE","0",1);   // Layout roots already correct the 4:3 UI proportions.
             }
-            unsigned sceneWidth, sceneHeight;
-            if (!TOTKLauncherSceneSize(NSUserDefaults.standardUserDefaults,width,height,&sceneWidth,&sceneHeight)) {
-                sceneWidth = width; sceneHeight = height;
-            }
+            unsigned sceneWidth=graphics.inputWidth, sceneHeight=graphics.inputHeight;
+            if (!fullDisplay && graphics.fullDisplay) sceneWidth=(unsigned)(2*round(sceneHeight*16.0/9.0/2));
             char size[32], sceneSize[32], drawableHeight[16];
             snprintf(size,sizeof size,"%ux%u",width,height);
             snprintf(sceneSize,sizeof sceneSize,"%ux%u",sceneWidth,sceneHeight);
@@ -150,6 +151,13 @@ void runtime_shortcut_help_toggle(void) {}
             setenv("TOTK_OUTPUT_RES",size,0);
             BOOL spatial = TOTKLauncherSpatialUpscaling(NSUserDefaults.standardUserDefaults) && runtime_ios_spatial_upscaling_supported();
             setenv("TOTK_MFX_UPSCALE",spatial ? "1" : "0",0);
+            NSString *presentation = TOTKLauncherPresentationMode(NSUserDefaults.standardUserDefaults);
+            BOOL defaultOutput=[TOTKLauncherResolutionMode(NSUserDefaults.standardUserDefaults) isEqual:@"input-output"] && [presentation isEqual:@"game"];
+            unsigned displayW=defaultOutput ? 0 : graphics.displayWidth,displayH=defaultOutput ? 0 : graphics.displayHeight;
+            runtime_ios_set_display_output_size(displayW,displayH);
+            setenv("TOTK_MFX_OUTPUT",spatial && displayW && displayH ? "1" : "0",0);
+            fprintf(stderr,"[totk] display output mode %s; requested drawable %ux%u (0 = game canvas); MetalFX output %s\n",
+                presentation.UTF8String,displayW,displayH,getenv("TOTK_MFX_OUTPUT"));
             fprintf(stderr,"[totk] requested scene %s -> output %s; MetalFX spatial %s (application requires renderer confirmation)\n",
                 getenv("TOTK_RENDER_RES"),getenv("TOTK_OUTPUT_RES"),getenv("TOTK_MFX_UPSCALE"));
             setenv("TOTK_ASPECT",fullDisplay ? "display" : "0",0);

@@ -87,7 +87,7 @@
         [self.gear.heightAnchor constraintEqualToConstant:44],
         [self.card.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
         [self.card.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor], width, height,
-        [self.card.widthAnchor constraintLessThanOrEqualToConstant:1008],
+        [self.card.widthAnchor constraintLessThanOrEqualToConstant:744],
         [self.card.heightAnchor constraintLessThanOrEqualToConstant:840],
         [self.card.widthAnchor constraintLessThanOrEqualToAnchor:safe.widthAnchor constant:-24],
         [self.card.heightAnchor constraintLessThanOrEqualToAnchor:safe.heightAnchor constant:-24],
@@ -114,6 +114,7 @@
         control.userInteractionEnabled = NO;
     }
     shield.expanded = YES;
+    shield.backgroundColor = [UIColor.blackColor colorWithAlphaComponent:0.12];
     self.view.accessibilityViewIsModal = YES;
     self.gear.hidden = YES;
     self.card.hidden = NO;
@@ -133,6 +134,7 @@
     [self.controlStates removeAllObjects];
     TOTKSetMouseInputEnabled(self.mouseInputWasEnabled);
     ((TOTKMenuView *)self.view).expanded = NO;
+    self.view.backgroundColor = UIColor.clearColor;
     self.view.accessibilityViewIsModal = NO;
     self.card.hidden = YES;
     self.gear.hidden = NO;

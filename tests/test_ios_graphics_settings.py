@@ -42,3 +42,6 @@ class IOSGraphicsSettingsTests(unittest.TestCase):
 
     def test_scene_output_dimensions_and_signed_capacity(self):
         self.run_probe('dimensions', 'TOTKGraphicsProbe.' + uuid.uuid4().hex)
+
+    def test_native_ipad_and_4k_display_plans(self):
+        self.run_probe('plans', 'TOTKGraphicsProbe.' + uuid.uuid4().hex)

@@ -46,6 +46,7 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;         // g_dev / g_co
 static pthread_mutex_t g_build_mu = PTHREAD_MUTEX_INITIALIZER;   // the contexts' ready slots
 static dispatch_queue_t g_build_q;                               // background scaler builds, one at a time
 static _Atomic int g_on = -1;
+static _Atomic uint64_t g_recent_ms[MFXUP_NCTX];
 static int g_unavailable;                                        // no MetalFX here (device, residency set, compiler): never retried
 
 int mfxup_enabled(void) {
@@ -105,6 +106,14 @@ static int shared_objects(id<MTLDevice> dev) {
     return ok;
 }
 static uint64_t now_ms(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000; }
+int mfxup_recent_activity(void) {
+    uint64_t now = now_ms(); int result = 0;
+    for (int i=0;i<MFXUP_NCTX;i++) {
+        uint64_t then = atomic_load_explicit(&g_recent_ms[i],memory_order_relaxed);
+        if (then && now >= then && now-then <= 2000) result |= 1 << i;
+    }
+    return result;
+}
 /* A failed build (e.g. no memory for the output texture on iOS) is retried after a while; a full list drops its oldest entry. */
 static void mark_bad(ctx_t *c, cfg_t cfg) {
     int slot = -1;
@@ -217,6 +226,7 @@ id<MTLTexture> mfxup_encode_ex(int ci, id<MTL4CommandBuffer> cb, id<MTLTexture> 
     [e endEncoding];
     b->sc.colorTexture = src; b->sc.outputTexture = out; b->sc.inputContentWidth = in_w; b->sc.inputContentHeight = in_h; b->sc.fence = c->fence;
     [b->sc encodeToCommandBuffer:cb];
+    atomic_store_explicit(&g_recent_ms[ci],now_ms(),memory_order_relaxed);
     c->done++;
     sweep(c);
     return out;

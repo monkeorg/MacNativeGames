@@ -9,6 +9,7 @@
 #include "runtime.h"
 #include "ios_fps_policy.h"
 #include "totk_taa.h"
+#include "totk_mfx_up.h"
 #include "totk_ui_lang.h"
 static CAMetalLayer *metalLayer;
 static UIView *bootOverlay;
@@ -25,6 +26,13 @@ static _Atomic unsigned fpsLimit = 60, maximumFps = 60;
 static UILabel *thermalLabel;
 static _Atomic int thermalState = -1;
 static BOOL thermalHUDVisible;
+static unsigned displayOutputWidth, displayOutputHeight;
+void runtime_ios_set_display_output_size(unsigned width,unsigned height){
+ NSCAssert(NSThread.isMainThread,@"Display output must change on the main thread");
+ if((width==0&&height==0)||(width>=64&&height>=64&&width<=8192&&height<=8192)){
+  displayOutputWidth=width;displayOutputHeight=height;
+ }
+}
 int dm_thermal_now(void) { return atomic_load(&thermalState); }
 static void refresh_thermal_state(void) {
  int state = (int)NSProcessInfo.processInfo.thermalState;
@@ -88,6 +96,7 @@ int runtime_ios_spatial_upscaling_supported(void){
  id<MTLDevice> device=metalLayer.device ?: MTLCreateSystemDefaultDevice();
  return device && [MTLFXSpatialScalerDescriptor supportsMetal4FX:device];
 }
+int runtime_ios_upscaling_activity(void){return mfxup_recent_activity();}
 void runtime_ios_set_taa_enabled(int enabled){
  if((enabled!=0&&enabled!=1)||(enabled&&!runtime_ios_taa_supported()))return;
  taa_set_enabled(enabled);
@@ -197,6 +206,7 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
   // Retain the full view's aspect for letterboxing while the game canvas stays 16:9.
   vh=round(outputW*host.bounds.size.height/host.bounds.size.width);vw=outputW;
  }
+ if(displayOutputWidth&&displayOutputHeight){vw=displayOutputWidth;vh=displayOutputHeight;}
  runtime_aspect_view(vw,vh);
 #endif
  metalLayer.drawableSize=CGSizeMake(vw,vh);
