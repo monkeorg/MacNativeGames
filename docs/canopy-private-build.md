@@ -12,6 +12,17 @@ The portable plan needs no private inputs or Apple tools:
 python tools/launcher/build_private_canopy.py --plan --version v121
 ```
 
+For the explicitly compiled experimental 1.4.3 display profile:
+
+```sh
+python tools/launcher/build_private_canopy.py --plan --version v143 --display-settings
+```
+
+`--display-settings` is opt-in and rejected for `v121` before private inputs or
+Apple tools are accessed. Stock plans and builds retain their existing behavior.
+The portable display plan describes required generation; it contains no invented
+resource hashes or assertion that a private exporter has produced signed code.
+
 Only TOTK 1.2.1 (`v121`) and 1.4.3 (`v143`) are currently selected by this recipe.
 Their title ID, original ExeFS hashes, rewritten-image hashes, RomFS identity and
 shared-font hashes come from the checked-in `games/totk/assets/expected-*.json`
@@ -23,7 +34,8 @@ title. An encrypted container SHA is never substituted for an original NSO hash.
 Use an Apple silicon Mac with an installed Xcode 26+ and iPhoneOS SDK26+. The
 builder uses the existing `ios/tools/build_sources.py` toolchain selector. It
 downloads nothing. Python must already have the existing runtime generator's
-`capstone` dependency installed.
+`capstone` dependency installed. The display generators additionally use Python's
+`compression.zstd` module (Python 3.14+); use that interpreter for display builds.
 
 Keep an isolated, trusted private `games/totk` work tree prepared by the existing
 native-port workflow. For the selected version it must retain:
@@ -100,8 +112,9 @@ cache is not substituted for the separately verified shader cache.
 The resulting `Canopy.app` contains the original Canopy branding, embedded
 private native modules, verified shared fonts and the selected shader seed.
 The RomFS image is not bundled: prepare/import the matching private generation
-through Canopy's actual preparation flow. Empty optional overlay directories
-provide no unverified title patches. Public workflows must never upload this
+through Canopy's actual preparation flow. Stock builds leave optional overlay
+directories empty; display builds add only the generated, validated profiles
+described below. Public workflows must never upload this
 private app, staging data, command logs or observation file.
 
 The output contains a private build observation with toolchain identity, source
@@ -109,6 +122,65 @@ and input hashes, commands, exporter hash, shader manifest pin and executable
 hash. Command logs and the observation are local diagnostics, not independently
 certified provenance. A failed build leaves diagnostics and no accepted app.
 The staging tree is removed when the process unwinds normally.
+
+## Opt-in 1.4.3 display resources
+
+Add `--display-settings` to the private `--build --version v143` command only
+when using a trusted exporter built from matching reviewed display-profile
+sources. The builder passes the existing `build_ipa.py` exporter settings:
+`TOTK_IOS_DISPLAY_SETTINGS=1`, initial `TOTK_RENDER_RES=1280x720` and
+`TOTK_OUTPUT_RES=1280x720`, `TOTK_FIXED_RES=1`, `TOTK_ASPECT=0`,
+`TOTK_ASPECT_VERT=1` and `TOTK_IOS_ASPECT_VERT=1`. These are applied before
+`gen_embed.py` seals executable sections. No new addresses or patches are
+introduced by this builder. An arbitrary older exporter binary is not made
+display-capable by setting these variables.
+
+After staging and checking original inputs, the builder runs existing generators
+against that private staged tree:
+
+- `make_output_res_overlay.py 1920x1080 --scene 1920x1080 --version v143`
+  writes `GameData/romfs-patches-out/1920x1080-scene-1920x1080`.
+- `make_romfs_patches.py --version v143 --aspect 1440x1080` writes
+  `GameData/romfs-patches-4x3`.
+
+Both output roots are explicitly supplied to the generators. The 1080 resource
+reserves existing maximum-scene heap capacity; it does not force every session
+to start at 1080. The 4:3 layout belongs to the existing Vert+ profile, which
+retains known experimental UI-effect limitations. It is not an arbitrary aspect
+ratio or gameplay-quality claim.
+
+Before compilation the builder validates each generated manifest row, declared
+file length and SHA256, and original-member SHA256 by rereading its range in the
+fully verified staged RomFS image. It refuses linked or hardlinked files,
+unsafe/duplicate paths, unlisted files/directories, missing members and
+out-of-range originals. Each tree is bounded to 128 members, 64MiB per member
+and 256MiB including bounded manifest/overlay metadata. Generated heap metadata
+must identify the staged generator, exact version and 1920x1080 scene/output,
+without a substituted mod HeapDef.
+
+Original-member range rehash uses the explicitly trusted retained extraction
+index; it does not independently reconstruct RomFS path-to-range binding and
+must not authorize untrusted imported-folder metadata. Runtime checks of the
+actual original bytes and hashes remain mandatory.
+
+Only then are actual manifest hashes compiled as
+`CANOPY_HOST_DISPLAY_HEAP_SHA256` and `CANOPY_HOST_DISPLAY_LAYOUT_SHA256`, with
+`TOTK_IOS_DISPLAY_SETTINGS=1` and `TOTK_IOS_ASPECT_VERT=1`. The ABI2 host's
+versioned display subrecord advertises the corresponding capability. Runtime
+preflight and the existing overlay consumer must verify those resources again;
+preferences alone grant no display capability. The private build observation
+records manifest/member hashes, heap metadata hash, generator hashes and the
+existing public-source/private-input/exporter/toolchain identities.
+The validated `overlay.json` provenance is retained with its hash in that private
+observation, then removed from the installed app resource tree. Installed
+overlay trees contain only the pinned manifest and its listed payloads; runtime
+validation must reject extra files.
+
+Portable tests exercise the real verifier with original synthetic bytes and an
+explicit synthetic generator-output runner. They do not execute generators,
+the private exporter or Apple linker with game inputs. Actual trusted-exporter
+output, Apple linking, signing and device rendering/quality checks remain
+required; orchestration tests do not establish display-profile acceptance.
 
 ## Validation and remaining gates
 

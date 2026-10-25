@@ -10,6 +10,9 @@
 #include "ios_fps_policy.h"
 #include "totk_taa.h"
 #include "totk_ui_lang.h"
+#if defined(CANOPY_HOST_RUNTIME)
+#include "canopy_host.h"
+#endif
 static CAMetalLayer *metalLayer;
 static UIView *bootOverlay;
 static UILabel *bootStage,*bootDetail;
@@ -179,6 +182,11 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  UIScreen *screen=active_screen();
  CGFloat s=screen.nativeScale>0?screen.nativeScale:host.traitCollection.displayScale;
  if(s<=0)s=1;
+#if defined(CANOPY_HOST_RUNTIME)
+ if(!isfinite(host.bounds.size.width)||!isfinite(host.bounds.size.height)||host.bounds.size.width<=0||host.bounds.size.height<=0)
+  runtime_fail("Invalid Canopy display view dimensions");
+ if(!isfinite(s))s=1;
+#endif
  metalLayer.contentsScale=s;
  /* TOTK_IOS_DRAWABLE_H (default 720; 0 = native pixels): build the drawable this many pixels tall at the view's aspect, so the
     game picture (1280x720 canvas) lands about 1:1 and the system compositor scales it to the screen instead of our GPU. */
@@ -187,7 +195,19 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  /* the 16:9 picture should get about want rows: a screen narrower than 16:9 (an iPad, about 4:3; 2026-10-17) holds it by
     width, so there the drawable is want*16/9 columns wide (1281x890 on a 2360x1640 iPad); an iPhone keeps want rows */
  if(want>0){double h=vw/vh<16.0/9.0?round(want*16.0/9.0*vh/vw):(double)want;if(h<vh){vw=round(vw*h/vh);vh=h;}}
-#if defined(TOTK_GAME_V143) && defined(TOTK_IOS_DISPLAY_SETTINGS)
+#if defined(CANOPY_HOST_RUNTIME)
+ struct mng_display_state selected={MNG_DISPLAY_ABI,sizeof(selected),MNG_DISPLAY_NOT_CONFIGURED,{0}};
+ if(canopy_host_read_display_state(&selected)||selected.validation==MNG_DISPLAY_NOT_CONFIGURED)
+  runtime_fail("Canopy display must be configured before attaching its native layer");
+ if(selected.config.fixed_resolution){
+  // Scene/canvas targets come from the checked startup profile. Drawable size
+  // only controls presentation and is never evidence of rendered resolution.
+  vw=selected.config.width;
+  vh=selected.config.aspect==MNG_DISPLAY_FULL?selected.config.height:
+      round(vw*host.bounds.size.height/host.bounds.size.width);
+  runtime_aspect_view(vw,vh);
+ }
+#elif defined(TOTK_GAME_V143) && defined(TOTK_IOS_DISPLAY_SETTINGS)
  /* Match the real game canvas; presentation still letterboxes 16:9 on a taller screen. */
  uint64_t output=runtime_output_size_current();
  double outputW=(unsigned)output,outputH=(unsigned)(output>>32);
@@ -199,6 +219,10 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
   vh=round(outputW*host.bounds.size.height/host.bounds.size.width);vw=outputW;
  }
  runtime_aspect_view(vw,vh);
+#endif
+#if defined(CANOPY_HOST_RUNTIME)
+ if(!isfinite(vw)||!isfinite(vh)||vw<1||vh<1||vw>16384||vh>16384)
+  runtime_fail("Canopy drawable exceeds bounded presentation dimensions");
 #endif
  metalLayer.drawableSize=CGSizeMake(vw,vh);
  fprintf(stderr,"[totk] view drawable %.0fx%.0f (screen scale %.1f, TOTK_IOS_DRAWABLE_H=%ld)\n",vw,vh,s,want);

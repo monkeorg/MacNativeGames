@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / 'launcher/apple/Sources'
@@ -27,7 +28,7 @@ class CanopyRuntimeTests(unittest.TestCase):
         cls.build = Path(cls.temp.name).resolve()
         objects = []
         for name in ('mng_container', 'mng_file', 'mng_crypto', 'mng_keys', 'mng_prepare',
-                     'mng_store', 'mng_content', 'mng_bktr', 'mng_folder', 'mng_romfs', 'mng_romfs_runtime', 'mng_addon', 'mng_install'):
+                     'mng_store', 'mng_display', 'mng_content', 'mng_bktr', 'mng_folder', 'mng_romfs', 'mng_romfs_runtime', 'mng_addon', 'mng_install'):
             output = cls.build / (name + '.o')
             cls.compile(['xcrun', 'clang', '-std=c11', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror',
                          '-I', str(ROOT / 'launcher/include'), '-c', str(ROOT / f'launcher/src/{name}.c'), '-o', str(output)])
@@ -54,8 +55,13 @@ class CanopyRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=self.build) as directory:
             root = Path(directory)
             source = root / 'invented.nsp'
-            source.write_bytes(self.fixture.partition([
-                ('program.nca', self.fixture.nca(title=0x0100123456780000))]))
+            from test_canopy_romfs import romfs as make_romfs
+            contents = [('icon_AmericanEnglish.dat', b'synthetic icon payload'),
+                        ('fixture-layout.bin', b'original layout source')]
+            image, image_layout = make_romfs(contents)
+            with mock.patch.object(self.fixture, 'romfs', return_value=image):
+                source.write_bytes(self.fixture.partition([
+                    ('program.nca', self.fixture.nca(title=0x0100123456780000))]))
             keys = root / 'invented.keys'
             keys.write_text(f'header_key = {self.fixture.HEADER.hex()}\n'
                             f'key_area_key_application_00 = {self.fixture.AREA.hex()}\n')
@@ -64,22 +70,59 @@ class CanopyRuntimeTests(unittest.TestCase):
                                  capture_output=True, text=True, timeout=20)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             report = json.loads(run.stdout)
+            if mode in ('corrupt-main', 'corrupt-romfs'):
+                generation = store / 'titles/0100123456780000/generations' / report['generation']
+                asset = generation / ('exefs/main' if mode == 'corrupt-main' else 'romfs.bin')
+                data = asset.read_bytes();asset.chmod(0o600)
+                asset.write_bytes(bytes([data[0] ^ 1]) + data[1:]);asset.chmod(0o400)
             resources = root / 'trusted-host-assets'
             resources.mkdir(mode=0o700)
             from test_canopy_shader_cache import write_shader_seed
             seed = resources / 'shader-seed'
-            manifest_sha = write_shader_seed(seed, hashlib.sha256(self.fixture.romfs()).hexdigest(),
+            manifest_sha = write_shader_seed(seed, hashlib.sha256(image).hexdigest(),
                                              chain='original-fixture-chain')
             seed.chmod(0o700)
             for leaf in seed.iterdir():
                 leaf.chmod(0o600)
-            image = self.fixture.romfs()
-            # Independent reproduction of the existing prepare_romfs_backend.py
-            # runtime format for this one-file original-source fixture.
-            name = b'icon_AmericanEnglish.dat\0'
-            payload_offset = struct.unpack_from('<Q', image, 72)[0]
-            index = struct.pack('<8sQQ', b'TOTKRFS1', 1, 48)
-            index += struct.pack('<QQII', payload_offset, len(b'synthetic icon payload'), 0, len(name)) + name
+            # Wholly original overlay fixtures; compiled pins are test-only.
+            def overlay(relative, name, content, original):
+                folder = resources / relative
+                folder.mkdir(parents=True, mode=0o700)
+                (folder / name).write_bytes(content)
+                row = f'{name}\t{len(content)}\t{hashlib.sha256(content).hexdigest()}\t{original}\n'.encode()
+                manifest = folder / 'manifest.tsv'
+                manifest.write_bytes(b'# original Canopy display fixture\n' + row)
+                return folder, hashlib.sha256(manifest.read_bytes()).hexdigest()
+            original = hashlib.sha256(b'synthetic icon payload').hexdigest()
+            heap, heap_sha = overlay('romfs-patches-out/1920x1080-scene-1920x1080', 'icon_AmericanEnglish.dat',
+                                     b'original heap overlay fixture', '0' * 64 if mode == 'overlay-wrong-original' else original)
+            layout, layout_sha = overlay('romfs-patches-4x3', 'fixture-layout.bin', b'original layout fixture', hashlib.sha256(b'original layout source').hexdigest())
+            member = heap / 'icon_AmericanEnglish.dat'
+            if mode == 'overlay-corrupt':
+                member.write_bytes(b'corrupt member')
+            elif mode == 'overlay-extra':
+                (heap / 'extra').write_bytes(b'unlisted')
+            elif mode == 'overlay-missing':
+                member.unlink()
+            elif mode == 'overlay-symlink':
+                target = resources / 'linked-member'
+                member.rename(target)
+                member.symlink_to(target)
+            elif mode == 'overlay-hardlink':
+                import os
+                os.link(member, resources / 'extra-link')
+            elif mode == 'overlay-unpinned-manifest':
+                (heap / 'manifest.tsv').write_bytes(b'# changed manifest\n')
+            # Independent reproduction of the existing runtime index format.
+            offsets = {}; cursor = image_layout['data_start']
+            for name, payload in contents:
+                offsets[name] = cursor; cursor += len(payload)
+            rows = b''; strings = b''
+            for name, payload in sorted(contents):
+                raw = name.encode() + b'\0'
+                rows += struct.pack('<QQII', offsets[name], len(payload), len(strings), len(raw))
+                strings += raw
+            index = struct.pack('<8sQQ', b'TOTKRFS1', len(contents), 24 + len(rows)) + rows + strings
             romfs_sha = hashlib.sha256(image).hexdigest()
             index_sha = hashlib.sha256(index).hexdigest()
             cache_file = root / 'cache/totk-runtime-index-v1' / index_sha / 'runtime-index.bin'
@@ -103,7 +146,7 @@ class CanopyRuntimeTests(unittest.TestCase):
                 alias.symlink_to(root, target_is_directory=True)
                 cache_argument = alias / 'cache'
             run = subprocess.run([str(self.probe), mode, str(store), report['generation'], str(resources),
-                                  str(root / 'profiles'), str(cache_argument), romfs_sha, index_sha, manifest_sha],
+                                  str(root / 'profiles'), str(cache_argument), romfs_sha, index_sha, manifest_sha, heap_sha, layout_sha],
                                  capture_output=True, text=True, timeout=30)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             result = json.loads(run.stdout)
@@ -120,7 +163,7 @@ class CanopyRuntimeTests(unittest.TestCase):
         self.assertEqual(self.scenario('success')['starts'], 1)
 
     def test_unavailable_and_wrong_pins_never_reach_native_entry(self):
-        for mode in ('unavailable', 'wrong-main', 'wrong-index'):
+        for mode in ('unavailable', 'wrong-main', 'wrong-romfs', 'wrong-index', 'corrupt-main', 'corrupt-romfs'):
             with self.subTest(mode=mode):
                 self.assertEqual(self.scenario(mode)['starts'], 0)
 
@@ -143,6 +186,18 @@ class CanopyRuntimeTests(unittest.TestCase):
 
     def test_native_entry_failure_does_not_invent_teardown(self):
         self.assertTrue(self.scenario('entry-failure')['nativeEntryInvoked'])
+
+    def test_display_configuration_and_checked_patch_evidence_are_distinct(self):
+        for mode in ('display-1080', 'display-full', 'display-full-fallback', 'display-stock-fallback', 'display-live', 'display-bad-state', 'display-bad-start-state', 'display-unknown-aspect'):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.scenario(mode)['starts'], 1)
+
+    def test_display_descriptor_and_overlay_resources_fail_closed(self):
+        for mode in ('abi1', 'display-bad-record', 'display-bad-flags', 'display-bad-pin', 'display-v121-flags',
+                     'overlay-corrupt', 'overlay-extra', 'overlay-missing', 'overlay-symlink', 'overlay-hardlink',
+                     'overlay-unpinned-manifest', 'overlay-wrong-original'):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.scenario(mode)['starts'], 0)
 
     def test_public_runtime_links_with_explicit_unavailable_provider(self):
         source = self.build / 'public-runtime.m'
@@ -193,7 +248,7 @@ int main(void) {@autoreleasepool {
         for flagged in (False, True):
             output = self.build / ('flagged-device' if flagged else 'default-device')
             command = ['xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
-                       '-I', str(ROOT / 'games/totk/runtime'), str(source),
+                       '-I', str(ROOT / 'games/totk/runtime'), '-I', str(ROOT / 'launcher/include'), str(source),
                        '-framework', 'Foundation', '-framework', 'Metal', '-o', str(output)]
             if flagged:
                 command += ['-DCANOPY_HOST_RUNTIME=1', str(ROOT / 'games/totk/runtime/canopy_host.m')]
@@ -217,7 +272,7 @@ int main(void) {
 ''')
         output = self.build / 'host-environment'
         self.compile(['xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
-                      '-DCANOPY_HOST_RUNTIME=1', '-I', str(ROOT / 'games/totk/runtime'),
+                      '-DCANOPY_HOST_RUNTIME=1', '-I', str(ROOT / 'games/totk/runtime'), '-I', str(ROOT / 'launcher/include'),
                       str(source), str(ROOT / 'games/totk/runtime/canopy_host.m'),
                       '-framework', 'Foundation', '-framework', 'Metal', '-o', str(output)])
         run = subprocess.run([str(output)], capture_output=True, text=True, timeout=10)
@@ -237,7 +292,7 @@ int main(void) {
             for flagged in ((True,) if name == 'canopy_host.m' else (False, True)):
                 command = ['xcrun', '--sdk', 'iphoneos', 'clang', '-fsyntax-only',
                            '-target', target, '-isysroot', sdk, '-Wall', '-Wextra', '-Werror',
-                           '-DTOTK_GAME_V121=1', '-I', str(synthetic),
+                           '-DTOTK_GAME_V121=1', '-I', str(synthetic), '-I', str(ROOT / 'launcher/include'),
                            '-I', str(ROOT / 'games/totk/runtime'),
                            '-I', str(ROOT / 'games/totk/third_party/d2r_gfx/gfx/nvn'),
                            '-I', str(ROOT / 'games/totk/third_party/d2r_gfx/gfx/nvn/include')]

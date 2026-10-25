@@ -27,6 +27,11 @@ MODULES = ('main', 'subsdk0', 'sdk')
 FRAMEWORKS = ('UIKit', 'Metal', 'MetalFX', 'Foundation', 'QuartzCore', 'ImageIO',
               'CoreGraphics', 'CoreText', 'UniformTypeIdentifiers', 'CoreFoundation',
               'AudioToolbox', 'GameController', 'AVFAudio', 'Security', 'WebKit', 'CoreHaptics')
+DISPLAY_HEAP = 'romfs-patches-out/1920x1080-scene-1920x1080'
+DISPLAY_LAYOUT = 'romfs-patches-4x3'
+DISPLAY_EXPORT = {'TOTK_IOS_DISPLAY_SETTINGS': '1', 'TOTK_RENDER_RES': '1280x720',
+                  'TOTK_OUTPUT_RES': '1280x720', 'TOTK_FIXED_RES': '1', 'TOTK_ASPECT': '0',
+                  'TOTK_ASPECT_VERT': '1', 'TOTK_IOS_ASPECT_VERT': '1'}
 
 
 def load_helper(name, relative):
@@ -102,11 +107,24 @@ def source_names(repo, version):
     return tuple(sorted(names))
 
 
-def build_plan(repo=ROOT, version='v121', identifier='org.monkeorg.canopy'):
+def display_option(version, enabled):
+    require(not enabled or version == 'v143', '--display-settings supports only TOTK1.4.3')
+
+
+def exporter_environment(modules, display_settings=False):
+    """Same explicit signed-code settings as the existing build_ipa exporter."""
+    result = {'TOTK_EXPORT_IOS': str(modules)}
+    if display_settings:
+        result.update(DISPLAY_EXPORT)
+    return result
+
+
+def build_plan(repo=ROOT, version='v121', identifier='org.monkeorg.canopy', display_settings=False):
+    display_option(version, display_settings)
     PUBLIC.bundle_identifier(identifier)
     profile = expected_profile(repo, version)
     sources = source_names(repo, version)
-    return {'recipe': RECIPE, 'status': 'plan only; no private inputs or Apple compilation used',
+    plan = {'recipe': RECIPE, 'status': 'plan only; no private inputs or Apple compilation used',
             'bundleIdentifier': identifier, 'version': VERSIONS[version], 'titleID': profile['title_id'].lower(),
             'originalMainSHA256': profile['exefs_sha256']['main'],
             'romfsSHA256': profile['romfs']['sha256'], 'sources': list(sources),
@@ -121,6 +139,162 @@ def build_plan(repo=ROOT, version='v121', identifier='org.monkeorg.canopy'):
                       'link unsigned Canopy.app with verified fonts and explicitly pinned shader seed'],
             'limitations': ['A build is not game compatibility, signing or device acceptance.',
                             'The current native host is single use and cannot safely stop or relaunch.']}
+    if display_settings:
+        plan['displaySettings'] = {'profile': 'v143-signed-720-1080-four-three-v1',
+            'exporterEnvironment': dict(DISPLAY_EXPORT), 'maximumScene': '1920x1080',
+            'aspectLayout': '1440x1080',
+            'resources': [DISPLAY_HEAP + '/manifest.tsv', DISPLAY_LAYOUT + '/manifest.tsv'],
+            'manifestPins': 'generated from verified staged private inputs; unavailable in a portable plan',
+            'compileFlags': ['-DTOTK_IOS_DISPLAY_SETTINGS=1', '-DTOTK_IOS_ASPECT_VERT=1']}
+        plan['steps'].insert(4, 'generate and validate the real 1920x1080 scene heap and 1440x1080 layout overlays; pin their exact manifests')
+    return plan
+
+
+def stable_bytes(path, limit):
+    """Read small generated metadata once; parse/hash the same stable bytes."""
+    path = Path(path)
+    for parent in (path, *path.parents):
+        require(not parent.is_symlink(), 'linked display resource refused')
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(descriptor)
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and 0 <= before.st_size <= limit,
+                'invalid bounded display metadata')
+        with os.fdopen(descriptor, 'rb', closefd=False) as source:
+            data = source.read(limit + 1)
+        after = os.fstat(descriptor)
+        fields = ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+        require(len(data) == before.st_size and all(getattr(before, k) == getattr(after, k) for k in fields),
+                'display metadata changed during read')
+        return data
+    finally:
+        os.close(descriptor)
+
+
+def display_path(name):
+    require(isinstance(name, str) and len(name) <= 512 and
+            re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*', name) is not None and
+            len(name.split('/')) <= 8 and all(part not in ('.', '..') for part in name.split('/')),
+            'invalid display member path')
+    return name
+
+
+def original_member_hash(image, entry):
+    require(isinstance(entry, dict) and type(entry.get('offset')) is int and type(entry.get('size')) is int and
+            0 <= entry['offset'] and 0 <= entry['size'] <= 64 << 20, 'invalid display original member range')
+    descriptor = os.open(image, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(descriptor)
+        require(stat.S_ISREG(before.st_mode) and entry['offset'] <= before.st_size and
+                entry['size'] <= before.st_size - entry['offset'], 'display original member exceeds image')
+        sha = hashlib.sha256();position = entry['offset'];remaining = entry['size']
+        while remaining:
+            data = os.pread(descriptor, min(remaining, 1 << 20), position)
+            require(data, 'truncated display original member')
+            sha.update(data);remaining -= len(data);position += len(data)
+        after = os.fstat(descriptor)
+        fields = ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+        require(all(getattr(before, k) == getattr(after, k) for k in fields), 'display original changed during read')
+        return sha.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def validate_display_tree(folder, index, image, extra_files=()):
+    """Authenticate original+generated bytes; refuse any unlisted file/tree."""
+    raw = stable_bytes(folder / 'manifest.tsv', 128 << 10)
+    try:
+        lines = raw.decode('ascii').splitlines()
+    except UnicodeDecodeError as error:
+        raise ValueError('invalid display manifest encoding') from error
+    members = {};folded = set();member_bytes = 0
+    total = len(raw) + sum(len(stable_bytes(folder / name, 128 << 10)) for name in extra_files)
+    for line in lines:
+        if not line or line.startswith('#'):
+            continue
+        fields = line.split('\t')
+        require(len(fields) == 4, 'invalid display manifest row')
+        name, size, sha, original = fields;display_path(name)
+        require(name.casefold() not in folded and name.casefold() not in {value.casefold() for value in ('manifest.tsv', *extra_files)} and
+                re.fullmatch(r'0|[1-9][0-9]{0,9}', size) is not None and
+                all(re.fullmatch('[0-9a-f]{64}', value) is not None for value in (sha, original)),
+                'invalid or duplicate display manifest member')
+        require(len(members) < 128 and 0 < int(size) <= 64 << 20 and total + int(size) <= 256 << 20,
+                'display resource budget exceeded')
+        require(name in index and original_member_hash(image, index[name]) == original,
+                'display manifest does not match its verified original member')
+        member = folder / name;metadata = member.lstat()
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1 and metadata.st_size == int(size),
+                'display member type or size mismatch')
+        require(digest(member, expected=sha, limit=64 << 20) == sha, 'display member hash mismatch')
+        members[name] = sha;folded.add(name.casefold());total += int(size);member_bytes += int(size)
+    require(members, 'display manifest has no generated resources')
+    expected = {'manifest.tsv', *members, *extra_files};directories = set()
+    for name in members:
+        directories.update(str(parent) for parent in Path(name).parents if str(parent) != '.')
+    seen = set();seen_dirs = set();count = 0
+    for current, children, files in os.walk(folder, followlinks=False):
+        for name in [*children, *files]:
+            count += 1;require(count <= 1152, 'display resource tree count exceeded')
+            member = Path(current) / name;relative = str(member.relative_to(folder));metadata = member.lstat()
+            require(not stat.S_ISLNK(metadata.st_mode), 'linked display resource refused')
+            if stat.S_ISDIR(metadata.st_mode):
+                require(relative in directories, 'unlisted display directory');seen_dirs.add(relative)
+            else:
+                require(relative in expected and stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1,
+                        'unlisted or unsafe display file');seen.add(relative)
+    require(seen == expected and seen_dirs == directories, 'incomplete display resource tree')
+    return {'manifestSHA256': hashlib.sha256(raw).hexdigest(), 'members': members,
+            'memberBytes': member_bytes, 'treeBytes': total}
+
+
+def generate_display_resources(stage_tree, data, run):
+    """Execute only the public staged generators on the verified staged image."""
+    output = data / 'romfs-patches-out';layout = data / DISPLAY_LAYOUT
+    require(output.is_dir() and not any(output.iterdir()) and not layout.exists(),
+            'display resources require fresh output directories')
+    run([sys.executable, str(stage_tree / 'scripts/make_output_res_overlay.py'), '1920x1080',
+         '--scene', '1920x1080', '--version', 'v143', '--output-root', str(output)])
+    run([sys.executable, str(stage_tree / 'scripts/make_romfs_patches.py'), '--version', 'v143',
+         '--aspect', '1440x1080', '--output-dir', str(layout)])
+    source = stage_tree / 'extracted/v143/romfs'
+    index_document = json.loads(stable_bytes(source / 'index.json', 256 << 20))
+    require(isinstance(index_document, dict) and isinstance(index_document.get('files'), list) and len(index_document['files']) <= 1000000,
+            'display generation requires the verified extraction inventory')
+    index = {}
+    for entry in index_document['files']:
+        require(isinstance(entry, dict) and isinstance(entry.get('path'), str) and entry['path'] not in index,
+                'duplicate or invalid original inventory member')
+        index[entry['path']] = entry
+    heap = data / DISPLAY_HEAP
+    require(sorted(p.name for p in output.iterdir()) == [heap.name], 'unexpected generated output profile')
+    heap_record = validate_display_tree(heap, index, source / 'romfs.bin', ('overlay.json',))
+    layout_record = validate_display_tree(layout, index, source / 'romfs.bin')
+    metadata_bytes = stable_bytes(heap / 'overlay.json', 128 << 10)
+    metadata = json.loads(metadata_bytes)
+    script = stage_tree / 'scripts/make_output_res_overlay.py'
+    require(isinstance(metadata, dict) and metadata.get('script') == script.name and
+            metadata.get('script_sha256') == digest(script, limit=4 << 20) and metadata.get('version') == 'v143' and
+            metadata.get('size') == '1920x1080' and metadata.get('scene') == '1920x1080' and
+            metadata.get('heapdef') is None and metadata.get('heapdef_sha256') is None and
+            type(metadata.get('extra_kib')) is int and metadata['extra_kib'] > 0,
+            'generated display heap recipe does not match its staged generator')
+    # Existing generators emit build provenance, but the native overlay loader
+    # consumes only manifest.tsv and its members. Keep provenance in the private
+    # observation, never as an unbound extra file in the installed resource tree.
+    metadata_sha = hashlib.sha256(metadata_bytes).hexdigest()
+    generated_bytes = heap_record['treeBytes']
+    (heap / 'overlay.json').unlink()
+    heap_record = validate_display_tree(heap, index, source / 'romfs.bin')
+    heap_record['generatedTreeBytes'] = generated_bytes
+    heap_record['overlayMetadataSHA256'] = metadata_sha
+    heap_record['overlayMetadata'] = {key: metadata[key] for key in (
+        'script', 'script_sha256', 'version', 'size', 'scene', 'extra_kib', 'heapdef', 'heapdef_sha256')}
+    return {'heapManifestSHA256': heap_record['manifestSHA256'],
+            'layoutManifestSHA256': layout_record['manifestSHA256'],
+            'heap': heap_record, 'layout': layout_record,
+            'generatorSHA256': {str(name): digest(stage_tree / name, limit=4 << 20) for name in (
+                'scripts/make_output_res_overlay.py', 'scripts/make_romfs_patches.py', 'scripts/tall_layout.py')}}
 
 
 def copy_public(repo, stage):
@@ -226,7 +400,8 @@ def stage_codecs(source, destination):
     return records
 
 
-def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps):
+def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, display_profile=None):
+    display_option(version, display_profile is not None)
     generated = stage / TOTK / ('build/' + version)
     base = [toolchain['clang'], '-target', 'arm64-apple-ios26.0', '-isysroot', toolchain['sdk'],
             '-O2', '-mcpu=apple-a15', '-Wall', '-Wextra', '-Werror=implicit-function-declaration',
@@ -234,6 +409,13 @@ def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps):
             '-DCANOPY_HOST_TITLE_ID=0x' + profile['title_id'] + 'ULL',
             '-DCANOPY_HOST_ORIGINAL_MAIN_SHA256="' + profile['exefs_sha256']['main'] + '"',
             '-DCANOPY_HOST_SHADER_SEED_MANIFEST_SHA256="' + seed_sha + '"']
+    if display_profile is not None:
+        require(isinstance(display_profile, dict) and all(isinstance(display_profile.get(key), str) and
+                re.fullmatch('[0-9a-f]{64}', display_profile[key]) for key in
+                ('heapManifestSHA256', 'layoutManifestSHA256')), 'generated display manifest pins are required')
+        base += ['-DTOTK_IOS_DISPLAY_SETTINGS=1', '-DTOTK_IOS_ASPECT_VERT=1',
+                 '-DCANOPY_HOST_DISPLAY_HEAP_SHA256="' + display_profile['heapManifestSHA256'] + '"',
+                 '-DCANOPY_HOST_DISPLAY_LAYOUT_SHA256="' + display_profile['layoutManifestSHA256'] + '"']
     for folder in (stage / 'launcher/include', stage / 'launcher/apple/Sources', stage / TOTK / 'runtime',
                    stage / TOTK / 'third_party/d2r_gfx/gfx/nvn', stage / TOTK / 'third_party/d2r_gfx/gfx/nvn/include',
                    generated, stage / TOTK / 'build', work, deps / 'include', deps / 'include/opus'):
@@ -249,6 +431,9 @@ def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps):
 
 
 def build(args):
+    # Refuse unsupported opt-ins before inspecting private paths or Apple tools.
+    display_settings = getattr(args, 'display_settings', False)
+    display_option(getattr(args, 'version', None), display_settings)
     require(sys.platform == 'darwin' and os.uname().machine == 'arm64', 'private build requires an Apple silicon Mac')
     repo = ROOT
     PUBLIC.bundle_identifier(args.bundle_id)
@@ -295,7 +480,7 @@ def build(args):
             observation['trustedLocalExporterSHA256'] = digest(host, exporter, limit=512 << 20)
             exporter.chmod(0o700)
             modules = work / 'modules';modules.mkdir()
-            run([str(exporter), str(stage_tree / 'rewritten' / args.version), 'export-ios'], {'TOTK_EXPORT_IOS': str(modules)})
+            run([str(exporter), str(stage_tree / 'rewritten' / args.version), 'export-ios'], exporter_environment(modules, display_settings))
             flags = shlex.split(run([sys.executable, str(stage_tree / 'ios/tools/gen_embed.py'),
                                     str(stage_tree / 'rewritten' / args.version), str(work / 'embed.S'),
                                     '--text-dir', str(modules), *MODULES]))
@@ -309,10 +494,13 @@ def build(args):
             shutil.copytree(stage_tree / 'extracted/firmware/shared-fonts', data / 'shared-fonts')
             for name in ('romfs-patches', 'romfs-patches-out'):
                 (data / name).mkdir(mode=0o700)  # No unverified optional title patches.
+            display_profile = generate_display_resources(stage_tree, data, run) if display_settings else None
+            if display_profile is not None:
+                observation['displaySettings'] = display_profile
             codec_snapshot = work / 'codecs'
             observation['codecInputs'] = stage_codecs(deps, codec_snapshot)
             libraries = [str(codec_snapshot / f'lib/lib{name}.a') for name in ('opus', 'vpx')]
-            commands, objects = compiler_commands(stage, work, toolchain, args.version, profile, args.shader_manifest_sha256, codec_snapshot)
+            commands, objects = compiler_commands(stage, work, toolchain, args.version, profile, args.shader_manifest_sha256, codec_snapshot, display_profile)
             for command in commands:
                 run(command)
             link = [toolchain['clang'], '-target', 'arm64-apple-ios26.0', '-isysroot', toolchain['sdk'],
@@ -342,6 +530,7 @@ def main():
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--build', action='store_true')
     parser.add_argument('--version', choices=VERSIONS, default='v121')
+    parser.add_argument('--display-settings', action='store_true', help='opt-in v143 signed720/1080 scene and4:3 aspect profile')
     parser.add_argument('--bundle-id', default='org.monkeorg.canopy')
     parser.add_argument('--tree', type=Path, help='trusted retained private games/totk tree')
     parser.add_argument('--deps', type=Path, help='local iPhoneOS codec prefix with include/ and lib/')
@@ -352,8 +541,10 @@ def main():
     args = parser.parse_args()
     if args.plan == args.build:
         parser.error('select exactly one of --plan or --build')
+    if args.display_settings and args.version != 'v143':
+        parser.error('--display-settings supports only TOTK1.4.3')
     if args.plan:
-        print(json.dumps(build_plan(version=args.version, identifier=args.bundle_id), indent=2))
+        print(json.dumps(build_plan(version=args.version, identifier=args.bundle_id, display_settings=args.display_settings), indent=2))
     else:
         if not all((args.tree, args.deps, args.shader_seed, args.shader_manifest_sha256, args.out)):
             parser.error('--build requires --tree, --deps, --shader-seed, --shader-manifest-sha256 and --out')

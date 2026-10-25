@@ -21,6 +21,147 @@ def sha(data):
 
 
 class CanopyPrivateBuildTests(unittest.TestCase):
+    def test_display_opt_in_is_v143_only_and_plan_does_not_invent_pins(self):
+        stock = BUILDER.build_plan(version='v143')
+        plan = BUILDER.build_plan(version='v143', display_settings=True)
+        self.assertNotIn('displaySettings', stock)
+        display = plan['displaySettings']
+        self.assertEqual(display['maximumScene'], '1920x1080')
+        self.assertEqual(display['aspectLayout'], '1440x1080')
+        self.assertEqual(display['exporterEnvironment'], BUILDER.DISPLAY_EXPORT)
+        self.assertIn('unavailable', display['manifestPins'])
+        with self.assertRaisesRegex(ValueError, 'only TOTK1.4.3'):
+            BUILDER.build_plan(version='v121', display_settings=True)
+        with mock.patch.object(BUILDER, 'expected_profile', side_effect=AssertionError('private/profile access')):
+            with self.assertRaisesRegex(ValueError, 'only TOTK1.4.3'):
+                BUILDER.build(argparse.Namespace(version='v121', display_settings=True))
+        run = subprocess.run([sys.executable, str(ROOT / 'tools/launcher/build_private_canopy.py'),
+                              '--plan', '--version', 'v121', '--display-settings'], capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(run.returncode, 0);self.assertIn('only TOTK1.4.3', run.stderr)
+
+    def test_display_exporter_and_compiler_use_exact_explicit_profile(self):
+        self.assertEqual(BUILDER.exporter_environment(Path('/original-modules')), {'TOTK_EXPORT_IOS': '/original-modules'})
+        enabled = BUILDER.exporter_environment(Path('/original-modules'), True)
+        self.assertEqual(enabled, {'TOTK_EXPORT_IOS': '/original-modules',
+            'TOTK_IOS_DISPLAY_SETTINGS': '1', 'TOTK_RENDER_RES': '1280x720', 'TOTK_OUTPUT_RES': '1280x720',
+            'TOTK_FIXED_RES': '1', 'TOTK_ASPECT': '0', 'TOTK_ASPECT_VERT': '1', 'TOTK_IOS_ASPECT_VERT': '1'})
+        profile = BUILDER.expected_profile(ROOT, 'v143')
+        args = (ROOT, Path('/private-stage'), {'clang': 'selected-clang', 'sdk': '/selected-sdk'},
+                'v143', profile, 'a' * 64, Path('/local-codecs'))
+        stock, _ = BUILDER.compiler_commands(*args)
+        pins = {'heapManifestSHA256': 'b' * 64, 'layoutManifestSHA256': 'c' * 64}
+        enabled, _ = BUILDER.compiler_commands(*args, display_profile=pins)
+        self.assertFalse(any('TOTK_IOS_DISPLAY_SETTINGS' in arg for command in stock for arg in command))
+        for command in enabled:
+            self.assertIn('-DTOTK_IOS_DISPLAY_SETTINGS=1', command)
+            self.assertIn('-DTOTK_IOS_ASPECT_VERT=1', command)
+            self.assertIn('-DCANOPY_HOST_DISPLAY_HEAP_SHA256="' + 'b' * 64 + '"', command)
+            self.assertIn('-DCANOPY_HOST_DISPLAY_LAYOUT_SHA256="' + 'c' * 64 + '"', command)
+        with self.assertRaises(ValueError):
+            BUILDER.compiler_commands(*args, display_profile={'heapManifestSHA256': 'invented'})
+        with self.assertRaises(ValueError):
+            BUILDER.compiler_commands(*args[:3], 'v121', *args[4:], display_profile=pins)
+
+    def display_fixture(self, root, fault=None):
+        """Synthetic orchestration outputs, not a run of private generators.
+
+        The production runner executes the existing generators. These original
+        byte fixtures test command routing and the real post-generation verifier.
+        """
+        stage = root / 'source';data = root / 'GameData'
+        (data / 'romfs-patches-out').mkdir(parents=True, mode=0o700)
+        source = stage / 'extracted/v143/romfs';source.mkdir(parents=True)
+        heap_name = 'System/HeapSize/original.byml.zs';layout_name = 'UI/LayoutArchive/original.blarc.zs'
+        originals = {heap_name: b'original heap fixture', layout_name: b'original layout fixture'}
+        image = bytearray();files = []
+        for name, content in originals.items():
+            files.append({'path': name, 'offset': len(image), 'size': len(content)});image += content
+        (source / 'romfs.bin').write_bytes(image)
+        (source / 'index.json').write_text(json.dumps({'files': files}))
+        scripts = stage / 'scripts';scripts.mkdir()
+        for name in ('make_output_res_overlay.py', 'make_romfs_patches.py', 'tall_layout.py'):
+            (scripts / name).write_bytes(('original public test tool fixture ' + name).encode())
+        calls = []
+        def runner(command):
+            calls.append(command)
+            if 'make_output_res_overlay.py' in command[1]:
+                folder = data / BUILDER.DISPLAY_HEAP;name = heap_name
+            else:
+                folder = data / BUILDER.DISPLAY_LAYOUT;name = layout_name
+            content = ('generated synthetic ' + name).encode()
+            target = folder / name;target.parent.mkdir(parents=True);target.write_bytes(content)
+            (folder / 'manifest.tsv').write_text('# Original synthetic fixture\n' +
+                '\t'.join((name, str(len(content)), sha(content), sha(originals[name]))) + '\n')
+            if folder.name == '1920x1080-scene-1920x1080':
+                (folder / 'overlay.json').write_text(json.dumps({'script': 'make_output_res_overlay.py',
+                    'script_sha256': sha((scripts / 'make_output_res_overlay.py').read_bytes()),
+                    'version': 'v143', 'size': '1920x1080', 'scene': '1920x1080', 'extra_kib': 1,
+                    'heapdef': None, 'heapdef_sha256': None}))
+            elif fault:
+                fault(folder, target, source)
+        return stage, data, calls, runner
+
+    def test_display_generation_runs_staged_tools_and_pins_exact_validated_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stage, data, calls, runner = self.display_fixture(Path(directory).resolve())
+            original = (stage / 'extracted/v143/romfs/romfs.bin').read_bytes()
+            result = BUILDER.generate_display_resources(stage, data, runner)
+            self.assertEqual(calls[0], [sys.executable, str(stage / 'scripts/make_output_res_overlay.py'),
+                '1920x1080', '--scene', '1920x1080', '--version', 'v143', '--output-root', str(data / 'romfs-patches-out')])
+            self.assertEqual(calls[1], [sys.executable, str(stage / 'scripts/make_romfs_patches.py'),
+                '--version', 'v143', '--aspect', '1440x1080', '--output-dir', str(data / BUILDER.DISPLAY_LAYOUT)])
+            for key, folder in [('heapManifestSHA256', BUILDER.DISPLAY_HEAP), ('layoutManifestSHA256', BUILDER.DISPLAY_LAYOUT)]:
+                self.assertEqual(result[key], sha((data / folder / 'manifest.tsv').read_bytes()))
+            self.assertEqual(result['generatorSHA256']['scripts/tall_layout.py'], sha((stage / 'scripts/tall_layout.py').read_bytes()))
+            self.assertEqual((stage / 'extracted/v143/romfs/romfs.bin').read_bytes(), original)
+
+    def test_display_app_tree_omits_generator_metadata_but_private_proof_keeps_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stage, data, _, runner = self.display_fixture(Path(directory).resolve())
+            metadata = {}
+            def observe(command):
+                runner(command)
+                path = data / BUILDER.DISPLAY_HEAP / 'overlay.json'
+                if path.exists():
+                    metadata['bytes'] = path.read_bytes()
+            result = BUILDER.generate_display_resources(stage, data, observe)
+            heap = data / BUILDER.DISPLAY_HEAP
+            self.assertFalse((heap / 'overlay.json').exists())
+            self.assertEqual(result['heap']['overlayMetadataSHA256'], sha(metadata['bytes']))
+            self.assertEqual(result['heap']['overlayMetadata'], json.loads(metadata['bytes']))
+            self.assertEqual(result['heap']['generatedTreeBytes'], result['heap']['treeBytes'] + len(metadata['bytes']))
+            self.assertEqual({str(p.relative_to(heap)) for p in heap.rglob('*') if p.is_file()},
+                             {'manifest.tsv', *result['heap']['members']})
+
+    def test_display_resource_verifier_rejects_tampering_links_extras_ranges_and_aliases(self):
+        def corrupt(folder, target, source): target.write_bytes(b'changed')
+        def extra(folder, target, source): (folder / 'unexpected').write_bytes(b'keep')
+        def extra_directory(folder, target, source): (folder / 'unexpected-directory').mkdir()
+        def linked(folder, target, source):
+            content = target.read_bytes();target.unlink();outside = source / 'outside';outside.write_bytes(content);target.symlink_to(outside)
+        def hardlinked(folder, target, source):
+            import os
+            os.link(target, source / 'external-hardlink')
+        def bad_original(folder, target, source):
+            file = folder / 'manifest.tsv';text = file.read_text();file.write_text(text.rsplit('\t', 1)[0] + '\t' + '0' * 64 + '\n')
+        def alias(folder, target, source):
+            file = folder / 'manifest.tsv';file.write_text(file.read_text() + file.read_text().splitlines()[-1] + '\n')
+        def traversal(folder, target, source):
+            file = folder / 'manifest.tsv';file.write_text(file.read_text().replace('UI/LayoutArchive/original.blarc.zs', '../outside'))
+        def bad_range(folder, target, source):
+            file = source / 'index.json';value = json.loads(file.read_bytes());value['files'][1]['offset'] = 1 << 63;file.write_text(json.dumps(value))
+        def wrong_metadata(folder, target, source):
+            metadata = folder.parent / BUILDER.DISPLAY_HEAP / 'overlay.json'
+            value = json.loads(metadata.read_bytes());value['heapdef'] = '/unreviewed replacement';metadata.write_text(json.dumps(value))
+        def oversize(folder, target, source):
+            manifest = folder / 'manifest.tsv';fields = manifest.read_text().splitlines()[-1].split('\t');fields[1] = str((64 << 20) + 1)
+            manifest.write_text('\t'.join(fields) + '\n')
+        for failure in (corrupt, extra, extra_directory, linked, hardlinked, bad_original, alias, traversal, bad_range, wrong_metadata, oversize):
+            with self.subTest(failure=failure.__name__), tempfile.TemporaryDirectory() as directory:
+                stage, data, _, runner = self.display_fixture(Path(directory).resolve(), failure)
+                with self.assertRaises((ValueError, OSError)):
+                    BUILDER.generate_display_resources(stage, data, runner)
+
     def test_portable_plans_bind_exact_public_profiles_and_canopy_entry(self):
         for version in ('v121', 'v143'):
             plan = BUILDER.build_plan(version=version)
