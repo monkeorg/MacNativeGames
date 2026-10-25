@@ -10,11 +10,11 @@ Verified physical evidence: the installed candidate loaded the retained post-tut
 
 The current source adds live native 30/40/60 FPS ceilings, capability-gated TAA requests, live touch visibility, editable keyboard mappings, a single pending-restart footer and the full shared overlay. Forty FPS requires a compatible display. TAA remains off by default. A requested rate or TAA state is not proof of achieved performance or successful temporal scaling.
 
-Final graphics-control acceptance remains incomplete. The first attempt failed to open the menu through automation; the user subsequently confirmed the menu opens physically. The screenshot service returned a CoreDevice connection error. A bounded harness retry then stopped before test actions with `Timed out while enabling automation mode.` This is infrastructure failure, not a graphics-control result. No further retries ran at this checkpoint.
+Physical test `test06fExistingGameGraphicsAndTouchApplyLive` passed in 89.942 seconds after the user enabled UI Automation. It exercised available FPS choices, TAA request persistence, touch removal/restoration and outside dismissal, then restored 60 FPS, the prior TAA preference and Automatic touch controls. Renderer logs recorded successful temporal scaling frames. These checks do not establish achieved FPS or TAA quality/cost. Earlier failures remain recorded: automated menu opening failed before physical confirmation, and a subsequent attempt timed out before actions while automation mode was disabled.
 
 Open delivery limits:
 
-- The user reports incorrect 4:3 **telescope/scope** presentation. Full display remains experimental; do not change global FOV without a matched capture and verified correction.
+- The 4:3 **telescope/scope** mask correction is committed as `a6a794a`. Eleven layout tests passed; private archive validation changed only one guarded scale float. It is not installed or physically accepted yet. Full display remains experimental; scoped world projection still needs a matched capture.
 - Stable native 60 FPS at 1080 high, synchronized memory/thermal measurements, and complete projection/effects acceptance remain unverified.
 - Physical keyboard/mouse/controller behavior, editor Apply followed by game load, and the complete ordered save/provider regression remain open.
 - Safe in-process restart and a generic mod manager are not implemented. Restart uses close/reopen guidance; arbitrary executable mods are unsupported.
@@ -22,7 +22,7 @@ Open delivery limits:
 
 The current post-tutorial save stays active by user instruction. Retain the original automatic backup and previous signed app. The user waived a fresh full-profile backup; do not claim an immediate complete pre-install comparison. Private reports, inputs, saves, signing and caches remain outside Git.
 
-Future launcher/import architecture is tracked in [issue #34](https://github.com/monkeorg/MacNativeGames/issues/34). It requires a proven execution path and shader preparation as well as NSP extraction. It is not part of this installed integration checkpoint. BOTW remains a separate assessment under issue #8.
+The user established two tracks: local work improves TOTK performance, visuals and game patches; cloud work builds the new native/recompiled launcher under [issue #34](https://github.com/monkeorg/MacNativeGames/issues/34). Read [the cloud handoff](content-free-launcher-handoff.md) and use [the goal prompt](content-free-launcher-goal.txt). The future mod manager is backlog-only [issue #35](https://github.com/monkeorg/MacNativeGames/issues/35), explicitly excluded from the current cloud build. BOTW remains a separate assessment under issue #8.
 
 ## Historical cloud delivery — 2026-10-24
 

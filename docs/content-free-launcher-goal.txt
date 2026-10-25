@@ -1,0 +1,7 @@
+Build the complete native/recompiled iPad game launcher in monkeorg/MacNativeGames issue #34. Read docs/content-free-launcher-handoff.md, inspect current instructions/state, then create a separate redesign branch. Preserve the working TOTK track. Ship no Nintendo-derived content in the public app. Switch is in scope; do not implement a mod manager or future console backends.
+
+First create the architecture decision, full roadmap, dependency graph and issues; then implement the current Switch release scope. Prove executable loading before treating ROM extraction as a working game pipeline. Use gpt-6.1-sol Medium workers, up to 20 when supported; otherwise queue work within the real runtime limit.
+
+Loop: audit gaps → delegate independent tasks → implement → review → run meaningful checks → fix → publish checkpoints and update .goal-task/content-free-launcher/state.md. Continue beyond plans and scaffolds.
+
+Finish only when the in-scope Switch requirement matrix is implemented and verified, including public-artifact purity, real import/gameplay, per-game settings/saves, supported multiplayer, recovery, efficient updates and physical Apple acceptance. If an external gate remains, complete independent work and report the exact blocker without claiming completion. No merges, releases or private-data uploads.
