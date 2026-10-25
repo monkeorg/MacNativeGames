@@ -1,0 +1,28 @@
+{
+  "crossCommit": "aa217aeb6c9f0ace7a0ab233b28807edf45eb165",
+  "patches": [
+    {
+      "after": {
+        "spirv_cfg.cpp": "d2152fc77844c073ad7ab134c82fa3adb9721c9cae6072a1082245dd9bb7ce3f",
+        "spirv_cross.cpp": "cf31d8a5d258aae8fddb67b499213f683d3d10c1eb53cf3218d4064be00412d1",
+        "spirv_cross_containers.hpp": "bfd5fbbb963eda49f4d5d9138147b2a2d566fe0ba9aaa0f1a363938db4b1e965",
+        "spirv_cross_parsed_ir.cpp": "764fe5c9323d296c2177ef924451f8b88850d46b0bc98feb417c64cd7fb23b59",
+        "spirv_glsl.cpp": "d5e872920dc60247dac93e5bc72548f8750082535e03cf00acf71072ecf30021",
+        "spirv_msl.cpp": "85e2fa6bf522ec852d73d3c7efac8b3218bb05f2450b1f7c160fc0808a81f463",
+        "spirv_parser.cpp": "14cd83132eeedb2ac5dd567d2efb46ffed58abfa1501822e70442c23ce97d3be"
+      },
+      "before": {
+        "spirv_cfg.cpp": "e565ab177ae4531db893917951d9ac4f1135799ee5bee384c8ad879de564a596",
+        "spirv_cross.cpp": "27b5287bc307c7a0db052004cb44150b52bb5793aa031dcfd05ab088b1fbe6c2",
+        "spirv_cross_containers.hpp": "81c28e562046fc518a57be4e7eb9af836d3b05a6d9fb3f766a671638c275441f",
+        "spirv_cross_parsed_ir.cpp": "0b9b0bcdb946aef73aab6eb5e6d1f81875abd80268697289b402a782519c3e84",
+        "spirv_glsl.cpp": "8309b385bbdae437f424465000b02866f2921255ff71af7aee21c0604682af26",
+        "spirv_msl.cpp": "06a4116322c64a2406e14f46da71ae16a9df8cd402e4ae4edff934befab8478a",
+        "spirv_parser.cpp": "7dff8886303c75cd65c5160fa5ddf2dab893c7d2f42aad7bed6e828f7a5c1001"
+      },
+      "patch": "0001-cooperative-resource-controls.patch",
+      "sha256": "a712f1133392f5c0c9a35091e91914f7ce8665859f2e1c722f9dc17f3c3e37b7"
+    }
+  ],
+  "schemaVersion": 1
+}

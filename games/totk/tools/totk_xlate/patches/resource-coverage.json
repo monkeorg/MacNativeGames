@@ -1,0 +1,11 @@
+{
+  "instrumentedBracedLoops": 368,
+  "note": "This inventory is not a completeness or hard-memory proof. Uninstrumented recursion, LINQ and framework/native library internals remain runtime-enablement review gates.",
+  "recursiveExpressionEntrypoints": 1,
+  "schemaVersion": 1,
+  "trustedInitializationLoopsExcluded": [
+    "InstTable.Add3fixedencodingloops",
+    "AttributeMap.Add2fixedattributeloops"
+  ],
+  "unbracedLoopsNotInstrumented": []
+}

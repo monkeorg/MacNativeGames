@@ -50,6 +50,7 @@ static class SwshXlate
         public SetBindingPair CreateTextureBinding(int count, bool isBuffer) { int b = _binding; _binding += count; return new(0, b); }
         public ReadOnlySpan<ulong> GetCode(ulong address, int minimumSize)
         {
+            if(_bounded)NativeTranslationBudget.Check();
             if (_bounded && (++_reads > 1000000 || address > (ulong)_code.Length || minimumSize < 0 ||
                 (ulong)minimumSize > (ulong)_code.Length - address || (address & 7) != 0)) throw new InvalidDataException("decoder budget");
             var bytes = new ReadOnlySpan<byte>(_code)[checked((int)address)..];
@@ -133,6 +134,10 @@ static class SwshXlate
         var flags = (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] == "cs" ? TranslationFlags.Compute : 0);
         var ctx = Translator.CreateContext(0, acc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
         ShaderProgram p = ctx.Translate();
+        if(bounded) {
+            NativeTranslationBudget.Check(1,0,(ulong)p.BinaryCode.Length);
+            if(p.BinaryCode.Length>(4<<20))throw new ShaderBudgetStop(5);
+        }
         byte[] spirv = VertexCounterLowering.Apply(code, (string)job["stage"], p.BinaryCode, acc.Notes);
         var res = new JsonObject
         {
@@ -175,12 +180,15 @@ static class SwshXlate
         var program = (System.Collections.IEnumerable)f.GetValue(ctx);
         foreach (object func in program)
         {
+            NativeTranslationBudget.Check();
             var blocks = (Array)func.GetType().GetProperty("Blocks").GetValue(func);
             foreach (object block in blocks)
             {
+            NativeTranslationBudget.Check();
                 var ops = (System.Collections.IEnumerable)block.GetType().GetProperty("OpCodes").GetValue(block);
                 foreach (object op in ops)
                 {
+            NativeTranslationBudget.Check();
                     ulong addr = (ulong)op.GetType().GetField("Address").GetValue(op);
                     ulong raw = (ulong)op.GetType().GetField("RawOpCode").GetValue(op);
                     string name = op.GetType().GetField("Name").GetValue(op).ToString();
@@ -206,6 +214,7 @@ static class SwshXlate
             string line;
             while ((line = Console.ReadLine()) != null)
             {
+            NativeTranslationBudget.Check();
                 if (line.Length == 0) continue;
                 var req = JsonNode.Parse(line).AsObject(); var job = req["job"].AsObject(); string o = (string)req["out"];
                 Directory.CreateDirectory(o);
@@ -219,6 +228,7 @@ static class SwshXlate
         int ok = 0, bad = 0;
         foreach (JsonObject job in jobs)
         {
+            NativeTranslationBudget.Check();
             string err = Translate(job, outDir);
             if (err == null) ok++; else { bad++; Console.Error.WriteLine($"【红】{(string)job["key"]}：{err}"); }
         }

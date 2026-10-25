@@ -1,0 +1,2986 @@
+--- a/spirv_cfg.cpp
++++ b/spirv_cfg.cpp
+@@ -21,6 +21,7 @@
+  *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+  */
+ 
++#include "canopy_cross_budget.hpp"
+ #include "spirv_cfg.hpp"
+ #include "spirv_cross.hpp"
+ #include <algorithm>
+@@ -42,6 +43,7 @@
+ {
+ 	while (a != b)
+ 	{
++		canopy_cross_budget::step();
+ 		if (get_visit_order(a) < get_visit_order(b))
+ 			a = get_immediate_dominator(a);
+ 		else
+@@ -58,6 +60,7 @@
+ 
+ 	for (auto i = post_order.size(); i; i--)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t block = post_order[i - 1];
+ 
+ 		const auto resolve_preds = [&](const SmallVector<uint32_t> &pred)
+@@ -67,6 +70,7 @@
+ 
+ 			for (auto &edge : pred)
+ 			{
++		canopy_cross_budget::step();
+ 				if (immediate_dominators[block])
+ 				{
+ 					assert(immediate_dominators[edge]);
+@@ -102,9 +106,11 @@
+ 
+ 	while (!visit_stack.empty())
+ 	{
++		canopy_cross_budget::step();
+ 		bool keep_iterating;
+ 		do
+ 		{
++		canopy_cross_budget::step();
+ 			// Reverse the order to allow for stack-like behavior and preserves the visit order from recursive algorithm.
+ 			// Traverse depth first.
+ 			uint32_t to_visit = visit_stack.back();
+@@ -119,6 +125,7 @@
+ 		// Any node which has been visited for real can be popped now.
+ 		while (!visit_stack.empty() && visit_order[visit_stack.back()].visited_branches)
+ 		{
++		canopy_cross_budget::step();
+ 			post_order_visit_resolve(visit_stack.back());
+ 			visit_stack.pop_back();
+ 		}
+@@ -226,6 +233,7 @@
+ 		const auto &cases = compiler.get_case_list(block);
+ 		for (const auto &target : cases)
+ 		{
++		canopy_cross_budget::step();
+ 			if (!is_back_edge(target.block))
+ 				add_branch(block_id, target.block);
+ 		}
+@@ -326,6 +334,7 @@
+ {
+ 	while (block_id != SPIRBlock::NoDominator)
+ 	{
++		canopy_cross_budget::step();
+ 		auto itr = preceding_edges.find(block_id);
+ 		if (itr == end(preceding_edges))
+ 			return SPIRBlock::NoDominator;
+@@ -340,6 +349,7 @@
+ 		// NOTE: In the CFG we forced an edge from header to merge block always to support variable scopes properly.
+ 		for (auto &pred : itr->second)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &pred_block = compiler.get<SPIRBlock>(pred);
+ 			if (pred_block.merge == SPIRBlock::MergeLoop && pred_block.merge_block == ID(block_id))
+ 			{
+@@ -385,6 +395,7 @@
+ 
+ 	while (to != from)
+ 	{
++		canopy_cross_budget::step();
+ 		auto pred_itr = preceding_edges.find(to);
+ 		if (pred_itr == end(preceding_edges))
+ 			return false;
+@@ -507,6 +518,7 @@
+ 		auto &cases = cfg.get_compiler().get_case_list(block);
+ 		for (auto &target : cases)
+ 		{
++		canopy_cross_budget::step();
+ 			if (cfg.get_visit_order(target.block) > post_order)
+ 				back_edge_dominator = true;
+ 		}
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -21,6 +21,7 @@
+  *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+  */
+ 
++#include "canopy_cross_budget.hpp"
+ #include "spirv_cross.hpp"
+ #include "GLSL.std.450.h"
+ #include "spirv_cfg.hpp"
+@@ -107,6 +108,7 @@
+ {
+ 	for (auto &i : block.ops)
+ 	{
++		canopy_cross_budget::step();
+ 		auto ops = stream(i);
+ 		auto op = static_cast<Op>(i.op);
+ 
+@@ -207,6 +209,7 @@
+ 
+ 	for (auto &i : block.ops)
+ 	{
++		canopy_cross_budget::step();
+ 		auto ops = stream(i);
+ 		auto op = static_cast<Op>(i.op);
+ 
+@@ -373,6 +376,7 @@
+ {
+ 	for (auto &i : block.ops)
+ 	{
++		canopy_cross_budget::step();
+ 		auto ops = stream(i);
+ 		auto op = static_cast<Op>(i.op);
+ 
+@@ -864,6 +868,7 @@
+ 		args += 3;
+ 		for (uint32_t i = 0; i < count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto *var = compiler.maybe_get<SPIRVariable>(args[i]);
+ 			if (var && storage_class_is_interface(var->storage))
+ 				variables.insert(args[i]);
+@@ -881,6 +886,7 @@
+ 		args += 3;
+ 		for (uint32_t i = 0; i < count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto *var = compiler.maybe_get<SPIRVariable>(args[i]);
+ 			if (var && storage_class_is_interface(var->storage))
+ 				variables.insert(args[i]);
+@@ -898,6 +904,7 @@
+ 		args += 2;
+ 		for (uint32_t i = 0; i < count; i += 2)
+ 		{
++		canopy_cross_budget::step();
+ 			auto *var = compiler.maybe_get<SPIRVariable>(args[i]);
+ 			if (var && storage_class_is_interface(var->storage))
+ 				variables.insert(args[i]);
+@@ -1117,6 +1124,7 @@
+ 
+ 				for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
+ 				{
++		canopy_cross_budget::step();
+ 					resource.value_type_id = type.member_types[i];
+ 					resource.builtin = BuiltIn(get_member_decoration(type.self, i, DecorationBuiltIn));
+ 					list.push_back(resource);
+@@ -1285,6 +1293,7 @@
+ 	// Figure out specialization constants for work group sizes.
+ 	for (auto id_ : ir.ids_for_constant_or_variable)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &id = ir.ids[id_];
+ 
+ 		if (id.get_type() == TypeConstant)
+@@ -1298,6 +1307,7 @@
+ 				// WorkgroupSize take precedence over LocalSizeId.
+ 				for (auto &entry : ir.entry_points)
+ 				{
++		canopy_cross_budget::step();
+ 					entry.second.workgroup_size.constant = c.self;
+ 					entry.second.workgroup_size.x = c.scalar(0, 0);
+ 					entry.second.workgroup_size.y = c.scalar(0, 1);
+@@ -1369,6 +1379,7 @@
+ 	// keep tacking on extra identifier until it's unique.
+ 	do
+ 	{
++		canopy_cross_budget::step();
+ 		counter++;
+ 		name = tmpname + (use_linked_underscore ? "_" : "") + convert_to_string(counter);
+ 	} while (find_name(name));
+@@ -1719,6 +1730,7 @@
+ 	// Verify all instructions have no semantic impact.
+ 	for (auto &i : block.ops)
+ 	{
++		canopy_cross_budget::step();
+ 		auto op = static_cast<Op>(i.op);
+ 
+ 		switch (op)
+@@ -1858,6 +1870,7 @@
+ 	auto *start = &from;
+ 	for (;;)
+ 	{
++		canopy_cross_budget::step();
+ 		if (start->self == to.self)
+ 			return true;
+ 
+@@ -1874,6 +1887,7 @@
+ 	auto *start = &from;
+ 	for (;;)
+ 	{
++		canopy_cross_budget::step();
+ 		if (start->self == to.self)
+ 			return true;
+ 
+@@ -1987,6 +2001,7 @@
+ 
+ bool Compiler::traverse_all_reachable_opcodes(const SPIRBlock &block, OpcodeHandler &handler) const
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	handler.set_current_block(block);
+ 	handler.rearm_current_block(block);
+ 
+@@ -1994,6 +2009,7 @@
+ 	{
+ 		for (auto &phi: block.phi_variables)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &v = get<SPIRVariable>(phi.function_variable);
+ 			handler.result_types[phi.function_variable] = v.basetype;
+ 		}
+@@ -2004,6 +2020,7 @@
+ 	// inside dead blocks ...
+ 	for (auto &i : block.ops)
+ 	{
++		canopy_cross_budget::step();
+ 		auto ops = stream(i);
+ 		auto op = static_cast<Op>(i.op);
+ 
+@@ -2048,6 +2065,7 @@
+ 
+ bool Compiler::traverse_all_reachable_opcodes(const SPIRFunction &func, OpcodeHandler &handler) const
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	for (auto block : func.blocks)
+ 		if (!traverse_all_reachable_opcodes(get<SPIRBlock>(block), handler))
+ 			return false;
+@@ -2116,6 +2134,7 @@
+ 	size_t highest_offset = 0;
+ 	for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		size_t offset = type_struct_member_offset(type, i);
+ 		if (offset > highest_offset)
+ 		{
+@@ -2446,6 +2465,7 @@
+ 	size_t member_types = a.member_types.size();
+ 	for (size_t i = 0; i < member_types; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		if (!types_are_logically_equivalent(get<SPIRType>(a.member_types[i]), get<SPIRType>(b.member_types[i])))
+ 			return false;
+ 	}
+@@ -2927,6 +2947,7 @@
+ 	{
+ 		for (auto &param : params)
+ 		{
++		canopy_cross_budget::step();
+ 			VariableID image_id = param.global_image ? param.image_id : VariableID(args[param.image_id]);
+ 			VariableID sampler_id = param.global_sampler ? param.sampler_id : VariableID(args[param.sampler_id]);
+ 
+@@ -3380,6 +3401,7 @@
+ 	// If any of our successors have a path to the end, there exists a path from block.
+ 	for (auto &succ : cfg.get_succeeding_edges(block))
+ 	{
++		canopy_cross_budget::step();
+ 		if (visit_cache.count(succ) == 0)
+ 		{
+ 			if (exists_unaccessed_path_to_return(cfg, succ, blocks, visit_cache))
+@@ -3397,6 +3419,7 @@
+ {
+ 	for (auto &arg : entry.arguments)
+ 	{
++		canopy_cross_budget::step();
+ 		// Non-pointers are always inputs.
+ 		auto &type = get<SPIRType>(arg.type);
+ 		if (!type.pointer)
+@@ -3474,6 +3497,7 @@
+ 		auto &next = compiler.get<SPIRBlock>(to);
+ 		for (auto &phi : next.phi_variables)
+ 		{
++		canopy_cross_budget::step();
+ 			if (phi.parent == block.self)
+ 			{
+ 				accessed_variables_to_block[phi.function_variable].insert(block.self);
+@@ -3634,6 +3658,7 @@
+ 		// args[2] might be another access chain we have to track use of.
+ 		for (uint32_t i = 2; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			notify_variable_access(args[i], current_block->self);
+ 			rvalue_forward_children[args[1]].insert(args[i]);
+ 		}
+@@ -3748,6 +3773,7 @@
+ 
+ 		for (uint32_t i = 0; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto *var = compiler.maybe_get_backing_variable(args[i]);
+ 			if (var)
+ 			{
+@@ -3772,6 +3798,7 @@
+ 		// We cannot prove anything about these accesses however.
+ 		for (uint32_t i = 1; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (i >= 3)
+ 			{
+ 				auto *var = compiler.maybe_get_backing_variable(args[i]);
+@@ -3853,6 +3880,7 @@
+ 	case OpImageWrite:
+ 		for (uint32_t i = 0; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			// Argument 3 is a literal.
+ 			if (i != 3)
+ 				notify_variable_access(args[i], current_block->self);
+@@ -3873,6 +3901,7 @@
+ 	case OpImageSparseRead:
+ 		for (uint32_t i = 1; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			// Argument 4 is a literal.
+ 			if (i != 4)
+ 				notify_variable_access(args[i], current_block->self);
+@@ -3893,6 +3922,7 @@
+ 	case OpImageSparseDrefGather:
+ 		for (uint32_t i = 1; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			// Argument 5 is a literal.
+ 			if (i != 5)
+ 				notify_variable_access(args[i], current_block->self);
+@@ -3973,6 +4003,7 @@
+ 	// For each variable which is statically accessed.
+ 	for (auto &accessed_var : handler.accessed_variables_to_block)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &blocks = accessed_var.second;
+ 		auto &var = get<SPIRVariable>(accessed_var.first);
+ 		auto &type = expression_type(accessed_var.first);
+@@ -4081,6 +4112,7 @@
+ 	// Find the loop dominator block for each block.
+ 	for (auto &block_id : entry.blocks)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &block = get<SPIRBlock>(block_id);
+ 
+ 		auto itr = ir.continue_block_to_loop_header.find(block_id);
+@@ -4103,6 +4135,7 @@
+ 	// For each variable which is statically accessed.
+ 	for (auto &var : handler.accessed_variables_to_block)
+ 	{
++		canopy_cross_budget::step();
+ 		// Only deal with variables which are considered local variables in this function.
+ 		if (find(begin(entry.local_variables), end(entry.local_variables), VariableID(var.first)) ==
+ 		    end(entry.local_variables))
+@@ -4116,6 +4149,7 @@
+ 		// Figure out which block is dominating all accesses of those variables.
+ 		for (auto &block : blocks)
+ 		{
++		canopy_cross_budget::step();
+ 			// If we're accessing a variable inside a continue block, this variable might be a loop variable.
+ 			// We can only use loop variables with scalars, as we cannot track static expressions for vectors.
+ 			if (is_continue(block))
+@@ -4216,6 +4250,7 @@
+ 
+ 	for (auto &var : handler.accessed_temporaries_to_block)
+ 	{
++		canopy_cross_budget::step();
+ 		auto itr = handler.result_id_to_type.find(var.first);
+ 
+ 		if (itr == end(handler.result_id_to_type))
+@@ -4238,6 +4273,7 @@
+ 		auto &blocks = var.second;
+ 		for (auto &block : blocks)
+ 		{
++		canopy_cross_budget::step();
+ 			builder.add_block(block);
+ 
+ 			if (blocks.size() != 1 && is_continue(block))
+@@ -4320,6 +4356,7 @@
+ 	// Now, try to analyze whether or not these variables are actually loop variables.
+ 	for (auto &loop_variable : potential_loop_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(loop_variable.first);
+ 		auto dominator = var.dominator;
+ 		BlockID block = loop_variable.second;
+@@ -4364,6 +4401,7 @@
+ 		bool static_loop_init = true;
+ 		while (dominator != header)
+ 		{
++		canopy_cross_budget::step();
+ 			if (blocks.count(dominator) != 0)
+ 				has_accessed_variable = true;
+ 
+@@ -4414,6 +4452,7 @@
+ {
+ 	for (auto &op : block.ops)
+ 	{
++		canopy_cross_budget::step();
+ 		auto *ops = stream(op);
+ 		switch (op.op)
+ 		{
+@@ -4532,6 +4571,7 @@
+ 		base_type = SPIRType::Unknown;
+ 		for (auto &member_type : type.member_types)
+ 		{
++		canopy_cross_budget::step();
+ 			SPIRType::BaseType member_base;
+ 			if (!get_common_basic_type(get<SPIRType>(member_type), member_base))
+ 				return false;
+@@ -4605,6 +4645,7 @@
+ 			uint32_t member_count = uint32_t(type.member_types.size());
+ 			for (uint32_t i = 0; i < member_count; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (compiler.has_member_decoration(type.self, i, DecorationBuiltIn))
+ 				{
+ 					auto &member_type = compiler.get<SPIRType>(type.member_types[i]);
+@@ -4714,6 +4755,7 @@
+ 		args += 3;
+ 		for (uint32_t i = 0; i < count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			// Pointers
+ 			// PtrAccessChain functions more like a pointer offset. Type remains the same.
+ 			if (opcode == OpPtrAccessChain && i == 0)
+@@ -4873,6 +4915,7 @@
+ 		// callees) so per-function analyses below cover all of them.
+ 		for (auto export_id : ir.library_exported_functions)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &func = get<SPIRFunction>(export_id);
+ 			if (handler.follow_function_call(func))
+ 				traverse_all_reachable_opcodes(func, handler);
+@@ -4883,6 +4926,7 @@
+ 
+ 	for (auto &f : function_cfgs)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &func = get<SPIRFunction>(f.first);
+ 		AnalyzeVariableScopeAccessHandler scope_handler(*this, func);
+ 		analyze_variable_scope(func, scope_handler);
+@@ -4892,6 +4936,7 @@
+ 		// To use multiple initializers, we need the same type and qualifiers.
+ 		for (auto block : func.blocks)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &b = get<SPIRBlock>(block);
+ 			if (b.loop_variables.size() < 2)
+ 				continue;
+@@ -4901,6 +4946,7 @@
+ 			bool invalid_initializers = false;
+ 			for (auto loop_variable : b.loop_variables)
+ 			{
++		canopy_cross_budget::step();
+ 				if (flags != get_decoration_bitset(loop_variable) ||
+ 				    type != get<SPIRVariable>(b.loop_variables.front()).basetype)
+ 				{
+@@ -4926,6 +4972,7 @@
+ 	{
+ 		for (auto &id : global_variables)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &var = get<SPIRVariable>(id);
+ 			auto &type = get_variable_data_type(var);
+ 
+@@ -4982,6 +5029,7 @@
+ 
+ 	for (uint32_t i = 0; i < length; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &argument = func.arguments[i];
+ 		add_dependency(argument.id, arg[i]);
+ 	}
+@@ -5111,6 +5159,7 @@
+ 		SmallVector<uint32_t> elements(constant_type.member_types.size());
+ 		for (uint32_t i = 0; i < constant_type.member_types.size(); i++)
+ 		{
++		canopy_cross_budget::step();
+ 			make_constant_null(member_ids + i, constant_type.member_types[i]);
+ 			elements[i] = member_ids + i;
+ 		}
+@@ -5236,6 +5285,7 @@
+ 		auto &member_childs = member_type.member_types;
+ 		for (uint32_t i = 0; i < member_childs.size(); i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &child_member_type = get<SPIRType>(member_childs[i]);
+ 			if (!child_member_type.pointer)
+ 				flags.merge_or(combined_decoration_for_member(member_type, i));
+@@ -5371,6 +5421,7 @@
+ 		uint32_t alignment = 0;
+ 		for (auto &member_type : type.member_types)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t member_align = get_minimum_scalar_alignment(compiler.get<SPIRType>(member_type));
+ 			if (member_align > alignment)
+ 				alignment = member_align;
+@@ -5458,6 +5509,7 @@
+ 	auto *type = &compiler.get<SPIRType>(type_id);
+ 	while (compiler.is_physical_pointer(*type) && !type_is_bda_block_entry(type_id))
+ 	{
++		canopy_cross_budget::step();
+ 		type_id = type->parent_type;
+ 		type = &compiler.get<SPIRType>(type_id);
+ 	}
+@@ -5474,6 +5526,7 @@
+ 
+ 	for (auto &member : type.member_types)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &subtype = compiler.get<SPIRType>(member);
+ 
+ 		if (compiler.is_physical_pointer(subtype) && !compiler.is_physical_pointer_to_buffer_block(subtype))
+@@ -5727,6 +5780,7 @@
+ 
+ 			for (auto &type : heap_types)
+ 			{
++		canopy_cross_budget::step();
+ 				if (type.data_type == meta.data_type && type.name_type == meta.name_type &&
+ 				    type.storage == meta.storage &&
+ 				    type.buffer_pointer_id == meta.buffer_pointer_id &&
+@@ -6070,6 +6124,7 @@
+ 	{
+ 		for (auto &block_id : func.blocks)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &block = this->get<SPIRBlock>(block_id);
+ 			if (block.terminator == SPIRBlock::ShaderAbort)
+ 			{
+@@ -6098,6 +6153,7 @@
+ 	uint32_t mbr_cnt = uint32_t(type.member_types.size());
+ 	for (uint32_t mbr_idx = 0; !is_recursive && mbr_idx < mbr_cnt; mbr_idx++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t mbr_type_id = type.member_types[mbr_idx];
+ 		auto &mbr_type = get<SPIRType>(mbr_type_id);
+ 		is_recursive |= check_internal_recursion(mbr_type, checked_ids);
+--- a/spirv_cross_containers.hpp
++++ b/spirv_cross_containers.hpp
+@@ -24,6 +24,7 @@
+ #ifndef SPIRV_CROSS_CONTAINERS_HPP
+ #define SPIRV_CROSS_CONTAINERS_HPP
+ 
++#include "canopy_cross_budget.hpp"
+ #include "spirv_cross_error_handling.hpp"
+ #include <algorithm>
+ #include <exception>
+@@ -571,7 +572,9 @@
+ 	{
+ 		if (vacants.empty())
+ 		{
++			if (memory.size() >= 20) throw canopy_cross_budget::failure{5};
+ 			unsigned num_objects = start_object_count << memory.size();
++			canopy_cross_budget::step(num_objects,num_objects,uint64_t(num_objects)*sizeof(T));
+ 			T *ptr = static_cast<T *>(malloc(num_objects * sizeof(T)));
+ 			if (!ptr)
+ 				return nullptr;
+@@ -687,6 +690,7 @@
+ 		for (auto &saved : saved_buffers)
+ 			target_size += saved.offset;
+ 		target_size += current_buffer.offset;
++		canopy_cross_budget::step(1,0,target_size);
+ 		ret.reserve(target_size);
+ 
+ 		for (auto &saved : saved_buffers)
+@@ -697,6 +701,7 @@
+ 
+ 	void reset()
+ 	{
++		canopy_bytes = 0;
+ 		for (auto &saved : saved_buffers)
+ 			if (saved.buffer != stack_buffer)
+ 				free(saved.buffer);
+@@ -716,12 +721,15 @@
+ 		size_t offset = 0;
+ 		size_t size = 0;
+ 	};
++	size_t canopy_bytes = 0;
+ 	Buffer current_buffer;
+ 	char stack_buffer[StackSize];
+ 	SmallVector<Buffer> saved_buffers;
+ 
+ 	void append(const char *s, size_t len)
+ 	{
++		if (len > (8u<<20)-canopy_bytes) throw canopy_cross_budget::failure{5};
++		canopy_cross_budget::step(1,0,len);canopy_bytes += len;
+ 		size_t avail = current_buffer.size - current_buffer.offset;
+ 		if (avail < len)
+ 		{
+@@ -733,8 +741,10 @@
+ 				current_buffer.offset += avail;
+ 			}
+ 
++			size_t target_size = len > BlockSize ? len : BlockSize;
++			// Throwing checks must precede duplication of current buffer ownership.
++			canopy_cross_budget::step(1,0,target_size);
+ 			saved_buffers.push_back(current_buffer);
+-			size_t target_size = len > BlockSize ? len : BlockSize;
+ 			current_buffer.buffer = static_cast<char *>(malloc(target_size));
+ 			if (!current_buffer.buffer)
+ 				SPIRV_CROSS_THROW("Out of memory.");
+--- a/spirv_cross_parsed_ir.cpp
++++ b/spirv_cross_parsed_ir.cpp
+@@ -21,6 +21,7 @@
+  *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+  */
+ 
++#include "canopy_cross_budget.hpp"
+ #include "spirv_cross_parsed_ir.hpp"
+ #include <algorithm>
+ #include <assert.h>
+@@ -143,6 +144,7 @@
+ 
+ void ParsedIR::set_id_bounds(uint32_t bounds)
+ {
++	canopy_cross_budget::step(bounds,bounds,uint64_t(bounds)*128);
+ 	ids.reserve(bounds);
+ 	while (ids.size() < bounds)
+ 		ids.emplace_back(pool_group.get());
+@@ -963,6 +965,8 @@
+ 
+ uint32_t ParsedIR::increase_bound_by(uint32_t incr_amount)
+ {
++	if (incr_amount > 262144 || ids.size() > 262144-incr_amount) throw canopy_cross_budget::failure{5};
++	canopy_cross_budget::step(incr_amount,incr_amount,uint64_t(incr_amount)*128);
+ 	auto curr_bound = ids.size();
+ 	auto new_bound = curr_bound + incr_amount;
+ 
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -21,6 +21,7 @@
+  *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+  */
+ 
++#include "canopy_cross_budget.hpp"
+ #include "spirv_glsl.hpp"
+ #include "GLSL.std.450.h"
+ #include "spirv_common.hpp"
+@@ -343,6 +344,8 @@
+ 
+ void CompilerGLSL::reset(uint32_t iteration_count)
+ {
++	canopy_cross_budget::step();
++	if (iteration_count >= 16) throw canopy_cross_budget::failure{5};
+ 	// Sanity check the iteration count to be robust against a certain class of bugs where
+ 	// we keep forcing recompilations without making clear forward progress.
+ 	// In buggy situations we will loop forever, or loop for an unbounded number of iterations.
+@@ -397,6 +400,7 @@
+ {
+ 	for (auto &input : pls_inputs)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(input.id);
+ 
+ 		bool input_is_target = false;
+@@ -413,6 +417,7 @@
+ 
+ 	for (auto &output : pls_outputs)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(output.id);
+ 		if (var.storage != StorageClassOutput)
+ 			SPIRV_CROSS_THROW("Can only use out variables for PLS outputs.");
+@@ -525,6 +530,7 @@
+ 		// Need to figure out if we should target KHR or NV extension based on capabilities.
+ 		for (auto &cap : ir.declared_capabilities)
+ 		{
++		canopy_cross_budget::step();
+ 			if (cap == CapabilityRayTracingKHR || cap == CapabilityRayQueryKHR ||
+ 			    cap == CapabilityRayTraversalPrimitiveCullingKHR)
+ 			{
+@@ -576,6 +582,7 @@
+ 
+ 		for (auto &att : inout_color_attachments)
+ 		{
++		canopy_cross_budget::step();
+ 			if (att.second)
+ 				has_coherent = true;
+ 			else
+@@ -610,6 +617,7 @@
+ 	// Instead of looping over all decorations to find this, just look at capabilities.
+ 	for (auto &cap : ir.declared_capabilities)
+ 	{
++		canopy_cross_budget::step();
+ 		switch (cap)
+ 		{
+ 		case CapabilityShaderNonUniform:
+@@ -799,6 +807,7 @@
+ {
+ 	for (auto &impl : integer_dot_products_polyfills)
+ 	{
++		canopy_cross_budget::step();
+ 		if (impl.result_type == idot.result_type &&
+ 		    impl.argument_type[0] == idot.argument_type[0] &&
+ 		    impl.argument_type[1] == idot.argument_type[1] &&
+@@ -871,6 +880,7 @@
+ 	uint32_t pass_count = 0;
+ 	do
+ 	{
++		canopy_cross_budget::step();
+ 		reset(pass_count);
+ 
+ 		buffer.reset();
+@@ -1044,6 +1054,7 @@
+ 
+ 	for (auto &ext : forced_extensions)
+ 	{
++		canopy_cross_budget::step();
+ 		if (ext == "GL_ARB_gpu_shader_int64")
+ 		{
+ 			statement("#if defined(GL_ARB_gpu_shader_int64)");
+@@ -1185,6 +1196,7 @@
+ 
+ 		for (uint32_t feature_index = 0; feature_index < Supp::FeatureCount; feature_index++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto feature = static_cast<Supp::Feature>(feature_index);
+ 			if (!shader_subgroup_supporter.is_feature_requested(feature))
+ 				continue;
+@@ -1197,6 +1209,7 @@
+ 
+ 			for (auto &ext : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(ext);
+ 				const char *extra_predicate = Supp::get_extra_required_extension_predicate(ext);
+ 				auto extra_names = Supp::get_extra_required_extension_names(ext);
+@@ -1455,6 +1468,7 @@
+ 	bool emitted = false;
+ 	for (auto &member : type.member_types)
+ 	{
++		canopy_cross_budget::step();
+ 		add_member_name(type, i);
+ 		emit_struct_member(type, member, i);
+ 		i++;
+@@ -1783,6 +1797,7 @@
+ 		uint32_t alignment = 1;
+ 		for (uint32_t i = 0; i < type.member_types.size(); i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto member_flags = ir.meta[type.self].members[i].decoration_flags;
+ 			alignment =
+ 			    max(alignment, type_to_packed_alignment(get<SPIRType>(type.member_types[i]), member_flags, packing));
+@@ -1905,6 +1920,7 @@
+ 				const auto *base_type = &type;
+ 				while (is_array(*base_type))
+ 				{
++		canopy_cross_budget::step();
+ 					auto &new_type = get<SPIRType>(base_type->parent_type);
+ 					if (!is_array(new_type))
+ 						break;
+@@ -1927,6 +1943,7 @@
+ 
+ 		for (uint32_t i = 0; i < type.member_types.size(); i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto member_flags = ir.meta[type.self].members[i].decoration_flags;
+ 			auto &member_type = get<SPIRType>(type.member_types[i]);
+ 
+@@ -2025,6 +2042,7 @@
+ 
+ 	for (uint32_t i = 0; i < type.member_types.size(); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &memb_type = get<SPIRType>(type.member_types[i]);
+ 
+ 		auto *type_meta = ir.find_meta(type.self);
+@@ -2265,6 +2283,7 @@
+ 		// Verify that none of the members violate our assumption.
+ 		for (uint32_t i = 0; i < member_count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (has_member_decoration(type.self, i, DecorationStream))
+ 			{
+ 				uint32_t member_geom_stream = get_member_decoration(type.self, i, DecorationStream);
+@@ -2688,6 +2707,7 @@
+ 			uint32_t i = 0;
+ 			for (auto &member : type.member_types)
+ 			{
++		canopy_cross_budget::step();
+ 				add_member_name(type, i);
+ 				emit_struct_member(type, member, i);
+ 				i++;
+@@ -2852,6 +2872,7 @@
+ 	uint32_t i = 0;
+ 	for (auto &member : type->member_types)
+ 	{
++		canopy_cross_budget::step();
+ 		add_member_name(*type, i);
+ 		emit_struct_member(*type, member, i);
+ 		i++;
+@@ -2966,6 +2987,7 @@
+ 	auto flattened_name = basename;
+ 	for (auto &index : indices)
+ 	{
++		canopy_cross_budget::step();
+ 		flattened_name += "_";
+ 		flattened_name += to_member_name(*member_type, index);
+ 		parent_type = member_type;
+@@ -3012,6 +3034,7 @@
+ 
+ 	for (uint32_t i = 0; i < uint32_t(member_type->member_types.size()); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		sub_indices.back() = i;
+ 		if (get<SPIRType>(member_type->member_types[i]).basetype == SPIRType::Struct)
+ 			emit_flattened_io_block_struct(basename, type, qual, sub_indices);
+@@ -3043,6 +3066,7 @@
+ 	uint32_t i = 0;
+ 	for (auto &member : type.member_types)
+ 	{
++		canopy_cross_budget::step();
+ 		add_member_name(type, i);
+ 		auto &membertype = get<SPIRType>(member);
+ 
+@@ -3137,6 +3161,7 @@
+ 			uint32_t i = 0;
+ 			for (auto &member : type.member_types)
+ 			{
++		canopy_cross_budget::step();
+ 				add_member_name(type, i);
+ 				emit_struct_member(type, member, i);
+ 				i++;
+@@ -3549,6 +3574,7 @@
+ 			uint32_t member_count = uint32_t(type.member_types.size());
+ 			for (uint32_t i = 0; i < member_count; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (has_member_decoration(type.self, i, DecorationBuiltIn) &&
+ 				    is_block_builtin(BuiltIn(get_member_decoration(type.self, i, DecorationBuiltIn))) &&
+ 				    has_member_decoration(type.self, i, DecorationOffset))
+@@ -3664,6 +3690,7 @@
+ 			uint32_t index = 0;
+ 			for (auto &m : ir.meta[type.self].members)
+ 			{
++		canopy_cross_budget::step();
+ 				if (m.builtin && builtin_is_per_vertex_set(m.builtin_type))
+ 				{
+ 					builtins.set(m.builtin_type);
+@@ -4065,6 +4092,7 @@
+ 		auto loop_lock = ir.create_loop_hard_lock();
+ 		for (auto &id_ : ir.ids_for_constant_undef_or_type)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &id = ir.ids[id_];
+ 
+ 			// Skip declaring any bogus constants or undefs which use block types.
+@@ -4301,6 +4329,7 @@
+ 	// Global variables.
+ 	for (auto global : global_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(global);
+ 		if (is_hidden_variable(var, true))
+ 			continue;
+@@ -4332,6 +4361,7 @@
+ 
+ 	for (const auto &heap_type : descriptor_heap_types)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &type = get<SPIRType>(heap_type.data_type);
+ 
+ 		if (heap_type.hlsl_style_stride)
+@@ -4401,6 +4431,7 @@
+ 		// If the initializer is a block, we must initialize each block member one at a time.
+ 		for (uint32_t i = 0; i < member_count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			// These outputs might not have been properly declared, so don't initialize them in that case.
+ 			if (has_member_decoration(type.self, i, DecorationBuiltIn))
+ 			{
+@@ -4438,6 +4469,7 @@
+ 
+ 			for (uint32_t j = 0; j < iteration_count; j++)
+ 			{
++		canopy_cross_budget::step();
+ 				entry_func.fixup_hooks_in.push_back([=, &var]() {
+ 					AccessChainMeta meta;
+ 					auto &c = this->get<SPIRConstant>(var.initializer);
+@@ -4505,6 +4537,7 @@
+ 			uint32_t num_constants = uint32_t(c.subconstants.size());
+ 			for (uint32_t i = 0; i < num_constants; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				// Don't use to_expression on constant since it might be uint, just fish out the raw int.
+ 				statement(to_expression(var.self), "[", i, "] = ",
+ 				          convert_to_string(this->get<SPIRConstant>(c.subconstants[i]).scalar_i32()), ";");
+@@ -4630,6 +4663,7 @@
+ 
+ 	for (const TypeInfo &t : type_infos)
+ 	{
++		canopy_cross_budget::step();
+ 		statement(t.type, " ", func, "(", t.type, " v)");
+ 		begin_scope();
+ 		statement(t.type, " ", result, " = ", t.identity, ";");
+@@ -4708,6 +4742,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -4741,6 +4776,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -4769,6 +4805,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -4794,6 +4831,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -4816,6 +4854,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -4838,6 +4877,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -4846,11 +4886,13 @@
+ 				case Supp::NV_shader_thread_shuffle:
+ 					for (const char *t : workaround_types)
+ 					{
++		canopy_cross_budget::step();
+ 						statement(t, " subgroupBroadcastFirst(", t,
+ 						          " value) { return shuffleNV(value, findLSB(ballotThreadNV(true)), gl_WarpSizeNV); }");
+ 					}
+ 					for (const char *t : workaround_types)
+ 					{
++		canopy_cross_budget::step();
+ 						statement(t, " subgroupBroadcast(", t,
+ 						          " value, uint id) { return shuffleNV(value, id, gl_WarpSizeNV); }");
+ 					}
+@@ -4858,11 +4900,13 @@
+ 				case Supp::ARB_shader_ballot:
+ 					for (const char *t : workaround_types)
+ 					{
++		canopy_cross_budget::step();
+ 						statement(t, " subgroupBroadcastFirst(", t,
+ 						          " value) { return readFirstInvocationARB(value); }");
+ 					}
+ 					for (const char *t : workaround_types)
+ 					{
++		canopy_cross_budget::step();
+ 						statement(t, " subgroupBroadcast(", t,
+ 						          " value, uint id) { return readInvocationARB(value, id); }");
+ 					}
+@@ -4881,6 +4925,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -4915,6 +4960,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -4963,6 +5009,7 @@
+ 
+ 			for (auto &e : exts)
+ 			{
++		canopy_cross_budget::step();
+ 				const char *name = Supp::get_extension_name(e);
+ 				statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -5104,6 +5151,7 @@
+ 				auto exts = Supp::get_candidates_for_feature(feat, result);
+ 				for (auto &e : exts)
+ 				{
++		canopy_cross_budget::step();
+ 					const char *name = Supp::get_extension_name(e);
+ 					statement(&e == &exts.front() ? "#if" : "#elif", " defined(", name, ")");
+ 
+@@ -5152,6 +5200,7 @@
+ 	{
+ 		for (auto &type_id : workaround_ubo_load_overload_types)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &type = get<SPIRType>(type_id);
+ 
+ 			if (options.es && is_matrix(type))
+@@ -5174,6 +5223,7 @@
+ {
+ 	for (auto &op : integer_dot_products_polyfills)
+ 	{
++		canopy_cross_budget::step();
+ 		string caps = join("[", CapabilityDotProduct);
+ 		auto &arg_type = get<SPIRType>(op.argument_type[0]);
+ 		if (arg_type.basetype == SPIRType::SByte || arg_type.basetype == SPIRType::UByte)
+@@ -5343,8 +5393,10 @@
+ 
+ 		for (uint32_t i = 0; i < 3; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			for (uint32_t j = 0; j < 3; j++)
+ 			{
++		canopy_cross_budget::step();
+ 				if ((polyfills & polys[i][j]) == 0)
+ 					continue;
+ 
+@@ -5356,6 +5408,7 @@
+ 
+ 				for (uint32_t k = 0; k < 4; k++)
+ 				{
++		canopy_cross_budget::step();
+ 					auto *type = types[j][k];
+ 
+ 					if (i < 2)
+@@ -5392,8 +5445,10 @@
+ 
+ 		for (uint32_t i = 0; i < 3; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			for (uint32_t j = 0; j < 3; j++)
+ 			{
++		canopy_cross_budget::step();
+ 				if ((polyfills & polys[i][j]) == 0)
+ 					continue;
+ 
+@@ -5405,6 +5460,7 @@
+ 
+ 				for (uint32_t k = 0; k < 4; k++)
+ 				{
++		canopy_cross_budget::step();
+ 					auto *type = types[j][k];
+ 
+ 					if (i < 2)
+@@ -5561,6 +5617,7 @@
+ 	uint32_t paren_count = 0;
+ 	for (auto &c : expr)
+ 	{
++		canopy_cross_budget::step();
+ 		if (c == '(')
+ 			paren_count++;
+ 		else if (c == ')')
+@@ -5595,6 +5652,7 @@
+ 		uint32_t paren_count = 0;
+ 		for (auto c : expr)
+ 		{
++		canopy_cross_budget::step();
+ 			if (c == '(' || c == '[')
+ 				paren_count++;
+ 			else if (c == ')' || c == ']')
+@@ -5802,6 +5860,7 @@
+ 
+ 	for (uint32_t i = 0; i < size; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto subexpr = join(base_expr, "[", convert_to_string(i), "]");
+ 		if (!is_array(parent))
+ 		{
+@@ -6085,6 +6144,7 @@
+ 		constant.m.columns = type.columns;
+ 		for (uint32_t i = 0; i < type.columns; ++i)
+ 		{
++		canopy_cross_budget::step();
+ 			constant.m.id[i] = initializers[i];
+ 			constant.m.c[i].vecsize = type.vecsize;
+ 		}
+@@ -6233,6 +6293,7 @@
+ 
+ 		for (uint32_t i = 2; i < uint32_t(cop.arguments.size()); i++)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t index = cop.arguments[i];
+ 			if (index == 0xFFFFFFFF)
+ 			{
+@@ -6295,6 +6356,7 @@
+ 		// constants for each containing part.
+ 		for (idx = 2; idx < cop.arguments.size() - 1; ++idx)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t new_const = ir.increase_bound_by(1);
+ 			uint32_t old_const = new_init[cop.arguments[idx]];
+ 			new_init[cop.arguments[idx]] = new_const;
+@@ -6441,6 +6503,7 @@
+ 			res += "(";
+ 			for (uint32_t i = 0; i < num_elements; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				res += to_expression(c.subconstants[0]);
+ 				if (i < num_elements - 1)
+ 					res += ", ";
+@@ -6522,6 +6585,7 @@
+ 		}
+ 		for (size_t i = 0; i < num_elements; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &elem = c.subconstants[c.replicated ? 0 : i];
+ 			if (auto *op = maybe_get<SPIRConstantOp>(elem))
+ 			{
+@@ -6597,6 +6661,7 @@
+ 		string res = type_to_glsl(type) + "(";
+ 		for (uint32_t col = 0; col < c.columns(); col++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (c.specialization_constant_id(col) != 0)
+ 				res += to_name(c.specialization_constant_id(col));
+ 			else
+@@ -6883,6 +6948,7 @@
+ 		// Cannot use constant splatting if we have specialization constants somewhere in the vector.
+ 		for (uint32_t i = 0; i < c.vector_size(); i++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (c.specialization_constant_id(vector, i) != 0)
+ 			{
+ 				splat = false;
+@@ -6899,6 +6965,7 @@
+ 			uint64_t ident = c.scalar_u64(vector, 0);
+ 			for (uint32_t i = 1; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (ident != c.scalar_u64(vector, i))
+ 				{
+ 					splat = false;
+@@ -6912,6 +6979,7 @@
+ 			uint32_t ident = c.scalar(vector, 0);
+ 			for (uint32_t i = 1; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (ident != c.scalar(vector, i))
+ 				{
+ 					splat = false;
+@@ -6937,6 +7005,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -6960,6 +7029,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -6983,6 +7053,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7005,6 +7076,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7026,6 +7098,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7051,6 +7124,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7086,6 +7160,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7116,6 +7191,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7135,6 +7211,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7169,6 +7246,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7203,6 +7281,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7228,6 +7307,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7251,6 +7331,7 @@
+ 		{
+ 			for (uint32_t i = 0; i < c.vector_size(); i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (c.vector_size() > 1 && c.specialization_constant_id(vector, i) != 0)
+ 					res += to_expression(c.specialization_constant_id(vector, i));
+ 				else
+@@ -7480,6 +7561,7 @@
+ 	expr += '(';
+ 	for (uint32_t i = 0; i < type.vecsize; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		// Make sure to call to_expression multiple times to ensure
+ 		// that these expressions are properly flushed to temporaries if needed.
+ 		expr += op;
+@@ -7512,6 +7594,7 @@
+ 	expr += '(';
+ 	for (uint32_t i = 0; i < type.vecsize; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		// Make sure to call to_expression multiple times to ensure
+ 		// that these expressions are properly flushed to temporaries if needed.
+ 		if (negate)
+@@ -8091,6 +8174,7 @@
+ 	bool ret = true;
+ 	for (uint32_t row = 0; ret && row < value_type.vecsize; row++)
+ 	{
++		canopy_cross_budget::step();
+ 		switch (type.basetype)
+ 		{
+ 		case SPIRType::Short:
+@@ -8148,6 +8232,7 @@
+ 		expr += "(";
+ 		for (uint32_t i = 0; i < restype.vecsize; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			expr += swiz(select, i);
+ 			expr += " ? ";
+ 			expr += swiz(true_value, i);
+@@ -11070,6 +11155,7 @@
+ 
+ 	for (uint32_t i = 0; i < count; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t index = indices[i];
+ 
+ 		bool is_literal = index_is_literal;
+@@ -11114,6 +11200,7 @@
+ 
+ 				for (auto j = uint32_t(type->array.size()); j; j--)
+ 				{
++		canopy_cross_budget::step();
+ 					expr += " * ";
+ 					expr += enclose_expression(to_array_size(*type, j - 1));
+ 				}
+@@ -11267,6 +11354,7 @@
+ 
+ 				for (auto j = uint32_t(parent_type.array.size()); j; j--)
+ 				{
++		canopy_cross_budget::step();
+ 					expr += " * ";
+ 					expr += enclose_expression(to_array_size(parent_type, j - 1));
+ 				}
+@@ -11699,6 +11787,7 @@
+ 
+ 	for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		if (i)
+ 			expr += ", ";
+ 
+@@ -11738,6 +11827,7 @@
+ 
+ 	for (uint32_t i = 0; i < uint32_t(member_type->member_types.size()); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		sub_indices.back() = i;
+ 		auto lhs = join(basename, "_", to_member_name(*member_type, i));
+ 		ParsedIR::sanitize_underscores(lhs);
+@@ -11790,6 +11880,7 @@
+ 
+ 	for (uint32_t i = 0; i < uint32_t(target_type.member_types.size()); ++i)
+ 	{
++		canopy_cross_budget::step();
+ 		if (i != 0)
+ 			expr += ", ";
+ 
+@@ -11840,6 +11931,7 @@
+ 
+ 	for (uint32_t i = 0; i < tmp_type.columns; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		if (i != 0)
+ 			expr += ", ";
+ 
+@@ -11872,6 +11964,7 @@
+ 
+ 		for (uint32_t i = 0; i < target_type.vecsize; ++i)
+ 		{
++		canopy_cross_budget::step();
+ 			if (i != 0)
+ 				expr += ", ";
+ 
+@@ -11931,6 +12024,7 @@
+ 
+ 	for (uint32_t i = 0; i < count; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t index = indices[i];
+ 
+ 		// Pointers
+@@ -12122,6 +12216,7 @@
+ 		SPIRVariable *var = nullptr;
+ 		while (expr->loaded_from && expression_is_forwarded(expr->self))
+ 		{
++		canopy_cross_budget::step();
+ 			auto &src_type = expression_type(expr->loaded_from);
+ 			// To be a copy, the pointer and its source expression must be the
+ 			// same type. Can't check type.self, because for some reason that's
+@@ -12365,6 +12460,7 @@
+ 	// we can drop the final swizzle altogether.
+ 	for (uint32_t i = 0; i < final_swiz.size(); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		static const char expected[] = { 'x', 'y', 'z', 'w' };
+ 		if (i >= 4 || final_swiz[i] != expected[i])
+ 			return false;
+@@ -12379,6 +12475,7 @@
+ 	// Make sure there are only swizzles here ...
+ 	for (auto i = prevpos; i < pos; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		if (op[i] < 'w' || op[i] > 'z')
+ 		{
+ 			// If swizzles are foo.xyz() like in C++ backend for example, check for that.
+@@ -12429,6 +12526,7 @@
+ 	// we can drop the final swizzle altogether.
+ 	for (uint32_t i = 0; i < final_swiz.size(); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		static const char expected[] = { 'x', 'y', 'z', 'w' };
+ 		if (i >= 4 || final_swiz[i] != expected[i])
+ 			return false;
+@@ -12458,6 +12556,7 @@
+ 
+ 	for (uint32_t i = 0; i < length; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto *e = maybe_get<SPIRExpression>(elems[i]);
+ 
+ 		// If we're merging another scalar which belongs to the same base
+@@ -12600,6 +12699,7 @@
+ 		// If PHI variables are consumed in unexpected precision contexts, copy them here.
+ 		for (size_t i = 0, n = block.phi_variables.size(); i < n; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &phi = block.phi_variables[i];
+ 
+ 			// Ensure we only copy once. We know a-priori that this array will lay out
+@@ -12625,6 +12725,7 @@
+ 
+ 	for (auto &op : block.ops)
+ 	{
++		canopy_cross_budget::step();
+ 		auto temporary_copy = handle_instruction_precision(op);
+ 		emit_instruction(op);
+ 		if (temporary_copy.dst_id)
+@@ -12810,6 +12911,7 @@
+ 
+ 	for (uint32_t i = 0; i < length; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t arg = args[i];
+ 
+ 		auto handle_type = ir.ids[arg].get_type();
+@@ -12863,6 +12965,7 @@
+ 		auto precision = operation_is_highp ? Options::Highp : Options::Mediump;
+ 		for (uint32_t i = 0; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			// Rewrites the opcode so that we consume an ID in correct precision context.
+ 			// This is pretty hacky, but it's the most straight forward way of implementing this without adding
+ 			// lots of extra passes to rewrite all code blocks.
+@@ -13035,6 +13138,7 @@
+ 	uint32_t counter = 1;
+ 	while (counter && !ptr_expr.empty())
+ 	{
++		canopy_cross_budget::step();
+ 		if (ptr_expr.back() == ']')
+ 			counter++;
+ 		else if (ptr_expr.back() == '[')
+@@ -13353,6 +13457,7 @@
+ 		// Include the base pointer.
+ 		for (uint32_t i = indices_start - 1; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			inherit_expression_dependencies(result_id, ops[i]);
+ 			add_implied_read_expression(expr, ops[i]);
+ 		}
+@@ -13455,6 +13560,7 @@
+ 		// If the buffer pointer is marked non-writable, ignore alias tracking by flagging the expression as immutable.
+ 		for (auto &heap : descriptor_heap_types)
+ 		{
++		canopy_cross_budget::step();
+ 			if (heap.buffer_pointer_id == result_id)
+ 			{
+ 				if (heap.nonwritable)
+@@ -13491,6 +13597,7 @@
+ 		// Invalidate out variables passed to functions since they can be OpStore'd to.
+ 		for (uint32_t i = 0; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (callee.arguments[i].write_count)
+ 			{
+ 				register_call_out_argument(arg[i]);
+@@ -13521,6 +13628,7 @@
+ 
+ 		for (uint32_t i = 0; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			// Do not pass in separate images or samplers if we're remapping
+ 			// to combined image samplers.
+ 			if (skip_argument(arg[i]))
+@@ -13531,6 +13639,7 @@
+ 
+ 		for (auto &combined : callee.combined_parameters)
+ 		{
++		canopy_cross_budget::step();
+ 			auto image_id = combined.global_image ? combined.image_id : VariableID(arg[combined.image_id]);
+ 			auto sampler_id = combined.global_sampler ? combined.sampler_id : VariableID(arg[combined.sampler_id]);
+ 			arglist.push_back(to_combined_image_sampler(image_id, sampler_id));
+@@ -13633,6 +13742,7 @@
+ 			uint32_t input = elems[0];
+ 			for (uint32_t i = 0; i < length; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (input != elems[i])
+ 				{
+ 					splat = false;
+@@ -14031,6 +14141,7 @@
+ 			SmallVector<string> args;
+ 			for (uint32_t i = 0; i < length; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (elems[i] == 0xffffffffu)
+ 				{
+ 					// Use a constant 0 here.
+@@ -14059,6 +14170,7 @@
+ 			expr += ".";
+ 			for (uint32_t i = 0; i < length; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				assert(elems[i] != 0xffffffffu);
+ 				expr += index_to_swizzle(elems[i]);
+ 			}
+@@ -14112,6 +14224,7 @@
+ 				expr += '(';
+ 				for (uint32_t i = 0; i < type.vecsize; i++)
+ 				{
++		canopy_cross_budget::step();
+ 					auto comp = to_extract_component_expression(operand, i);
+ 					expr += join(comp, " != 0.0 && 2.0 * ", comp, " == ", comp);
+ 
+@@ -14267,6 +14380,7 @@
+ 			expr += "(";
+ 			for (uint32_t col = 0; col < type.columns; col++)
+ 			{
++		canopy_cross_budget::step();
+ 				expr += to_enclosed_expression(a);
+ 				expr += " * ";
+ 				expr += to_extract_component_expression(b, col);
+@@ -15906,6 +16020,7 @@
+ 				string expr = join(backend.printf_function, "(\"", format_string, "\"");
+ 				for (uint32_t i = 5; i < length; i++)
+ 				{
++		canopy_cross_budget::step();
+ 					expr += ", ";
+ 					expr += to_expression(ops[i]);
+ 				}
+@@ -16594,6 +16709,7 @@
+ 		}
+ 		for (uint32_t i = 1; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			// arguments 3, 6 and in case of MulAddNv also 9 use component type int constants
+ 			if (i == 3 || i == 6 || (i == 9 && opcode == OpCooperativeVectorMatrixMulAddNV))
+ 			{
+@@ -16730,6 +16846,7 @@
+ 			}
+ 			for (uint32_t i = 0; i < num_elements; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				rhs += value_to_replicate;
+ 				if (i < num_elements - 1)
+ 					rhs += ", ";
+@@ -16825,6 +16942,7 @@
+ 	uint32_t arg_cnt = uint32_t(args.size());
+ 	for (uint32_t arg_idx = index; arg_idx < arg_cnt; arg_idx++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &arg = args[arg_idx];
+ 		assert(arg.alias_global_variable);
+ 
+@@ -16864,6 +16982,7 @@
+ 	auto *member_type = &type;
+ 	for (auto &index : indices)
+ 	{
++		canopy_cross_budget::step();
+ 		ret += join(".", to_member_name(*member_type, index));
+ 		member_type = &get<SPIRType>(member_type->member_types[index]);
+ 	}
+@@ -16969,6 +17088,7 @@
+ 		// Loading a column from a row-major matrix. Unroll the load.
+ 		for (uint32_t c = 0; c < exp_type.vecsize; c++)
+ 		{
++		canopy_cross_budget::step();
+ 			transposed_expr += join(exp_str, '[', c, ']', column_expr);
+ 			if (c + 1 < exp_type.vecsize)
+ 				transposed_expr += ", ";
+@@ -17130,6 +17250,7 @@
+ 		bool do_promote_decoration = false;
+ 		for (uint32_t i = 0; i < member_count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (has_member_decoration(type.self, i, DecorationPatch))
+ 			{
+ 				promoted_decoration = DecorationPatch;
+@@ -17403,6 +17524,7 @@
+ 		res += "[";
+ 		for (auto i = uint32_t(type.array.size()); i; i--)
+ 		{
++		canopy_cross_budget::step();
+ 			res += enclose_expression(to_array_size(type, i - 1));
+ 			if (i > 1)
+ 				res += " * ";
+@@ -17425,6 +17547,7 @@
+ 		string res;
+ 		for (auto i = uint32_t(type.array.size()); i; i--)
+ 		{
++		canopy_cross_budget::step();
+ 			res += "[";
+ 			res += to_array_size(type, i - 1);
+ 			res += "]";
+@@ -17597,6 +17720,7 @@
+ 		// array information is left to to_array_type_glsl. The base type loses array information.
+ 		while (is_array(*parent))
+ 		{
++		canopy_cross_budget::step();
+ 			if (parent->array_size_literal.back())
+ 				name += join(type.array.back(), "_");
+ 			else
+@@ -18017,6 +18141,7 @@
+ 	Hasher hasher;
+ 	for (auto &arg : func.arguments)
+ 	{
++		canopy_cross_budget::step();
+ 		// Parameters can vary with pointer type or not,
+ 		// but that will not change the signature in GLSL/HLSL,
+ 		// so strip the pointer type before hashing.
+@@ -18114,6 +18239,7 @@
+ 	SmallVector<string> arglist;
+ 	for (auto &arg : func.arguments)
+ 	{
++		canopy_cross_budget::step();
+ 		// Do not pass in separate images or samplers if we're remapping
+ 		// to combined image samplers.
+ 		if (skip_argument(arg.id))
+@@ -18135,6 +18261,7 @@
+ 
+ 	for (auto &arg : func.shadow_arguments)
+ 	{
++		canopy_cross_budget::step();
+ 		// Might change the variable name if it already exists in this function.
+ 		// SPIRV OpName doesn't have any semantic effect, so it's valid for an implementation
+ 		// to use same name for variables.
+@@ -18156,6 +18283,7 @@
+ 
+ void CompilerGLSL::emit_function(SPIRFunction &func, const Bitset &return_flags)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	// Avoid potential cycles.
+ 	if (func.active)
+ 		return;
+@@ -18164,9 +18292,11 @@
+ 	// If we depend on a function, emit that function before we emit our own function.
+ 	for (auto block : func.blocks)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &b = get<SPIRBlock>(block);
+ 		for (auto &i : b.ops)
+ 		{
++		canopy_cross_budget::step();
+ 			auto ops = stream(i);
+ 			auto op = static_cast<Op>(i.op);
+ 
+@@ -18194,6 +18324,7 @@
+ 	sort(begin(func.constant_arrays_needed_on_stack), end(func.constant_arrays_needed_on_stack));
+ 	for (auto &array : func.constant_arrays_needed_on_stack)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &c = get<SPIRConstant>(array);
+ 		auto &type = get<SPIRType>(c.constant_type);
+ 		statement(variable_decl(type, join("_", array, "_array_copy")), " = ", constant_expression(c), ";");
+@@ -18201,6 +18332,7 @@
+ 
+ 	for (auto &v : func.local_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(v);
+ 		var.deferred_declaration = false;
+ 		if (var.storage == StorageClassTaskPayloadWorkgroupEXT)
+@@ -18288,6 +18420,7 @@
+ 	// Enforce declaration order for regression testing purposes.
+ 	for (auto &block_id : func.blocks)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &block = get<SPIRBlock>(block_id);
+ 		sort(begin(block.dominated_variables), end(block.dominated_variables));
+ 	}
+@@ -18305,6 +18438,7 @@
+ 	// We risk declaring Private/Workgroup variables in places we are not supposed to otherwise.
+ 	for (auto &v : func.local_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(v);
+ 		var.deferred_declaration = false;
+ 	}
+@@ -18339,6 +18473,7 @@
+ 
+ 	for (auto itr = begin(child.phi_variables); itr != end(child.phi_variables); ++itr)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &phi = *itr;
+ 
+ 		if (phi.parent == from)
+@@ -18480,6 +18615,7 @@
+ 		{
+ 			for (size_t n = current_emitting_switch_stack.size(); n; n--)
+ 			{
++		canopy_cross_budget::step();
+ 				auto *current_emitting_switch = current_emitting_switch_stack[n - 1];
+ 
+ 				if (current_emitting_switch &&
+@@ -18591,6 +18727,7 @@
+ 	// Stamp out all blocks one after each other.
+ 	while ((ir.block_meta[block->self] & ParsedIR::BLOCK_META_LOOP_HEADER_BIT) == 0)
+ 	{
++		canopy_cross_budget::step();
+ 		// Write out all instructions we have in this block.
+ 		emit_block_instructions(*block);
+ 
+@@ -18624,6 +18761,7 @@
+ 	// Ideally, we should select this behavior in statement().
+ 	for (auto &s : statements)
+ 	{
++		canopy_cross_budget::step();
+ 		if (!s.empty() && s.back() == ';')
+ 			s.erase(s.size() - 1, 1);
+ 	}
+@@ -18659,6 +18797,7 @@
+ 	// While loops do not take initializers, so declare all of them outside.
+ 	for (auto &loop_var : block.loop_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(loop_var);
+ 		statement(variable_decl(var), undef_loop_variable_initializer_suffix(var), ";");
+ 	}
+@@ -18677,6 +18816,7 @@
+ 	uint32_t missing_initializers = 0;
+ 	for (auto &variable : block.loop_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t expr = get<SPIRVariable>(variable).static_expression;
+ 
+ 		// Sometimes loop variables are initialized with OpUndef, but we can just declare
+@@ -18693,6 +18833,7 @@
+ 	{
+ 		for (auto &loop_var : block.loop_variables)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &var = get<SPIRVariable>(loop_var);
+ 			statement(variable_decl(var), undef_loop_variable_initializer_suffix(var), ";");
+ 		}
+@@ -18706,6 +18847,7 @@
+ 
+ 		for (auto &loop_var : block.loop_variables)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &var_for_undef = get<SPIRVariable>(loop_var);
+ 			uint32_t static_expr = var_for_undef.static_expression;
+ 			if (static_expr == 0 || ir.ids[static_expr].get_type() == TypeUndef)
+@@ -18746,6 +18888,7 @@
+ 	Bitset expected_flags;
+ 	for (auto &var : block.loop_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		// Don't care about uninitialized variables as they will not be part of the initializers.
+ 		uint32_t expr = get<SPIRVariable>(var).static_expression;
+ 		if (expr == 0 || ir.ids[expr].get_type() == TypeUndef)
+@@ -18963,6 +19106,7 @@
+ 
+ 	for (auto &tmp : temporaries)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &type = get<SPIRType>(tmp.first);
+ 
+ 		// There are some rare scenarios where we are asked to declare pointer types as hoisted temporaries.
+@@ -19010,17 +19154,20 @@
+ 
+ void CompilerGLSL::emit_block_chain(SPIRBlock &block)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	SmallVector<BlockID> cleanup_stack;
+ 	BlockID next_block = emit_block_chain_inner(block);
+ 
+ 	while (next_block != 0)
+ 	{
++		canopy_cross_budget::step();
+ 		cleanup_stack.push_back(next_block);
+ 		next_block = emit_block_chain_inner(get<SPIRBlock>(next_block));
+ 	}
+ 
+ 	while (!cleanup_stack.empty())
+ 	{
++		canopy_cross_budget::step();
+ 		emit_block_chain_cleanup(get<SPIRBlock>(cleanup_stack.back()));
+ 		cleanup_stack.pop_back();
+ 	}
+@@ -19043,6 +19190,7 @@
+ 	// If we're emitting PHI variables with precision aliases, we have to emit them as hoisted temporaries.
+ 	for (auto var_id : block.dominated_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(var_id);
+ 		if (var.phi_variable)
+ 		{
+@@ -19072,6 +19220,7 @@
+ 	// If we have loop variables, stop masking out access to the variable now.
+ 	for (auto var_id : block.loop_variables)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(var_id);
+ 		var.loop_variable_enable = true;
+ 		// We're not going to declare the variable directly, so emit a copy here.
+@@ -19083,6 +19232,7 @@
+ 	block.rearm_dominated_variables.resize(block.dominated_variables.size());
+ 	for (size_t i = 0; i < block.dominated_variables.size(); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t var_id = block.dominated_variables[i];
+ 		auto &var = get<SPIRVariable>(var_id);
+ 		block.rearm_dominated_variables[i] = var.deferred_declaration;
+@@ -19288,6 +19438,7 @@
+ 		auto &cases = get_case_list(block);
+ 		for (auto &c : cases)
+ 		{
++		canopy_cross_budget::step();
+ 			if (c.block != block.next_block && c.block != block.default_block)
+ 			{
+ 				if (!case_constructs.count(c.block))
+@@ -19315,6 +19466,7 @@
+ 
+ 			for (size_t i = 0; i < num_blocks; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				auto &case_block = get<SPIRBlock>(block_declaration_order[i]);
+ 				if (execution_is_direct_branch(case_block, default_block))
+ 				{
+@@ -19364,6 +19516,7 @@
+ 			size_t count = labels.size();
+ 			for (size_t i = 0; i < count; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (i)
+ 					ret += " || ";
+ 				ret += join(count > 1 ? "(" : "", to_enclosed_expression(condition), " == ", labels[i], suffix,
+@@ -19379,6 +19532,7 @@
+ 		// inside the case label if at all possible.
+ 		for (size_t i = 1; backend.support_case_fallthrough && i < num_blocks; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (flush_phi_required(block.self, block_declaration_order[i]) &&
+ 			    flush_phi_required(block_declaration_order[i - 1], block_declaration_order[i]))
+ 			{
+@@ -19397,6 +19551,7 @@
+ 					SmallVector<string> conditions;
+ 					for (size_t j = 0; j < num_blocks; j++)
+ 					{
++		canopy_cross_budget::step();
+ 						auto &negative_literals = case_constructs[block_declaration_order[j]];
+ 						for (auto &case_label : negative_literals)
+ 							conditions.push_back(join(to_enclosed_expression(block.condition),
+@@ -19458,6 +19613,7 @@
+ 
+ 		for (size_t i = 0; i < num_blocks; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t target_block = block_declaration_order[i];
+ 			auto &literals = case_constructs[target_block];
+ 
+@@ -19483,6 +19639,7 @@
+ 				{
+ 					for (auto &case_literal : literals)
+ 					{
++		canopy_cross_budget::step();
+ 						// The case label value must be sign-extended properly in SPIR-V, so we can assume 32-bit values here.
+ 						statement("case ", to_case_label(case_literal, type.width, unsigned_case), label_suffix, ":");
+ 					}
+@@ -19635,6 +19792,7 @@
+ 
+ 		while (id)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &iter_block = get<SPIRBlock>(id);
+ 			if (iter_block.terminator == SPIRBlock::MultiSelect ||
+ 			    iter_block.merge == SPIRBlock::MergeLoop)
+@@ -19812,6 +19970,7 @@
+ 	assert(block.rearm_dominated_variables.size() == block.dominated_variables.size());
+ 	for (size_t i = 0; i < block.dominated_variables.size(); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t var = block.dominated_variables[i];
+ 		get<SPIRVariable>(var).deferred_declaration = block.rearm_dominated_variables[i];
+ 	}
+@@ -19869,6 +20028,7 @@
+ 	// so for now warn about this and suggest workarounds instead.
+ 	for (uint32_t i = 0; i < length; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto *var = maybe_get<SPIRVariable>(args[i]);
+ 		if (!var || !var->remapped_variable)
+ 			continue;
+@@ -20165,6 +20325,7 @@
+ 	unsigned bracket_count = 1;
+ 	for (size_t index = start_array_index + 1; index < expr.size(); index++)
+ 	{
++		canopy_cross_budget::step();
+ 		if (expr[index] == ']')
+ 		{
+ 			if (--bracket_count == 0)
+@@ -20248,6 +20409,7 @@
+ 
+ 	for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &mbr_type = get<SPIRType>(type.member_types[i]);
+ 
+ 		if (mbr_type.basetype == SPIRType::Struct)
+@@ -20327,6 +20489,7 @@
+ 	auto &type_ids = ir.ids_for_type[TypeType];
+ 	for (auto alias_itr = begin(type_ids); alias_itr != end(type_ids); ++alias_itr)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &type = get<SPIRType>(*alias_itr);
+ 		if (type.type_alias != TypeID(0) &&
+ 		    !has_extended_decoration(type.type_alias, SPIRVCrossDecorationBufferBlockRepacked))
+@@ -20415,6 +20578,7 @@
+ 
+ 		for (uint32_t i = 0; i < array_size; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			chain.back() = i;
+ 			emit_copy_logical_type(lhs_id, lhs_type.parent_type, rhs_id, rhs_type.parent_type, chain);
+ 		}
+@@ -20425,6 +20589,7 @@
+ 		uint32_t member_count = uint32_t(lhs_type.member_types.size());
+ 		for (uint32_t i = 0; i < member_count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			chain.back() = i;
+ 			emit_copy_logical_type(lhs_id, lhs_type.member_types[i], rhs_id, rhs_type.member_types[i], chain);
+ 		}
+@@ -20516,6 +20681,7 @@
+ {
+ 	for (auto &remap : subpass_to_framebuffer_fetch_attachment)
+ 	{
++		canopy_cross_budget::step();
+ 		auto *subpass_var = find_subpass_input_by_attachment_index(remap.first);
+ 		auto *output_var = find_color_output_by_location(remap.second);
+ 		if (!subpass_var)
+@@ -20676,6 +20842,7 @@
+ 
+ 	for (uint32_t i = 0u; i < FeatureCount; ++i)
+ 	{
++		canopy_cross_budget::step();
+ 		if (feature_mask & (1u << i))
+ 		{
+ 			auto feature = static_cast<Feature>(i);
+@@ -20687,6 +20854,7 @@
+ 			auto deps = get_feature_dependencies(feature);
+ 			for (Feature d : deps)
+ 			{
++		canopy_cross_budget::step();
+ 				candidates = get_candidates_for_feature(d);
+ 				if (!candidates.empty())
+ 					unique_candidates.insert(candidates.begin(), candidates.end());
+@@ -20840,6 +21008,7 @@
+ 		// If we're loading a struct where any member is a row-major matrix, apply the workaround.
+ 		for (uint32_t i = 0; i < uint32_t(type->member_types.size()); i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto decorations = combined_decoration_for_member(*type, i);
+ 			if (decorations.get(DecorationRowMajor))
+ 				rewrite = true;
+@@ -20954,6 +21123,7 @@
+ 
+ 	for (uint32_t i = 0; i < mbr_idx; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &mbr_type = get<SPIRType>(type.member_types[i]);
+ 
+ 		// Start counting from any place we have a new location decoration.
+@@ -21105,6 +21275,7 @@
+ 	bool found_default = false;
+ 	for (auto &fp_pair : ep.fp_fast_math_defaults)
+ 	{
++		canopy_cross_budget::step();
+ 		if (get<SPIRType>(fp_pair.first).width == width && fp_pair.second)
+ 		{
+ 			fp_flags &= get<SPIRConstant>(fp_pair.second).scalar();
+@@ -21135,6 +21306,7 @@
+ {
+ 	for (auto &mapping : descriptor_heap_mappings)
+ 	{
++		canopy_cross_budget::step();
+ 		if (mapping.type == type)
+ 		{
+ 			mapping.desc_set = desc_set;
+@@ -21228,6 +21400,7 @@
+ 
+ 	for (auto &mapping : descriptor_heap_mappings)
+ 	{
++		canopy_cross_budget::step();
+ 		if (mapping.type == resource)
+ 		{
+ 			bool has_match = false;
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -21,6 +21,7 @@
+  *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+  */
+ 
++#include "canopy_cross_budget.hpp"
+ #include "spirv_msl.hpp"
+ #include "GLSL.std.450.h"
+ 
+@@ -320,6 +321,7 @@
+ 				const auto member_count = static_cast<uint32_t>(type.member_types.size());
+ 				for (uint32_t i = 0; i < member_count; i++)
+ 				{
++		canopy_cross_budget::step();
+ 					if (get_member_decoration(type.self, i, DecorationBuiltIn) == BuiltInPointSize)
+ 					{
+ 						has_point_size = true;
+@@ -1129,6 +1131,7 @@
+ 					auto mbr_cnt = var_type.member_types.size();
+ 					for (uint32_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+ 					{
++		canopy_cross_budget::step();
+ 						auto builtin = BuiltInMax;
+ 						bool is_builtin = is_member_builtin(var_type, mbr_idx, &builtin);
+ 						if (is_builtin && builtin == BuiltInPosition)
+@@ -1378,6 +1381,7 @@
+ 	// Emit constexpr samplers here.
+ 	for (auto &samp : constexpr_samplers_by_id)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(samp.first);
+ 		auto &type = get<SPIRType>(var.basetype);
+ 		if (type.basetype == SPIRType::Sampler)
+@@ -1506,6 +1510,7 @@
+ 	// Emit dynamic buffers here.
+ 	for (auto &dynamic_buffer : buffers_requiring_dynamic_offset)
+ 	{
++		canopy_cross_budget::step();
+ 		if (!dynamic_buffer.second.var_id)
+ 		{
+ 			// Could happen if no buffer was used at requested binding point.
+@@ -1537,6 +1542,7 @@
+ 
+ 			for (uint32_t i = 0; i < array_size; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				statement("(", get_variable_address_space(var), " ", type_to_glsl(type), "* ",
+ 				          to_restrict(var_id, false), ")((", get_variable_address_space(var), " char* ",
+ 				          to_restrict(var_id, false), ")", to_name(arg_id), ".", dynamic_buffer.second.mbr_name,
+@@ -1559,6 +1565,7 @@
+ 	bool has_runtime_array_declaration = false;
+ 	for (SPIRVariable *arg : entry_point_bindings)
+ 	{
++		canopy_cross_budget::step();
+ 		const auto &var = *arg;
+ 		const auto &type = get_variable_data_type(var);
+ 		const auto &buffer_type = get_variable_element_type(var);
+@@ -1634,6 +1641,7 @@
+ 	// Emit buffer aliases here.
+ 	for (auto &var_id : buffer_aliases_discrete)
+ 	{
++		canopy_cross_budget::step();
+ 		const auto &var = get<SPIRVariable>(var_id);
+ 
+ 		// We already declare this alias in a different way.
+@@ -1660,6 +1668,7 @@
+ 	std::sort(disabled_frag_outputs.begin(), disabled_frag_outputs.end());
+ 	for (uint32_t var_id : disabled_frag_outputs)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(var_id);
+ 		add_local_variable_name(var_id);
+ 		statement(CompilerGLSL::variable_decl(var), ";");
+@@ -1847,6 +1856,7 @@
+ 	uint32_t pass_count = 0;
+ 	do
+ 	{
++		canopy_cross_budget::step();
+ 		reset(pass_count);
+ 
+ 		// Start bindings at zero.
+@@ -1964,6 +1974,7 @@
+ 	auto iter = global_variables.begin();
+ 	while (iter != global_variables.end())
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t v_id = *iter;
+ 		auto &var = get<SPIRVariable>(v_id);
+ 		if (var.storage == StorageClassPrivate || var.storage == StorageClassWorkgroup ||
+@@ -2055,9 +2066,11 @@
+ 	// Recursively establish global args added to functions on which we depend.
+ 	for (auto block : func.blocks)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &b = get<SPIRBlock>(block);
+ 		for (auto &i : b.ops)
+ 		{
++		canopy_cross_budget::step();
+ 			auto ops = stream(i);
+ 			auto op = static_cast<Op>(i.op);
+ 
+@@ -2103,6 +2116,7 @@
+ 				// First see if any of the function call args are globals
+ 				for (uint32_t arg_idx = 3; arg_idx < i.length; arg_idx++)
+ 				{
++		canopy_cross_budget::step();
+ 					uint32_t arg_id = ops[arg_idx];
+ 					if (global_var_ids.find(arg_id) != global_var_ids.end())
+ 						added_arg_ids.insert(arg_id);
+@@ -2383,6 +2397,7 @@
+ 
+ 		for (uint32_t arg_id : added_arg_ids)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &var = get<SPIRVariable>(arg_id);
+ 			uint32_t type_id = var.basetype;
+ 			auto *p_type = &get<SPIRType>(type_id);
+@@ -2424,6 +2439,7 @@
+ 					// variable if we're masking some members.
+ 					for (uint32_t mbr_idx = 0; mbr_idx < uint32_t(p_type->member_types.size()); mbr_idx++)
+ 					{
++		canopy_cross_budget::step();
+ 						if (is_stage_output_block_member_masked(var, mbr_idx, true))
+ 						{
+ 							func.add_parameter(var.basetype, var.self, true);
+@@ -2485,6 +2501,7 @@
+ 				uint32_t mbr_idx = 0;
+ 				for (auto &mbr_type_id : p_type->member_types)
+ 				{
++		canopy_cross_budget::step();
+ 					BuiltIn builtin = BuiltInMax;
+ 					is_builtin = is_member_builtin(*p_type, mbr_idx, &builtin);
+ 					if (is_builtin && has_active_builtin(builtin, var.storage))
+@@ -2574,6 +2591,7 @@
+ 		uint32_t mbr_cnt = uint32_t(type.member_types.size());
+ 		for (uint32_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t mbr_type_id = type.member_types[mbr_idx];
+ 			auto &mbr_type = get<SPIRType>(mbr_type_id);
+ 			mark_as_packable(mbr_type);
+@@ -2606,6 +2624,7 @@
+ 		uint32_t mbr_cnt = uint32_t(type.member_types.size());
+ 		for (uint32_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t mbr_type_id = type.member_types[mbr_idx];
+ 			auto &mbr_type = get<SPIRType>(mbr_type_id);
+ 			mark_as_workgroup_struct(mbr_type);
+@@ -2628,6 +2647,7 @@
+ 	case StorageClassInput:
+ 		for (uint32_t i = 0; i < count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			location_inputs_in_use.insert(location + i);
+ 			if (fallback)
+ 				location_inputs_in_use_fallback.insert(location + i);
+@@ -2636,6 +2656,7 @@
+ 	case StorageClassOutput:
+ 		for (uint32_t i = 0; i < count; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			location_outputs_in_use.insert(location + i);
+ 			if (fallback)
+ 				location_outputs_in_use_fallback.insert(location + i);
+@@ -2776,6 +2797,7 @@
+ 					uint32_t array_size = to_array_size_literal(type);
+ 					for (uint32_t loc_off = 0; loc_off < array_size; loc_off++)
+ 					{
++		canopy_cross_budget::step();
+ 						statement(to_name(var.self), "[", loc_off, "]", " = ", ib_var_ref,
+ 						          ".m_location_", location + loc_off,
+ 						          vector_swizzle(type_components, start_component), ";");
+@@ -2796,6 +2818,7 @@
+ 					uint32_t array_size = to_array_size_literal(type);
+ 					for (uint32_t loc_off = 0; loc_off < array_size; loc_off++)
+ 					{
++		canopy_cross_budget::step();
+ 						statement(ib_var_ref, ".m_location_", location + loc_off,
+ 						          vector_swizzle(type_components, start_component), " = ",
+ 						          to_name(var.self), "[", loc_off, "];");
+@@ -3084,6 +3107,7 @@
+ 
+ 	for (uint32_t i = 0; i < elem_cnt; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		// Add a reference to the variable type to the interface struct.
+ 		uint32_t ib_mbr_idx = uint32_t(ib_type.member_types.size());
+ 
+@@ -3313,11 +3337,13 @@
+ 	{
+ 		for (uint32_t i = 0; i < elem_cnt; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			string mbr_name = append_member_name(mbr_name_qual, var_type, mbr_idx) + (mbr_is_indexable ? join("_", i) : "");
+ 			string var_chain = join(var_chain_qual, ".", to_member_name(var_type, mbr_idx), (mbr_is_indexable ? join("[", i, "]") : ""));
+ 			uint32_t sub_mbr_cnt = uint32_t(mbr_type.member_types.size());
+ 			for (uint32_t sub_mbr_idx = 0; sub_mbr_idx < sub_mbr_cnt; sub_mbr_idx++)
+ 			{
++		canopy_cross_budget::step();
+ 				add_composite_member_variable_to_interface_block(storage, ib_var_ref, ib_type,
+ 																 var, mbr_type, sub_mbr_idx,
+ 																 meta, mbr_name, var_chain,
+@@ -3331,6 +3357,7 @@
+ 
+ 	for (uint32_t i = 0; i < elem_cnt; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		// Add a reference to the variable type to the interface struct.
+ 		uint32_t ib_mbr_idx = uint32_t(ib_type.member_types.size());
+ 		if (storage == StorageClassInput && pull_model_inputs.count(var.self))
+@@ -3983,9 +4010,11 @@
+ 
+ 			for (uint32_t elem_idx = 0; elem_idx < elem_cnt; elem_idx++)
+ 			{
++		canopy_cross_budget::step();
+ 				// Flatten the struct members into the interface struct
+ 				for (uint32_t mbr_idx = 0; mbr_idx < uint32_t(var_type.member_types.size()); mbr_idx++)
+ 				{
++		canopy_cross_budget::step();
+ 					builtin = BuiltInMax;
+ 					is_builtin = is_member_builtin(var_type, mbr_idx, &builtin);
+ 					auto &mbr_type = get<SPIRType>(var_type.member_types[mbr_idx]);
+@@ -4074,6 +4103,7 @@
+ 					// declare gl_PerVertex.
+ 					for (uint32_t mbr_idx = 0; mbr_idx < uint32_t(var_type.member_types.size()); mbr_idx++)
+ 					{
++		canopy_cross_budget::step();
+ 						set_member_name(var_type.self, mbr_idx, builtin_to_glsl(
+ 								BuiltIn(get_member_decoration(var_type.self, mbr_idx, DecorationBuiltIn)),
+ 								StorageClassOutput));
+@@ -4128,6 +4158,7 @@
+ 	auto mbr_cnt = struct_type.member_types.size();
+ 	for (size_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto mbr_type_id = struct_type.member_types[mbr_idx];
+ 		auto &mbr_type = get<SPIRType>(mbr_type_id);
+ 
+@@ -4170,6 +4201,7 @@
+ 	auto mbr_cnt = uint32_t(ir.meta[ib_type_id].members.size());
+ 	for (uint32_t i = 0; i < mbr_cnt; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t var_id = get_extended_member_decoration(ib_type_id, i, SPIRVCrossDecorationInterfaceOrigID);
+ 		if (!var_id)
+ 			continue;
+@@ -4334,6 +4366,7 @@
+ 
+ 						for (uint32_t location_offset = 0; location_offset < array_size; location_offset++)
+ 						{
++		canopy_cross_budget::step();
+ 							auto &location_meta = meta.location_meta[location + location_offset];
+ 							location_meta.num_components = max<uint32_t>(location_meta.num_components, component + type.vecsize);
+ 
+@@ -4470,6 +4503,7 @@
+ 			entry_func.add_local_variable(ib_var_id);
+ 			for (auto &blk_id : entry_func.blocks)
+ 			{
++		canopy_cross_budget::step();
+ 				auto &blk = get<SPIRBlock>(blk_id);
+ 				auto last_blk_return = blk.terminator == SPIRBlock::Kill || blk.terminator == SPIRBlock::Unreachable;
+ 				if (blk.terminator == SPIRBlock::Return || (last_blk_return && blk_id == entry_func.blocks.back()))
+@@ -4575,6 +4609,7 @@
+ 
+ 	for (auto *p_var : vars)
+ 	{
++		canopy_cross_budget::step();
+ 		bool strip_array = (is_tesc_shader() || (is_tese_shader() && storage == StorageClassInput)) && !patch;
+ 
+ 		// Fixing up flattened stores in TESC is impossible since the memory is group shared either via
+@@ -4592,6 +4627,7 @@
+ 		// the struct containing them is the correct size and layout.
+ 		for (auto &input : inputs_by_location)
+ 		{
++		canopy_cross_budget::step();
+ 			if (location_inputs_in_use.count(input.first.location) != 0)
+ 				continue;
+ 
+@@ -4667,6 +4703,7 @@
+ 		// even when they aren't written.
+ 		for (auto &output : outputs_by_location)
+ 		{
++		canopy_cross_budget::step();
+ 			if (location_outputs_in_use.count(output.first.location) != 0)
+ 				continue;
+ 
+@@ -4733,6 +4770,7 @@
+ 	// unroll locations one by one and we will flatten output or input as necessary.
+ 	for (auto &loc : meta.location_meta)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t location = loc.first;
+ 		auto &location_meta = loc.second;
+ 
+@@ -4869,6 +4907,7 @@
+ 	InterfaceBlockMeta meta;
+ 	for (auto *p_var : vars)
+ 	{
++		canopy_cross_budget::step();
+ 		meta.strip_array = true;
+ 		meta.allow_local_declaration = false;
+ 		add_variable_to_interface_block(StorageClassOutput, "", type, *p_var, meta);
+@@ -5009,6 +5048,7 @@
+ 	uint32_t mbr_cnt = uint32_t(type.member_types.size());
+ 	for (uint32_t i = 0; i < mbr_cnt; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &mbr_type = get<SPIRType>(type.member_types[i]);
+ 		if (mbr_type.basetype == SPIRType::Struct)
+ 		{
+@@ -5028,6 +5068,7 @@
+ 	uint32_t mbr_cnt = uint32_t(type.member_types.size());
+ 	for (uint32_t i = 0; i < mbr_cnt; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		// Handle possible recursion when a struct contains a pointer to its own type nested somewhere.
+ 		auto &mbr_type = get<SPIRType>(type.member_types[i]);
+ 		if (mbr_type.basetype == SPIRType::Struct && !(mbr_type.pointer && mbr_type.storage == StorageClassPhysicalStorageBuffer))
+@@ -5062,6 +5103,7 @@
+ 				uint32_t dimensions = uint32_t(mbr_type.array.size() - 1);
+ 				for (uint32_t dim = 0; dim < dimensions; dim++)
+ 				{
++		canopy_cross_budget::step();
+ 					uint32_t array_size = to_array_size_literal(mbr_type, dim);
+ 					array_stride /= max<uint32_t>(array_size, 1u);
+ 				}
+@@ -5116,6 +5158,7 @@
+ 
+ 	for (uint32_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+ 	{
++		canopy_cross_budget::step();
+ 		// Pack any dependent struct types before we pack a parent struct.
+ 		auto &mbr_type = get<SPIRType>(ib_type.member_types[mbr_idx]);
+ 		if (mbr_type.basetype == SPIRType::Struct)
+@@ -5129,6 +5172,7 @@
+ 	uint32_t msl_offset = 0;
+ 	for (uint32_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+ 	{
++		canopy_cross_budget::step();
+ 		// This checks the member in isolation, if the member needs some kind of type remapping to conform to SPIR-V
+ 		// offsets, array strides and matrix strides.
+ 		ensure_member_packing_rules_msl(ib_type, mbr_idx);
+@@ -5507,6 +5551,7 @@
+ 			// Storing a column to a row-major matrix. Unroll the write.
+ 			for (uint32_t c = 0; c < type.vecsize; c++)
+ 			{
++		canopy_cross_budget::step();
+ 				auto lhs_expr = to_dereferenced_expression(lhs_expression);
+ 				auto column_index = lhs_expr.find_last_of('[');
+ 				if (column_index != string::npos)
+@@ -5577,6 +5622,7 @@
+ 					// If RHS is also transposed, we can just copy row by row.
+ 					for (uint32_t i = 0; i < type.vecsize; i++)
+ 					{
++		canopy_cross_budget::step();
+ 						statement(cast_expr, to_enclosed_expression(lhs_expression), "[", i, "]", " = ",
+ 						          to_unpacked_row_major_matrix_expression(rhs_expression), "[", i, "];");
+ 					}
+@@ -5591,9 +5637,11 @@
+ 					// so pick out individual components instead.
+ 					for (uint32_t i = 0; i < type.vecsize; i++)
+ 					{
++		canopy_cross_budget::step();
+ 						string rhs_row = type_to_glsl_constructor(vector_type) + "(";
+ 						for (uint32_t j = 0; j < vector_type.vecsize; j++)
+ 						{
++		canopy_cross_budget::step();
+ 							rhs_row += join(to_enclosed_unpacked_expression(rhs_expression), "[", j, "][", i, "]");
+ 							if (j + 1 < vector_type.vecsize)
+ 								rhs_row += ", ";
+@@ -5623,9 +5671,11 @@
+ 					// so pick out individual components instead.
+ 					for (uint32_t i = 0; i < type.columns; i++)
+ 					{
++		canopy_cross_budget::step();
+ 						string rhs_row = type_to_glsl_constructor(vector_type) + "(";
+ 						for (uint32_t j = 0; j < vector_type.vecsize; j++)
+ 						{
++		canopy_cross_budget::step();
+ 							// Need to explicitly unpack expression since we've mucked with transpose state.
+ 							auto unpacked_expr = to_unpacked_row_major_matrix_expression(rhs_expression);
+ 							rhs_row += join(unpacked_expr, "[", j, "][", i, "]");
+@@ -5642,6 +5692,7 @@
+ 					// Copy column-by-column.
+ 					for (uint32_t i = 0; i < type.columns; i++)
+ 					{
++		canopy_cross_budget::step();
+ 						statement(cast_expr, to_enclosed_expression(lhs_expression), "[", i, "]", " = ",
+ 						          to_enclosed_unpacked_expression(rhs_expression), "[", i, "];");
+ 					}
+@@ -5663,6 +5714,7 @@
+ 			// Storing a column to a row-major matrix. Unroll the write.
+ 			for (uint32_t c = 0; c < type.vecsize; c++)
+ 			{
++		canopy_cross_budget::step();
+ 				auto lhs_expr = to_enclosed_expression(lhs_expression);
+ 				auto column_index = lhs_expr.find_last_of('[');
+ 
+@@ -5789,6 +5841,7 @@
+ 
+ 		for (uint32_t i = 0; i < columns; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (i > 0)
+ 				unpack_expr += ", ";
+ 
+@@ -5897,6 +5950,7 @@
+ 
+ 	for (const auto &spv_func : spv_function_implementations)
+ 	{
++		canopy_cross_budget::step();
+ 		switch (spv_func)
+ 		{
+ 		case SPVFuncImplUnsafeArray:
+@@ -5961,6 +6015,7 @@
+ 			statement("");
+ 			for (size_t method_idx = 0; method_idx < sizeof(address_spaces) / sizeof(address_spaces[0]); ++method_idx)
+ 			{
++		canopy_cross_budget::step();
+ 				// Some address spaces require particular features.
+ 				if (method_idx == 4) // threadgroup_imageblock
+ 					statement("#ifdef __HAVE_IMAGEBLOCKS__");
+@@ -5985,6 +6040,7 @@
+ 				statement("");
+ 				for (size_t param_idx = 0; param_idx < sizeof(address_spaces) / sizeof(address_spaces[0]); ++param_idx)
+ 				{
++		canopy_cross_budget::step();
+ 					if (param_idx != method_idx)
+ 					{
+ 						if (param_idx == 4) // threadgroup_imageblock
+@@ -6127,6 +6183,7 @@
+ 
+ 	for (const auto &spv_func : spv_function_implementations)
+ 	{
++		canopy_cross_budget::step();
+ 		switch (spv_func)
+ 		{
+ 		case SPVFuncImplSMod:
+@@ -6249,6 +6306,7 @@
+ 
+ 			for (uint32_t variant = 0; variant < 12; variant++)
+ 			{
++		canopy_cross_budget::step();
+ 				assert(!src_is_physical_with_mismatch[variant] || !dst_is_physical_with_mismatch[variant]);
+ 				bool is_multidim = spv_func == SPVFuncImplArrayCopyMultidim;
+ 				const char *dim = is_multidim ? "[N][M]" : "[N]";
+@@ -6837,6 +6895,7 @@
+ 			// Because we are passing a texture reference, we have to output an overloaded version of this function for each address space.
+ 			for (uint32_t i = 0; i < texture_addr_space_count; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				statement("// Wrapper function that processes a ", texture_addr_spaces[i], " texture gather with a constant offset array.");
+ 				statement("template<typename Tex, typename Toff, typename... Tp>");
+ 				statement("inline spvGatherReturn<Tex, Tp...> spvGatherConstOffsets(const ", texture_addr_spaces[i], " Tex& t, sampler s, "
+@@ -6873,6 +6932,7 @@
+ 			// Because we are passing a texture reference, we have to output an overloaded version of this function for each address space.
+ 			for (uint32_t i = 0; i < texture_addr_space_count; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				statement("// Wrapper function that processes a ", texture_addr_spaces[i], " texture gather with a constant offset array.");
+ 				statement("template<typename Tex, typename Toff, typename... Tp>");
+ 				statement("inline spvGatherCompareReturn<Tex, Tp...> spvGatherCompareConstOffsets(const ", texture_addr_spaces[i], " Tex& t, sampler s, "
+@@ -8595,6 +8655,7 @@
+ 
+ 	for (auto &id_ : ir.ids_for_constant_undef_or_type)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &id = ir.ids[id_];
+ 
+ 		if (id.get_type() == TypeConstant)
+@@ -8828,6 +8889,7 @@
+ 
+ 		for (uint32_t i = 0; i < num_control_points; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			const uint32_t indices[2] = { i, interface_index };
+ 			AccessChainMeta meta;
+ 			expr += access_chain_internal(stage_in_ptr_var_id, indices, 2,
+@@ -8858,11 +8920,13 @@
+ 
+ 		for (uint32_t i = 0; i < num_control_points; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			expr += type_to_glsl(sub_type) + "({ ";
+ 			interface_index = base_interface_index;
+ 			uint32_t array_size = to_array_size_literal(result_type, 0);
+ 			for (uint32_t j = 0; j < array_size; j++, interface_index++)
+ 			{
++		canopy_cross_budget::step();
+ 				const uint32_t indices[2] = { i, interface_index };
+ 
+ 				AccessChainMeta meta;
+@@ -8900,9 +8964,11 @@
+ 
+ 		for (uint32_t i = 0; i < num_control_points; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			expr += type_to_glsl(struct_type) + "{ ";
+ 			for (uint32_t j = 0; j < uint32_t(struct_type.member_types.size()); j++)
+ 			{
++		canopy_cross_budget::step();
+ 				// The base interface index is stored per variable for structs.
+ 				if (var)
+ 				{
+@@ -8920,6 +8986,7 @@
+ 					expr += type_to_glsl(mbr_type) + "(";
+ 					for (uint32_t k = 0; k < mbr_type.columns; k++, interface_index++)
+ 					{
++		canopy_cross_budget::step();
+ 						if (is_array_of_struct)
+ 						{
+ 							const uint32_t indices[2] = { i, interface_index };
+@@ -8945,6 +9012,7 @@
+ 					uint32_t array_size = to_array_size_literal(mbr_type, 0);
+ 					for (uint32_t k = 0; k < array_size; k++, interface_index++)
+ 					{
++		canopy_cross_budget::step();
+ 						if (is_array_of_struct)
+ 						{
+ 							const uint32_t indices[2] = { i, interface_index };
+@@ -9009,10 +9077,12 @@
+ 
+ 			for (uint32_t i = 0; i < num_control_points; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				interface_index = base_interface_index;
+ 				expr += type_to_glsl(matrix_type) + "(";
+ 				for (uint32_t j = 0; j < result_type.columns; j++, interface_index++)
+ 				{
++		canopy_cross_budget::step();
+ 					const uint32_t indices[2] = { i, interface_index };
+ 
+ 					AccessChainMeta meta;
+@@ -9036,6 +9106,7 @@
+ 			expr += type_to_glsl(result_type) + "(";
+ 			for (uint32_t i = 0; i < result_type.columns; i++, interface_index++)
+ 			{
++		canopy_cross_budget::step();
+ 				expr += to_expression(ptr) + "." + to_member_name(iface_type, interface_index);
+ 				if (expr_type.vecsize > result_type.vecsize)
+ 					expr += vector_swizzle(result_type.vecsize, 0);
+@@ -9059,6 +9130,7 @@
+ 
+ 		for (uint32_t i = 0; i < num_control_points; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			const uint32_t indices[2] = { i, interface_index };
+ 
+ 			AccessChainMeta meta;
+@@ -9085,6 +9157,7 @@
+ 		uint32_t array_size = to_array_size_literal(result_type, 0);
+ 		for (uint32_t i = 0; i < array_size; i++, interface_index++)
+ 		{
++		canopy_cross_budget::step();
+ 			expr += to_expression(ptr) + "." + to_member_name(iface_type, interface_index);
+ 			if (expr_type.vecsize > result_type.vecsize)
+ 				expr += vector_swizzle(result_type.vecsize, 0);
+@@ -9238,6 +9311,7 @@
+ 			// we're hosed.
+ 			for (; flatten_composites && i < length; ++i)
+ 			{
++		canopy_cross_budget::step();
+ 				if (!is_array(*type) && !is_matrix(*type) && type->basetype != SPIRType::Struct)
+ 					break;
+ 
+@@ -9325,6 +9399,7 @@
+ 			expr_type = &get<SPIRType>(get_extended_decoration(ops[2], SPIRVCrossDecorationTessIOOriginalInputTypeID));
+ 		for (uint32_t i = 3; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (!is_array(*expr_type) && expr_type->basetype == SPIRType::Struct)
+ 				expr_type = &get<SPIRType>(expr_type->member_types[get<SPIRConstant>(ops[i]).scalar()]);
+ 			else
+@@ -9358,6 +9433,7 @@
+ 
+ 		for (uint32_t i = 2; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			inherit_expression_dependencies(ops[1], ops[i]);
+ 			add_implied_read_expression(expr, ops[i]);
+ 		}
+@@ -9486,6 +9562,7 @@
+ 	// for that getting the base index.
+ 	for (uint32_t i = 3; i < length; ++i)
+ 	{
++		canopy_cross_budget::step();
+ 		if (is_vector(*type) && !is_array(*type) && is_scalar(result_type))
+ 		{
+ 			// We don't want to combine the next index. Actually, we need to save it
+@@ -9587,6 +9664,7 @@
+ 
+ 	for (uint32_t i = 0; i < k_cooperative_matrix_components_per_thread; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto index = join(i, "u");
+ 		statement(to_cooperative_matrix_component(result_id, index), " = ", op,
+ 		          to_cooperative_matrix_component(op0, index), ";");
+@@ -9602,6 +9680,7 @@
+ 
+ 	for (uint32_t i = 0; i < k_cooperative_matrix_components_per_thread; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto index = join(i, "u");
+ 		statement(to_cooperative_matrix_component(result_id, index), " = ",
+ 		          to_cooperative_matrix_component(op0, index), " ", op, " ",
+@@ -9619,6 +9698,7 @@
+ 
+ 	for (uint32_t i = 0; i < k_cooperative_matrix_components_per_thread; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto index = join(i, "u");
+ 		statement(to_cooperative_matrix_component(result_id, index), " = ", op, "(",
+ 		          to_cooperative_matrix_component(op0, index), ");");
+@@ -9634,6 +9714,7 @@
+ 
+ 	for (uint32_t i = 0; i < k_cooperative_matrix_components_per_thread; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto index = join(i, "u");
+ 		statement(to_cooperative_matrix_component(result_id, index), " = ", to_enclosed_unpacked_expression(cond),
+ 		          " ? ", to_cooperative_matrix_component(op0, index), " : ",
+@@ -10505,6 +10586,7 @@
+ 		expr += "(";
+ 		for (uint32_t col = 0; col < type.columns; col++)
+ 		{
++		canopy_cross_budget::step();
+ 			expr += to_enclosed_unpacked_expression(a);
+ 			expr += " * ";
+ 			expr += to_extract_component_expression(b, col);
+@@ -12451,6 +12533,7 @@
+ 		// is cleared after each compilation pass.
+ 		for (auto var_id : vars_needing_early_declaration)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &ed_var = get<SPIRVariable>(var_id);
+ 			ID &initializer = ed_var.initializer;
+ 			if (!initializer)
+@@ -12464,6 +12547,7 @@
+ 		// add `taskPayloadSharedEXT` variable to entry-point arguments
+ 		for (auto &v : func.local_variables)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &var = get<SPIRVariable>(v);
+ 			if (var.storage != StorageClassTaskPayloadWorkgroupEXT)
+ 				continue;
+@@ -12479,6 +12563,7 @@
+ 
+ 	for (auto &arg : func.arguments)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t name_id = arg.id;
+ 
+ 		auto *var = maybe_get<SPIRVariable>(arg.id);
+@@ -13429,6 +13514,7 @@
+ 				expr += inner_expr + ".";
+ 				for (uint32_t c = 0; c < 4; c++)
+ 				{
++		canopy_cross_budget::step();
+ 					switch (constexpr_sampler->swizzle[c])
+ 					{
+ 					case MSL_COMPONENT_SWIZZLE_IDENTITY:
+@@ -13470,6 +13556,7 @@
+ 				expr += type_to_glsl(result_type) + "(";
+ 				for (uint32_t c = 0; c < 4; c++)
+ 				{
++		canopy_cross_budget::step();
+ 					switch (constexpr_sampler->swizzle[c])
+ 					{
+ 					case MSL_COMPONENT_SWIZZLE_IDENTITY:
+@@ -13803,6 +13890,7 @@
+ 
+ 	for (uint32_t i = 0; i < type.member_types.size(); i++)
+ 	{
++		canopy_cross_budget::step();
+ 		if (!has_member_decoration(type.self, i, DecorationPatch))
+ 			return false;
+ 	}
+@@ -14095,6 +14183,7 @@
+ 
+ 		while (struct_array_type->parent_type && is_array(get<SPIRType>(struct_array_type->parent_type)))
+ 		{
++		canopy_cross_budget::step();
+ 			array_stride = get_decoration(struct_array_type->parent_type, DecorationArrayStride);
+ 			struct_array_type = &get<SPIRType>(struct_array_type->parent_type);
+ 		}
+@@ -15267,6 +15356,7 @@
+ 					    uint32_t components = is_tessellating_triangles() ? 3 : 4;
+ 					    for (uint32_t i = 0; i < components; i++)
+ 					    {
++		canopy_cross_budget::step();
+ 						    statement(builtin_to_glsl(BuiltInTessLevelOuter, StorageClassOutput), "[", i,
+ 						              "] = ", "half(", to_expression(c->subconstants[i]), ");");
+ 					    }
+@@ -15288,6 +15378,7 @@
+ 					entry_func.fixup_hooks_in.push_back([=]() {
+ 						for (uint32_t i = 0; i < 2; i++)
+ 						{
++		canopy_cross_budget::step();
+ 							statement(builtin_to_glsl(BuiltInTessLevelInner, StorageClassOutput), "[", i, "] = ",
+ 							          "half(", to_expression(c->subconstants[i]), ");");
+ 						}
+@@ -15365,6 +15456,7 @@
+ 
+ 	for (uint32_t i = 0; i < kMaxArgumentBuffers; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t id = argument_buffer_ids[i];
+ 		if (id == 0)
+ 			continue;
+@@ -15498,6 +15590,7 @@
+ 			{
+ 				for (auto &resource : resources)
+ 				{
++		canopy_cross_budget::step();
+ 					if (resource_is_aliasing_candidate(*resource.var) &&
+ 					    get_decoration(resource.var->self, DecorationDescriptorSet) ==
+ 					    get_decoration(var_id, DecorationDescriptorSet) &&
+@@ -15583,6 +15676,7 @@
+ 
+ 	for (auto &r : resources)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = *r.var;
+ 		auto &type = get_variable_data_type(var);
+ 
+@@ -15656,6 +15750,7 @@
+ 				uint32_t array_size = get_resource_array_size(type, var_id);
+ 				for (uint32_t i = 0; i < array_size; ++i)
+ 				{
++		canopy_cross_budget::step();
+ 					if (!ep_args.empty())
+ 						ep_args += ", ";
+ 					ep_args += get_variable_address_space(var) + " " + type_to_glsl(type) + "* " +
+@@ -17259,6 +17354,7 @@
+ 	// and then copy alias back into entry.name after the fixup.
+ 	for (auto &entry : ir.entry_points)
+ 	{
++		canopy_cross_budget::step();
+ 		// Change both the entry point name and the alias, to keep them synced.
+ 		string &ep_name = entry.second.name;
+ 		if (illegal_func_names.find(ep_name) != end(illegal_func_names))
+@@ -17577,6 +17673,7 @@
+ 
+ 		for (uint32_t i = 0; i < uint32_t(type.array.size()); i++)
+ 		{
++		canopy_cross_budget::step();
+ 			res += "spvUnsafeArray<";
+ 			sizes += ", ";
+ 			sizes += to_array_size(type, i);
+@@ -18983,6 +19080,7 @@
+ 		TypeID basic_type_id = type_id;
+ 		while (is_array(get<SPIRType>(basic_type_id)))
+ 		{
++		canopy_cross_budget::step();
+ 			array_stride = get_decoration(basic_type_id, DecorationArrayStride);
+ 			auto parent_type_id = get<SPIRType>(basic_type_id).parent_type;
+ 			// If the base struct itself has ArrayStride decoration, it will be padded on-demand.
+@@ -19015,6 +19113,7 @@
+ 	// Multiply together every dimension, except the last one.
+ 	for (uint32_t dim = 0; dim < dimensions; dim++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t array_size = to_array_size_literal(type, dim);
+ 		value_size *= max<uint32_t>(array_size, 1u);
+ 	}
+@@ -19075,6 +19174,7 @@
+ 
+ 	for (uint32_t i = 0; i < mbr_cnt; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		uint32_t mbr_alignment = get_declared_struct_member_alignment_msl(struct_type, i);
+ 		alignment = max(alignment, mbr_alignment);
+ 	}
+@@ -19112,6 +19212,7 @@
+ 		auto *p_type = &type;
+ 		while (!is_pointer(*p_type) && dim_idx >= 0)
+ 		{
++		canopy_cross_budget::step();
+ 			type_size *= to_array_size_literal(*p_type, dim_idx);
+ 			p_type = &get<SPIRType>(p_type->parent_type);
+ 			dim_idx--;
+@@ -19577,6 +19678,7 @@
+ 						// Now we need to check each member and see if it has this decoration.
+ 						for (uint32_t i = 0; i < var_type.member_types.size(); ++i)
+ 						{
++		canopy_cross_budget::step();
+ 							if (compiler.has_member_decoration(var_type.self, i, DecorationSample))
+ 							{
+ 								needs_sample_id = true;
+@@ -19895,6 +19997,7 @@
+ 	bool sort_is_identity = true;
+ 	for (uint32_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+ 	{
++		canopy_cross_budget::step();
+ 		if (mbr_idx != mbr_idxs[mbr_idx])
+ 		{
+ 			sort_is_identity = false;
+@@ -19918,6 +20021,7 @@
+ 	auto mbr_meta_cpy = meta.members;
+ 	for (uint32_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+ 	{
++		canopy_cross_budget::step();
+ 		type.member_types[mbr_idx] = mbr_types_cpy[mbr_idxs[mbr_idx]];
+ 		meta.members[mbr_idx] = mbr_meta_cpy[mbr_idxs[mbr_idx]];
+ 	}
+@@ -20100,6 +20204,7 @@
+ 			uint32_t array_size = get_physical_tess_level_array_size(builtin);
+ 			for (uint32_t i = 0; i < array_size; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				if (array_size > 1)
+ 					wrap_expr += join("float(", expr, "[", i, "])");
+ 				else
+@@ -20441,6 +20546,7 @@
+ 
+ 				for (uint32_t i = 0; i < plane_count; i++)
+ 				{
++		canopy_cross_budget::step();
+ 					uint32_t image_resource_index = get_metal_resource_index(var, SPIRType::Image, i);
+ 					resources_in_set[desc_set].push_back(
+ 					    { &var, to_name(var_id), SPIRType::Image, image_resource_index, plane_count, i, 0 });
+@@ -20495,6 +20601,7 @@
+ 		// We might have to add a swizzle buffer resource to the set.
+ 		for (uint32_t desc_set = 0; desc_set < kMaxArgumentBuffers; desc_set++)
+ 		{
++		canopy_cross_budget::step();
+ 			if (!set_needs_swizzle_buffer[desc_set] && !set_needs_buffer_sizes[desc_set])
+ 				continue;
+ 
+@@ -20540,6 +20647,7 @@
+ 	// Now add inline uniform blocks.
+ 	for (uint32_t var_id : inline_block_vars)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &var = get<SPIRVariable>(var_id);
+ 		uint32_t desc_set = get_decoration(var_id, DecorationDescriptorSet);
+ 		add_resource_name(var_id);
+@@ -20549,6 +20657,7 @@
+ 
+ 	for (uint32_t desc_set = 0; desc_set < kMaxArgumentBuffers; desc_set++)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &resources = resources_in_set[desc_set];
+ 		if (resources.empty())
+ 			continue;
+@@ -20597,6 +20706,7 @@
+ 
+ 		for (size_t i = 0; i < resources.size() - 1; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &r1 = resources[i];
+ 			auto &r2 = resources[i + 1];
+ 
+@@ -20616,6 +20726,7 @@
+ 		uint32_t prev_was_scalar_on_array_offset = 0;
+ 		for (auto &resource : resources)
+ 		{
++		canopy_cross_budget::step();
+ 			auto &var = *resource.var;
+ 			auto &type = get_variable_data_type(var);
+ 
+@@ -20631,6 +20742,7 @@
+ 
+ 				while (resource.index > next_arg_buff_index)
+ 				{
++		canopy_cross_budget::step();
+ 					switch (rez_bind.basetype)
+ 					{
+ 					case SPIRType::Void:
+@@ -21078,6 +21190,7 @@
+ 		statement("spvPerVertex spvV = {};");
+ 		for (uint32_t index = 0; index < uint32_t(type_vert.member_types.size()); ++index)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t orig_var = get_extended_member_decoration(type_vert.self, index, SPIRVCrossDecorationInterfaceOrigID);
+ 			uint32_t orig_id = get_extended_member_decoration(type_vert.self, index, SPIRVCrossDecorationInterfaceMemberIndex);
+ 
+@@ -21171,6 +21284,7 @@
+ 			statement("spvPerPrimitive spvP = {};");
+ 			for (uint32_t index = 0; index < uint32_t(type_prim.member_types.size()); ++index)
+ 			{
++		canopy_cross_budget::step();
+ 				uint32_t orig_var =
+ 						get_extended_member_decoration(type_prim.self, index, SPIRVCrossDecorationInterfaceOrigID);
+ 				uint32_t orig_id =
+--- a/spirv_parser.cpp
++++ b/spirv_parser.cpp
+@@ -21,6 +21,7 @@
+  *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+  */
+ 
++#include "canopy_cross_budget.hpp"
+ #include "spirv_parser.hpp"
+ #include "spirv_common.hpp"
+ #include "NonSemanticShaderDebugInfo100.h"
+@@ -108,6 +109,7 @@
+ 	SmallVector<Instruction> instructions;
+ 	while (offset < len)
+ 	{
++		canopy_cross_budget::step();
+ 		Instruction instr = {};
+ 		instr.op = spirv[offset] & 0xffff;
+ 		instr.count = (spirv[offset] >> 16) & 0xffff;
+@@ -131,6 +133,7 @@
+ 
+ 	for (auto &fixup : forward_pointer_fixups)
+ 	{
++		canopy_cross_budget::step();
+ 		auto &target = get<SPIRType>(fixup.first);
+ 		auto &source = get<SPIRType>(fixup.second);
+ 		target.member_types = source.member_types;
+@@ -141,6 +144,7 @@
+ 
+ 	for (auto &source : ir.sources)
+ 	{
++		canopy_cross_budget::step();
+ 		auto cmp = [](const ParsedIR::Source::Marker &a, const ParsedIR::Source::Marker &b) {
+ 			return a.line < b.line;
+ 		};
+@@ -157,6 +161,7 @@
+ 	// exports and populate the exported functions.
+ 	for (uint32_t id : ir.library_exports)
+ 	{
++		canopy_cross_budget::step();
+ 		if (ir.ids[id].get_type() == TypeFunction)
+ 			ir.library_exported_functions.push_back(id);
+ 	}
+@@ -386,6 +391,7 @@
+ 
+ 					for (auto &source : ir.sources)
+ 					{
++		canopy_cross_budget::step();
+ 						if (source.define_id != source_id)
+ 							continue;
+ 
+@@ -553,6 +559,7 @@
+ 		// i.e., we cannot just copy the meta structure directly.
+ 		for (uint32_t i = 1; i < length; i++)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t target = ops[i];
+ 			flags.for_each_bit([&](uint32_t bit) {
+ 				auto decoration = static_cast<Decoration>(bit);
+@@ -581,6 +588,7 @@
+ 		// i.e., we cannot just copy the meta structure directly.
+ 		for (uint32_t i = 1; i + 1 < length; i += 2)
+ 		{
++		canopy_cross_budget::step();
+ 			uint32_t target = ops[i + 0];
+ 			uint32_t index = ops[i + 1];
+ 			flags.for_each_bit([&](uint32_t bit) {
+@@ -956,6 +964,7 @@
+ 		{
+ 			for (auto &other : global_struct_cache)
+ 			{
++		canopy_cross_budget::step();
+ 				if (ir.get_name(type.self) == ir.get_name(other) &&
+ 				    types_are_logically_equivalent(type, get<SPIRType>(other)))
+ 				{
+@@ -1148,6 +1157,7 @@
+ 			const SPIRConstant *c[4];
+ 			for (uint32_t i = 0; i < elements; i++)
+ 			{
++		canopy_cross_budget::step();
+ 				// Specialization constants operations can also be part of this.
+ 				// We do not know their value, so any attempt to query SPIRConstant later
+ 				// will fail. We can only propagate the ID of the expression and use to_expression on it.
+@@ -1366,6 +1376,7 @@
+ 		{
+ 			for (uint32_t i = 2; i + 3 <= length; i += 3)
+ 			{
++		canopy_cross_budget::step();
+ 				uint64_t value = (static_cast<uint64_t>(ops[i + 1]) << 32) | ops[i];
+ 				current_block->cases_64bit.push_back({ value, ops[i + 2] });
+ 			}
+@@ -1541,6 +1552,7 @@
+ 
+ 		for (auto &source : ir.sources)
+ 		{
++		canopy_cross_budget::step();
+ 			if (source.file_id == file)
+ 			{
+ 				source.line_markers.emplace_back();
+@@ -1612,6 +1624,7 @@
+ 	size_t member_types = a.member_types.size();
+ 	for (size_t i = 0; i < member_types; i++)
+ 	{
++		canopy_cross_budget::step();
+ 		if (!types_are_logically_equivalent(get<SPIRType>(a.member_types[i]), get<SPIRType>(b.member_types[i])))
+ 			return false;
+ 	}

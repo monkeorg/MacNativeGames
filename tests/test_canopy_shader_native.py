@@ -77,6 +77,29 @@ class FixtureContractTests(unittest.TestCase):
             file.write_bytes(b'changed');self.assertNotEqual(before,builder.tree_digest(folder))
             file.rename(folder/'renamed.cs');self.assertNotEqual(before,builder.tree_digest(folder))
 
+    def test_native_dependency_plan_preserves_real_arguments_and_refuses_empty_or_nul(self):
+        with tempfile.TemporaryDirectory() as temp:
+            plan=Path(temp)/'link.args';builder=self.builder()
+            plan.write_text('\ufeff"/a directory/libRuntime.a"\n-framework Foundation\n-isysroot "/an SDK"\n')
+            self.assertEqual(builder.read_link_plan(plan),['/a directory/libRuntime.a','-framework','Foundation','-isysroot','/an SDK'])
+            for invalid in ('','\0','"unterminated'):
+                plan.write_text(invalid)
+                with self.assertRaises(ValueError):builder.read_link_plan(plan)
+
+    def test_checked_vendor_patches_refuse_mutation_and_reapplication_without_touching_original(self):
+        builder=self.builder();original=ROOT/'vendor/ryujinx/src/Ryujinx.Graphics.Shader/Translation/Optimizations/Optimizer.cs'
+        original_hash=hashlib.sha256(original.read_bytes()).hexdigest()
+        with tempfile.TemporaryDirectory() as temp:
+            private=Path(temp)/'vendor';shutil.copytree(ROOT/'vendor/ryujinx',private,ignore=shutil.ignore_patterns('.git','bin','obj'))
+            target=private/original.relative_to(ROOT/'vendor/ryujinx');target.write_bytes(target.read_bytes()+b'\n// mutation\n')
+            with self.assertRaises(ValueError):builder.checked_patches(private,TOOLS/'patches')
+            # Restart from the exact original copy after an explicit refusal.
+            shutil.rmtree(private);shutil.copytree(ROOT/'vendor/ryujinx',private,ignore=shutil.ignore_patterns('.git','bin','obj'))
+            builder.checked_patches(private,TOOLS/'patches')
+            self.assertTrue((private/'src/Ryujinx.Common/Utilities/CanopyTranslationGuard.cs').is_file())
+            with self.assertRaises(ValueError):builder.checked_patches(private,TOOLS/'patches')
+        self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(),original_hash)
+
     def test_original_instruction_vector_source_contract(self):
         code=original_compute_maxwell();self.assertEqual(len(code),32)
         word=struct.unpack_from('<Q',code,8)[0]
@@ -96,14 +119,19 @@ class InProcessCrossTests(unittest.TestCase):
         if clean.strip():raise AssertionError('Cross source contains modified, untracked or ignored files')
         cls.temp=tempfile.TemporaryDirectory();cls.addClassCleanup(cls.temp.cleanup)
         folder=Path(cls.temp.name);cls.library=folder/('libcross.dylib' if sys.platform=='darwin' else 'libcross.so')
+        private=folder/'cross-source';shutil.copytree(source,private,ignore=shutil.ignore_patterns('.git'))
+        FixtureContractTests.builder().checked_patches(private,TOOLS/'cross_patches')
         sources=['spirv_cross.cpp','spirv_parser.cpp','spirv_cross_parsed_ir.cpp','spirv_cfg.cpp','spirv_glsl.cpp','spirv_msl.cpp']
         command=['c++','-std=c++11','-O1','-fPIC','-dynamiclib' if sys.platform=='darwin' else '-shared',
-                 '-I',str(source),str(TOOLS/'inprocess_cross.cpp'),*[str(source/s) for s in sources],'-o',str(cls.library)]
+                 '-I',str(private),'-I',str(TOOLS),str(TOOLS/'inprocess_cross.cpp'),str(TOOLS/'canopy_cross_budget.cpp'),*[str(private/s) for s in sources],'-o',str(cls.library)]
         run=subprocess.run(command,capture_output=True,text=True,timeout=180)
         if run.returncode:raise AssertionError(run.stdout+run.stderr)
         cls.lib=ctypes.CDLL(str(cls.library));cls.cross=cls.lib.canopy_spirv_cross
         cls.cross.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_void_p,ctypes.c_size_t,ctypes.POINTER(ctypes.c_size_t)]
         cls.cross.restype=ctypes.c_int
+        cls.checkpoint=ctypes.CFUNCTYPE(ctypes.c_int,ctypes.c_void_p,ctypes.c_uint64,ctypes.c_uint64,ctypes.c_uint64)
+        cls.controlled=cls.lib.canopy_spirv_cross_controlled
+        cls.controlled.argtypes=cls.cross.argtypes+[cls.checkpoint,ctypes.c_void_p];cls.controlled.restype=ctypes.c_int
 
     def call(self,data,capacity=65536):
         src=ctypes.create_string_buffer(data);out=ctypes.create_string_buffer(b'Z'*capacity,capacity);n=ctypes.c_size_t(999)
@@ -137,6 +165,22 @@ class InProcessCrossTests(unittest.TestCase):
         self.assertTrue(all(status==0 for status,_,_ in results))
         self.assertTrue(all(result==results[0] for result in results))
 
+    def test_actual_internal_checkpoint_cancel_and_quota_leave_output_unchanged(self):
+        data=ctypes.create_string_buffer(original_compute_spirv());output=ctypes.create_string_buffer(b'Z'*65536,65536)
+        for refusal in (5,6):
+            calls=[]
+            def poll(context,work,nodes,tracked):
+                calls.append((work,nodes,tracked));return refusal if len(calls)>5 else 0
+            callback=self.checkpoint(poll);n=ctypes.c_size_t(99)
+            status=self.controlled(data,len(original_compute_spirv()),output,len(output),ctypes.byref(n),callback,None)
+            self.assertEqual(status,refusal);self.assertEqual(n.value,0);self.assertEqual(output.raw,b'Z'*65536)
+            self.assertGreater(len(calls),5)
+        calls=[]
+        def success(context,work,nodes,tracked):calls.append((work,nodes,tracked));return 0
+        callback=self.checkpoint(success);n=ctypes.c_size_t(0)
+        self.assertEqual(self.controlled(data,len(original_compute_spirv()),output,len(output),ctypes.byref(n),callback,None),0)
+        self.assertTrue(any(nodes for _,nodes,_ in calls));self.assertTrue(any(tracked for _,_,tracked in calls))
+
     @unittest.skipUnless(os.environ.get('CANOPY_SPIRV_CROSS_CLI'),'Requires actual pinned CLI binary for independent Cross parity')
     def test_existing_cli_flags_byte_parity(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -148,10 +192,44 @@ class InProcessCrossTests(unittest.TestCase):
             self.assertEqual(data[:n],(path/'output.metal').read_bytes())
 
 
+class CrossStreamOwnershipTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        source=Path(os.environ.get('CANOPY_SPIRV_CROSS_SOURCE',ROOT/'games/totk/build/native-shader/SPIRV-Cross'))
+        if not shutil.which('c++') or not (source/'spirv_cross_containers.hpp').exists():
+            raise unittest.SkipTest('Requires installed C++/ASan and existing exact-pinned Cross; no downloads')
+        builder=FixtureContractTests.builder();builder.validate_cross_source(source)
+        cls.temp=tempfile.TemporaryDirectory();cls.addClassCleanup(cls.temp.cleanup);folder=Path(cls.temp.name)
+        private=folder/'cross';shutil.copytree(source,private,ignore=shutil.ignore_patterns('.git'))
+        builder.checked_patches(private,TOOLS/'cross_patches');cls.probe=folder/'stream-probe'
+        run=subprocess.run(['c++','-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address','-fno-omit-frame-pointer',
+            '-I',str(private),'-I',str(TOOLS),str(ROOT/'tests/canopy_shader_stream_probe.cpp'),
+            str(TOOLS/'canopy_cross_budget.cpp'),'-o',str(cls.probe)],capture_output=True,text=True,timeout=120)
+        if run.returncode:raise AssertionError(run.stdout+run.stderr)
+
+    def test_heap_growth_cancel_quota_and_success_unwind_without_duplicate_free(self):
+        for status in (0,5,6):
+            with self.subTest(status=status):
+                result=subprocess.run([str(self.probe),str(status)],capture_output=True,text=True,timeout=20,
+                    env=dict(os.environ,ASAN_OPTIONS='abort_on_error=1:detect_leaks=1'))
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertEqual(result.stdout.strip(),'{"status":0}')
+
+
 @unittest.skipUnless(os.environ.get('CANOPY_SHADER_NATIVE_PROBE') and os.environ.get('CANOPY_SHADER_CLI') and
                      os.environ.get('CANOPY_SPIRV_CROSS_CLI'),
                      'Requires actually linked static NativeAOT probe and existing CLI/Cross binaries')
 class NativeAOTParityTests(unittest.TestCase):
+    def test_first_request_interrupted_then_full_translation_succeeds(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp);code=folder/'original.bin';code.write_bytes(original_compute_maxwell())
+            request=folder/'request.json';request.write_text(json.dumps(original_request()))
+            for limit in (4,8,12,32,128):
+                with self.subTest(checkpoint=limit):
+                    run=subprocess.run([os.environ['CANOPY_SHADER_NATIVE_PROBE'],'--first-cancel='+str(limit),str(code),str(request)],capture_output=True,text=True,timeout=60)
+                    self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+                    self.assertEqual(json.loads(run.stdout)['status'],0)
+
     def test_actual_static_abi_error_capacity_and_concurrency(self):
         with tempfile.TemporaryDirectory() as temp:
             folder=Path(temp);code=folder/'original.bin';code.write_bytes(original_compute_maxwell())
@@ -176,3 +254,25 @@ class NativeAOTParityTests(unittest.TestCase):
             variant=request['variant'];self.assertEqual(base64.b64decode(native['spirv_base64']),(cli/(variant+'.spv')).read_bytes())
             self.assertEqual(native['metal'],(cli/(variant+'_b.metal')).read_text())
             self.assertEqual(native['reflection'],json.loads((cli/(variant+'_b.json')).read_bytes()))
+
+
+@unittest.skipUnless(shutil.which('dotnet'),'Requires an existing .NET10 SDK; no SDK/package install')
+class ManagedBudgetTests(unittest.TestCase):
+    def test_actual_managed_budget_lifetime_quotas_cancel_deadline_and_depth(self):
+        version=subprocess.check_output(['dotnet','--version'],text=True).strip()
+        if int(version.split('.')[0])<10:self.skipTest('Existing SDK must support net10/C#14 vendor source')
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp);private=folder/'vendor';shutil.copytree(ROOT/'vendor/ryujinx',private,ignore=shutil.ignore_patterns('.git','bin','obj'))
+            FixtureContractTests.builder().checked_patches(private,TOOLS/'patches')
+            from xml.sax.saxutils import escape
+            sources=[TOOLS/'TranslationBudget.cs',TOOLS/'BudgetRegex.cs',ROOT/'tests/canopy_shader_budget_probe.cs',
+                     private/'src/Ryujinx.Common/Utilities/CanopyTranslationGuard.cs']
+            project=folder/'BudgetProbe.csproj'
+            project.write_text('<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><AllowUnsafeBlocks>true</AllowUnsafeBlocks><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup>'+''.join('<Compile Include="'+escape(str(s),{'"':'&quot;'})+'" />' for s in sources)+'</ItemGroup></Project>')
+            offline=folder/'empty-source';offline.mkdir()
+            env=dict(os.environ,DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1',DOTNET_CLI_TELEMETRY_OPTOUT='1',DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE='true')
+            restore=subprocess.run(['dotnet','restore',str(project),'--source',str(offline)],capture_output=True,text=True,timeout=120,env=env)
+            self.assertEqual(restore.returncode,0,restore.stdout+restore.stderr)
+            result=subprocess.run(['dotnet','run','--no-restore','--project',str(project)],capture_output=True,text=True,timeout=120,env=env)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('{"status":0}',result.stdout)

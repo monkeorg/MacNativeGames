@@ -44,7 +44,7 @@ static class ShaderService
         ["texture2d"] = "depth2d", ["texture2d_array"] = "depth2d_array", ["texturecube"] = "depthcube",
         ["texturecube_array"] = "depthcube_array", ["texture2d_ms"] = "depth2d_ms", ["texture2d_ms_array"] = "depth2d_ms_array",
     };
-    static readonly Regex Fp64 = new(@"\bdouble\b|unsupported_GLSLstd450(?:Pack|Unpack)Double2x32");
+    static readonly BudgetRegex Fp64 = new(@"\bdouble\b|unsupported_GLSLstd450(?:Pack|Unpack)Double2x32");
 
     static string spirvCross, outDir, chain;
     static int debugMode;
@@ -85,7 +85,7 @@ static class ShaderService
 
     static (long? t, long? s, long ty)? DecodeTex(string name)
     {
-        Match m = Regex.Match(name, @"^[a-z]+_[ti]\w*?_(?:cb(\d+)|tcb)_([0-9A-F]+)");
+        Match m = BudgetRegex.Match(name, @"^[a-z]+_[ti]\w*?_(?:cb(\d+)|tcb)_([0-9A-F]+)");
         if (!m.Success) return null;
         long slots = m.Groups[1].Success ? ParseInt(m.Groups[1].Value) : -1;
         long h = ParseHex(m.Groups[2].Value);
@@ -93,7 +93,7 @@ static class ShaderService
         long sb = slots >= 0 && (slots >> 16) != 0 ? (slots >> 16) - 1 : tb;
         long o0 = h & 0x3fff, o1 = (h >> 14) & 0x3fff, ty = h >> 28;
         long[] words = ty != 0 ? new[] { o0, o1 } : new[] { o0 };
-        if (Regex.IsMatch(name, @"^[a-z]+_i"))
+        if (BudgetRegex.IsMatch(name, @"^[a-z]+_i"))
             return (words.Where(x => ImgBase <= x * 4 && x * 4 < TexBase && Slot(x, ImgBase, tb) != null).Select(x => Slot(x, ImgBase, tb)).FirstOrDefault(), null, ty);
         long? t = words.Where(x => Slot(x, TexBase, tb) != null && x * 4 < SampBase).Select(x => Slot(x, TexBase, tb)).FirstOrDefault();
         if (t == null)
@@ -104,11 +104,11 @@ static class ShaderService
 
     static long TexSlotOfName(string name)
     {
-        Match m = Regex.Match(name, @"^\w+_t_tcb_([0-9A-Fa-f]+)$");
+        Match m = BudgetRegex.Match(name, @"^\w+_t_tcb_([0-9A-Fa-f]+)$");
         return m.Success ? FloorDiv(ParseHex(m.Groups[1].Value) - 8, 2) : -1;
     }
 
-    static readonly Regex TexDecl = new(@"\b(?:texture\w+|depth\w+)<float>\s+(\w+)\s*\[\[id\(\d+\)\]\]");
+    static readonly BudgetRegex TexDecl = new(@"\b(?:texture\w+|depth\w+)<float>\s+(\w+)\s*\[\[id\(\d+\)\]\]");
 
     /// NVN texture slots of the textures the MSL samples with a depth compare (sample_compare / gather_compare): shadow
     /// maps. The game binds depth textures to all of a shader's compare slots or to none of them (1,248 and 126 of the
@@ -119,18 +119,19 @@ static class ShaderService
         string[] lines = src.Split('\n');
         foreach (Match m in TexDecl.Matches(src))
         {
+            NativeTranslationBudget.Check();
             string name = m.Groups[1].Value;
             long slot = TexSlotOfName(name);
             if (slot < 0) continue;
-            var use = new Regex(@"\b" + Regex.Escape(name) + @"\b");
+            var use = new BudgetRegex(@"\b" + BudgetRegex.Escape(name) + @"\b");
             if (lines.Any(line => use.IsMatch(line) && !line.Contains("[[id(", StringComparison.Ordinal) && line.Contains("_compare(", StringComparison.Ordinal)))
                 slots.Add(slot);
         }
         return slots;
     }
 
-    static readonly Regex AttrDecl = new(@"\b\w+\s+(\w+)\s*\[\[attribute\((\d+)\)\]\]");
-    static readonly Regex Ssa = new(@"\b_\d+\b");
+    static readonly BudgetRegex AttrDecl = new(@"\b\w+\s+(\w+)\s*\[\[attribute\((\d+)\)\]\]");
+    static readonly BudgetRegex Ssa = new(@"\b_\d+\b");
 
     /// location -> "uint" | "float" for every vertex input: "uint" when every value loaded from it is only ever bitcast to
     /// an integer, converted with int() / uint(), or used as an index (the game binds an integer vertex format there:
@@ -144,10 +145,12 @@ static class ShaderService
         var usedIn = new Dictionary<string, List<string>>();
         foreach (string line in lines)
         {
-            Match def = Regex.Match(line, @"^\s*\w+\s+(_\d+)\s*=");
+            NativeTranslationBudget.Check();
+            Match def = BudgetRegex.Match(line, @"^\s*\w+\s+(_\d+)\s*=");
             string defined = def.Success ? def.Groups[1].Value : null;
             foreach (Match t in Ssa.Matches(line))
             {
+            NativeTranslationBudget.Check();
                 if (t.Value == defined) continue;
                 if (!usedIn.TryGetValue(t.Value, out var l)) usedIn[t.Value] = l = new List<string>();
                 l.Add(line);
@@ -155,18 +158,21 @@ static class ShaderService
         }
         foreach (Match m in AttrDecl.Matches(src))
         {
+            NativeTranslationBudget.Check();
             string field = m.Groups[1].Value, loc = m.Groups[2].Value;
-            var load = new Regex(@"^\s*\w+\s+(_\d+)\s*=\s*(?:as_type<\w+>\()?in\." + field + @"\.[xyzw]\)?;\s*$");
-            var any = new Regex(@"\bin\." + field + @"\b");
+            var load = new BudgetRegex(@"^\s*\w+\s+(_\d+)\s*=\s*(?:as_type<\w+>\()?in\." + field + @"\.[xyzw]\)?;\s*$");
+            var any = new BudgetRegex(@"\bin\." + field + @"\b");
             bool intUse = false, floatUse = false;
             foreach (string line in lines)
             {
+            NativeTranslationBudget.Check();
                 Match l = load.Match(line);
                 if (!l.Success) { if (any.IsMatch(line) && !line.Contains("[[attribute(", StringComparison.Ordinal)) floatUse = true; continue; }
                 string v = l.Groups[1].Value;
-                var intPat = new Regex(@"as_type<u?int>\(" + v + @"\)|\bu?int\(" + v + @"\)|\[" + v + @"\]");
+                var intPat = new BudgetRegex(@"as_type<u?int>\(" + v + @"\)|\bu?int\(" + v + @"\)|\[" + v + @"\]");
                 if (usedIn.TryGetValue(v, out var uses))
-                    foreach (string u in uses) { if (intPat.IsMatch(u)) intUse = true; else floatUse = true; }
+                    foreach (string u in uses) {
+            NativeTranslationBudget.Check(); if (intPat.IsMatch(u)) intUse = true; else floatUse = true; }
             }
             result[loc] = intUse && !floatUse ? "uint" : "float";
         }
@@ -176,15 +182,17 @@ static class ShaderService
     static int CloseParen(string src, int i)   // index just past the ')' closing a call whose '(' ends at i (or src.Length)
     {
         int depth = 1;
-        while (i < src.Length && depth != 0) { depth += src[i] == '(' ? 1 : src[i] == ')' ? -1 : 0; i++; }
+        while (i < src.Length && depth != 0) {
+            NativeTranslationBudget.Check(); depth += src[i] == '(' ? 1 : src[i] == ')' ? -1 : 0; i++; }
         return depth == 0 ? i : -i - 1;
     }
 
     static string RewriteDepthTextures(string src, HashSet<long> depthSlots)
     {
         var names = new List<(string ty, string name)>();
-        foreach (Match m in Regex.Matches(src, @"\b(texture\w+)<float>\s+(\w+)\s*\[\[id\((\d+)\)\]\]"))
+        foreach (Match m in BudgetRegex.Matches(src, @"\b(texture\w+)<float>\s+(\w+)\s*\[\[id\((\d+)\)\]\]"))
         {
+            NativeTranslationBudget.Check();
             string ty = m.Groups[1].Value, name = m.Groups[2].Value;
             if (!depthSlots.Contains(TexSlotOfName(name))) continue;
             if (!DepthTypes.ContainsKey(ty)) throw new RuntimeError($"depth texture {name} declared as {ty}: no depth equivalent");
@@ -192,28 +200,31 @@ static class ShaderService
         }
         foreach (var (ty, name) in names)
         {
+            NativeTranslationBudget.Check();
             string decl = DepthTypes[ty] + "<float> " + name;
-            src = new Regex(@"\b" + ty + @"<float>\s+" + name + @"\b").Replace(src, _ => decl, 1);
+            src = new BudgetRegex(@"\b" + ty + @"<float>\s+" + name + @"\b").Replace(src, _ => decl, 1);
             // compare sampling: spirv-cross casts the texture2d to depth2d itself; the declaration is now depth2d, drop the cast
-            src = Regex.Replace(src, @"spvDepthCast\(((?:\w+\.)*" + name + @")\)", m => m.Groups[1].Value);
+            src = BudgetRegex.Replace(src, @"spvDepthCast\(((?:\w+\.)*" + name + @")\)", m => m.Groups[1].Value);
             // depth2d.gather takes no component argument (only the depth component exists)
-            var gpat = new Regex(@"((?:\w+\.)*" + name + @")\.gather\(");
+            var gpat = new BudgetRegex(@"((?:\w+\.)*" + name + @")\.gather\(");
             int pos = 0;
             while (pos <= src.Length)
             {
+            NativeTranslationBudget.Check();
                 Match m = gpat.Match(src, pos);
                 if (!m.Success) break;
                 int end = m.Index + m.Length, c = CloseParen(src, end), i = c >= 0 ? c : -c - 1;
                 string call = Slice(src, end, i - 1);
-                if (Regex.IsMatch(call, @"component::[yzw]")) throw new RuntimeError($"gather of a non-x component on depth texture {name}");
-                string call2 = Regex.Replace(call, @",\s*component::x", "");
+                if (BudgetRegex.IsMatch(call, @"component::[yzw]")) throw new RuntimeError($"gather of a non-x component on depth texture {name}");
+                string call2 = BudgetRegex.Replace(call, @",\s*component::x", "");
                 src = src.Substring(0, end) + call2 + src.Substring(i - 1);
                 pos = end + call2.Length + 1;
             }
-            var pat = new Regex(@"((?:\w+\.)*" + name + @")\.(sample|read)\(");
+            var pat = new BudgetRegex(@"((?:\w+\.)*" + name + @")\.(sample|read)\(");
             pos = 0;
             while (pos <= src.Length)
             {
+            NativeTranslationBudget.Check();
                 Match m = pat.Match(src, pos);
                 if (!m.Success) break;
                 int start = m.Groups[1].Index, c = CloseParen(src, m.Index + m.Length);
@@ -240,8 +251,8 @@ static class ShaderService
     //  - Non-compare reads of a depth texture (totk_depth_fetch above): the game binds a trilinear sampler, and on the Switch
     //    the read lands on one texel; Metal blends neighbouring depths, which puts reconstructed positions in mid-air at
     //    object edges. These reads are point-sampled.
-    static readonly Regex D16Compare = new(@"(\.sample_compare\(spvDescriptorSet0\.[A-Za-z0-9_]+Smplr, [^,]+\.xy, uint\(rint\([^)]+\)\), )([^,]+)(, level)");
-    static readonly Regex DepthFetchSample = new(@"totk_depth_fetch\((spvDescriptorSet0\.[A-Za-z0-9_]+)\.sample\(spvDescriptorSet0\.[A-Za-z0-9_]+Smplr, ");
+    static readonly BudgetRegex D16Compare = new(@"(\.sample_compare\(spvDescriptorSet0\.[A-Za-z0-9_]+Smplr, [^,]+\.xy, uint\(rint\([^)]+\)\), )([^,]+)(, level)");
+    static readonly BudgetRegex DepthFetchSample = new(@"totk_depth_fetch\((spvDescriptorSet0\.[A-Za-z0-9_]+)\.sample\(spvDescriptorSet0\.[A-Za-z0-9_]+Smplr, ");
 
     static string MatchSwitchDepthSampling(string src)
     {
@@ -260,26 +271,27 @@ static class ShaderService
     static bool MslStoresThrough(string msl, string name)
     {
         if (msl.Contains($"&(*spvDescriptorSet0.{name})", StringComparison.Ordinal)) return true;
-        return Regex.IsMatch(msl, @"\(\*spvDescriptorSet0\." + Regex.Escape(name) + @"\)\._m0\[(?:[^\[\]]|\[[^\[\]]*\])*\](?:\.[xyzw]+)?\s*=(?!=)");
+        return BudgetRegex.IsMatch(msl, @"\(\*spvDescriptorSet0\." + BudgetRegex.Escape(name) + @"\)\._m0\[(?:[^\[\]]|\[[^\[\]]*\])*\](?:\.[xyzw]+)?\s*=(?!=)");
     }
 
     static JsonArray Reflect(string stage, string msl, JsonObject res)
     {
-        Match body = Regex.Match(msl, @"struct spvDescriptorSetBuffer0\s*\{(.*?)\};", RegexOptions.Singleline);
+        Match body = BudgetRegex.Match(msl, @"struct spvDescriptorSetBuffer0\s*\{(.*?)\};", RegexOptions.Singleline);
         var binds = new List<JsonObject>();
-        foreach (Match m in Regex.Matches(body.Success ? body.Groups[1].Value : "", @"^\s*(.+?)\s+(\w+)\s*\[\[id\((\d+)\)\]\];", RegexOptions.Multiline))
+        foreach (Match m in BudgetRegex.Matches(body.Success ? body.Groups[1].Value : "", @"^\s*(.+?)\s+(\w+)\s*\[\[id\((\d+)\)\]\];", RegexOptions.Multiline))
         {
+            NativeTranslationBudget.Check();
             string ty = m.Groups[1].Value.Trim(), nm = m.Groups[2].Value;
             var e = new JsonObject { ["msl_name"] = nm, ["msl_type"] = ty, ["arg_id"] = ParseInt(m.Groups[3].Value) };
             Match fm;
             if (nm == "support_buffer") e["kind"] = "support";
-            else if ((fm = Regex.Match(nm, @"^[a-z]+_c(\d+)\z")).Success)
+            else if ((fm = BudgetRegex.Match(nm, @"^[a-z]+_c(\d+)\z")).Success)
             {
                 long n = ParseInt(fm.Groups[1].Value);
                 if (3 <= n && n <= 16) { e["kind"] = "cbuf"; e["reg"] = n - 3; }
                 else { e["kind"] = n == 1 ? "c1" : "drvcb"; e["bank"] = n; }
             }
-            else if ((fm = Regex.Match(nm, @"^[a-z]+_s(\d+)\z")).Success) { e["kind"] = "sbuf"; e["index"] = ParseInt(fm.Groups[1].Value); }
+            else if ((fm = BudgetRegex.Match(nm, @"^[a-z]+_s(\d+)\z")).Success) { e["kind"] = "sbuf"; e["index"] = ParseInt(fm.Groups[1].Value); }
             else if (nm.EndsWith("Smplr", StringComparison.Ordinal))
             {
                 var d = DecodeTex(nm.Substring(0, nm.Length - 5)) ?? throw new RuntimeError($"sampler {nm}: no texture handle in the name");
@@ -289,7 +301,7 @@ static class ShaderService
             {
                 var d = DecodeTex(nm);
                 if (d == null) e["kind"] = "?";
-                else { e["kind"] = Regex.IsMatch(nm, @"^[a-z]+_i") ? "img" : (ty.Contains("texture_buffer") ? "tbuf" : "tex"); e["reg"] = Num(d.Value.t); }
+                else { e["kind"] = BudgetRegex.IsMatch(nm, @"^[a-z]+_i") ? "img" : (ty.Contains("texture_buffer") ? "tbuf" : "tex"); e["reg"] = Num(d.Value.t); }
             }
             binds.Add(e);
         }
@@ -297,6 +309,7 @@ static class ShaderService
         List<JsonObject> sbSorted = res["sbufs"].AsArray().Select(b => b.AsObject()).OrderBy(b => Long(b["binding"])).ToList();   // stable, as sorted()
         foreach (JsonObject e in binds)
         {
+            NativeTranslationBudget.Check();
             if ((string)e["kind"] != "sbuf") continue;
             long index = Long(e["index"]);
             JsonObject b = index < sbSorted.Count ? sbSorted[(int)index] : null;
@@ -321,9 +334,11 @@ static class ShaderService
         var dr = new JsonObject();
         foreach (int bank in new[] { 0, 2 })
         {
+            NativeTranslationBudget.Check();
             var offs = new SortedSet<long>(); bool dyn = false;
-            foreach (Match m in Regex.Matches(src, StagePrefix[stage] + "_c" + bank.ToString(CultureInfo.InvariantCulture) + @"\)\._m0\[([^\]]+)\]"))
+            foreach (Match m in BudgetRegex.Matches(src, StagePrefix[stage] + "_c" + bank.ToString(CultureInfo.InvariantCulture) + @"\)\._m0\[([^\]]+)\]"))
             {
+            NativeTranslationBudget.Check();
                 string idx = m.Groups[1].Value.TrimEnd('u');
                 if (idx.Length > 0 && idx.All(c => c >= '0' && c <= '9')) offs.Add(ParseInt(idx) * 16); else dyn = true;
             }
@@ -338,12 +353,14 @@ static class ShaderService
         var bad = new JsonArray();
         foreach (var kv in dr)
         {
+            NativeTranslationBudget.Check();
             JsonObject d = kv.Value.AsObject();
             if ((bool)d["dynamic"]) bad.Add((JsonNode)$"c{kv.Key} dynamic index");
             long bank = ParseInt(kv.Key);
             var ranges = bank == 2 ? DrvFillC2 : bank == 0 ? DrvFillC0[stage] : Array.Empty<(long lo, long hi)>();
             foreach (JsonNode o in d["vec4_offsets"].AsArray())
             {
+            NativeTranslationBudget.Check();
                 long ov = Long(o);
                 if (!ranges.Any(r => r.lo <= ov && ov < r.hi)) bad.Add((JsonNode)$"c{kv.Key}+0x{ov.ToString("x", CultureInfo.InvariantCulture)}");
             }
@@ -365,6 +382,7 @@ static class ShaderService
 
     static (byte[] spirv, JsonObject reflection) TranslateCore(JsonObject job, byte[] code, bool bounded)
     {
+        if(bounded)NativeTranslationBudget.Check();
         try { return SwshXlate.TranslateBytes(job, code, bounded); }
         catch (Exception e) when (!bounded) {
             // Preserve the executable service's existing translator diagnostics.
@@ -377,6 +395,7 @@ static class ShaderService
     internal static (byte[] spirv, string metal, string reflection, JsonObject rawReflection) TranslateBytes(JsonObject rq, byte[] code,
         string chain, bool debug, Func<byte[], string> cross, bool bounded = false)
     {
+        if(bounded)NativeTranslationBudget.Check();
         string variant = (string)rq["variant"], stage = (string)rq["stage"];
         if (stage != "vs" && stage != "ps" && stage != "cs") throw new RuntimeError($"stage {stage} not supported by the translation chain");
         if (stage == "cs" && !Truthy(Get(rq, "local"))) throw new RuntimeError("compute shader without thread group size");
@@ -391,6 +410,7 @@ static class ShaderService
         var translated = TranslateCore(job, code, bounded);
         JsonObject res = translated.reflection;
         string src = cross(translated.spirv);
+        if(bounded)NativeTranslationBudget.Check(1,0,checked((ulong)src.Length*2));
         JsonObject tex = GetObj(rq, "tex"), img = GetObj(rq, "img"), attr = GetObj(rq, "attr"), fout = GetObj(rq, "fout");
         // Vertex inputs the request leaves unanswered (the prepared seed answers none) are typed by their use: an input
         // the code only ever bitcasts to an integer or indexes with is an integer attribute (shader_variants.md). The
@@ -423,33 +443,36 @@ static class ShaderService
         if (depthSlots.Count > 0)
             src = RewriteDepthTextures(src, depthSlots);
         src = MatchSwitchDepthSampling(src);
-        Match entry = Regex.Match(src, @"(vertex|fragment|kernel)\s+\S+\s+(\w+)\s*\(");
+        Match entry = BudgetRegex.Match(src, @"(vertex|fragment|kernel)\s+\S+\s+(\w+)\s*\(");
         JsonObject dr = DrvReads(src, stage);
         JsonArray unfillable = Unfillable(dr, stage);
-        var vertexInputs = new JsonArray(Regex.Matches(src, @"(\w+)\s+\w+\s*\[\[attribute\((\d+)\)\]\]")
+        var vertexInputs = new JsonArray(BudgetRegex.Matches(src, @"(\w+)\s+\w+\s*\[\[attribute\((\d+)\)\]\]")
             .Select(m => (JsonNode)new JsonObject { ["location"] = ParseInt(m.Groups[2].Value), ["msl_type"] = m.Groups[1].Value }).ToArray());
-        Match outStruct = Regex.Match(src, @"struct main0_out\s*\{(.*?)\};", RegexOptions.Singleline);
-        var colors = new SortedSet<long>(Regex.Matches(outStruct.Success ? outStruct.Groups[1].Value : "", @"\[\[color\((\d+)\)\]\]").Select(m => ParseInt(m.Groups[1].Value)));
+        Match outStruct = BudgetRegex.Match(src, @"struct main0_out\s*\{(.*?)\};", RegexOptions.Singleline);
+        var colors = new SortedSet<long>(BudgetRegex.Matches(outStruct.Success ? outStruct.Groups[1].Value : "", @"\[\[color\((\d+)\)\]\]").Select(m => ParseInt(m.Groups[1].Value)));
         // Answers this translation depends on: queried texture / image slots, consumed vertex inputs, written colour outputs.
         // A texture slot the MSL binds without having queried its kind takes that kind from the sampling instruction, so
         // only whether a depth-format texture sits there changes the MSL: "*" (any colour texture) or "*_depth"
         // (docs/shader-variants.md).
-        var usedSlots = new HashSet<long>(Regex.Matches(src, @"\b(texture\w+|depth\w+)<float>\s+(\w+)\s*\[\[id\(\d+\)\]\]").Select(m => TexSlotOfName(m.Groups[2].Value)));
+        var usedSlots = new HashSet<long>(BudgetRegex.Matches(src, @"\b(texture\w+|depth\w+)<float>\s+(\w+)\s*\[\[id\(\d+\)\]\]").Select(m => TexSlotOfName(m.Groups[2].Value)));
         usedSlots.Remove(-1);
         var deps = new JsonObject { ["tex"] = new JsonObject(), ["img"] = new JsonObject(), ["attr"] = new JsonObject(), ["fout"] = new JsonObject() };
         IEnumerable<long> Ints(string key) => res.TryGetPropertyValue(key, out JsonNode a) && a is JsonArray arr ? arr.Select(Long) : Enumerable.Empty<long>();
         var queried = new HashSet<long>(Ints("tex_queried"));
         foreach (long s in new SortedSet<long>(queried.Concat(usedSlots)))
         {
+            NativeTranslationBudget.Check();
             string slot = s.ToString(CultureInfo.InvariantCulture);
             deps["tex"][slot] = queried.Contains(s) ? GetOr(tex, slot, "2d") : depthSlots.Contains(s) ? "*_depth" : "*";
         }
         foreach (long s in Ints("img_queried"))
             deps["img"][s.ToString(CultureInfo.InvariantCulture)] = GetOr(img, s.ToString(CultureInfo.InvariantCulture), new JsonObject());
         if (stage == "vs")   // the answered type, or the one inferred from the code (job["attr"] holds both)
-            foreach (JsonNode v in vertexInputs) { string loc = Long(v["location"]).ToString(CultureInfo.InvariantCulture); deps["attr"][loc] = GetOr(job["attr"].AsObject(), loc, "float"); }
+            foreach (JsonNode v in vertexInputs) {
+            NativeTranslationBudget.Check(); string loc = Long(v["location"]).ToString(CultureInfo.InvariantCulture); deps["attr"][loc] = GetOr(job["attr"].AsObject(), loc, "float"); }
         if (stage == "ps")
-            foreach (long c in colors) { string k = c.ToString(CultureInfo.InvariantCulture); deps["fout"][k] = GetOr(fout, k, "float"); }
+            foreach (long c in colors) {
+            NativeTranslationBudget.Check(); string k = c.ToString(CultureInfo.InvariantCulture); deps["fout"][k] = GetOr(fout, k, "float"); }
         var refl = new JsonObject
         {
             ["key"] = variant + "_b", ["route"] = "B", ["chain"] = chain, ["stage"] = stage,
@@ -499,6 +522,7 @@ static class ShaderService
                 int i = 0;
                 foreach (var kv in o)
                 {
+            NativeTranslationBudget.Check();
                     if (i++ > 0) sb.Append(indent < 0 ? ", " : ",");
                     if (indent >= 0) sb.Append('\n').Append(' ', indent * (level + 1));
                     PyStr(sb, kv.Key, ascii); sb.Append(": "); PyJson(sb, kv.Value, indent, ascii, level + 1);
@@ -510,6 +534,7 @@ static class ShaderService
                 sb.Append('[');
                 for (int j = 0; j < a.Count; j++)
                 {
+            NativeTranslationBudget.Check();
                     if (j > 0) sb.Append(indent < 0 ? ", " : ",");
                     if (indent >= 0) sb.Append('\n').Append(' ', indent * (level + 1));
                     PyJson(sb, a[j], indent, ascii, level + 1);
@@ -537,6 +562,7 @@ static class ShaderService
         sb.Append('"');
         foreach (char c in s)
         {
+            NativeTranslationBudget.Check();
             switch (c)
             {
                 case '"': sb.Append("\\\""); break;
@@ -562,6 +588,7 @@ static class ShaderService
         debugMode = string.IsNullOrEmpty(dm) ? 1 : (int)ParseInt(dm.Trim());
         for (int i = 1; i < args.Length; i++)
         {
+            NativeTranslationBudget.Check();
             string v = i + 1 < args.Length ? args[i + 1] : null;
             switch (args[i])
             {
@@ -582,6 +609,7 @@ static class ShaderService
         string line;
         while ((line = Console.In.ReadLine()) != null)
         {
+            NativeTranslationBudget.Check();
             if (line.Trim().Length == 0) continue;
             string reply;
             try

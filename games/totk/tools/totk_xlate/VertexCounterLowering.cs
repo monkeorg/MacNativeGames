@@ -26,6 +26,9 @@ static class VertexCounterLowering
         int ballots = 0, loads = 0;
         for (int i = 5; i < w.Length; i += (int)(w[i] >> 16))
         {
+            NativeTranslationBudget.Check();
+            int count=(int)(w[i]>>16);
+            if(count<1 || count>w.Length-i)throw new InvalidOperationException("counter instruction bounds");
             uint op = w[i] & 65535;
             if (op == 71 && w[i + 2] == 11 && w[i + 3] == 41) lane = w[i + 1]; // BuiltIn SubgroupLocalInvocationId
             if (op == 21 && w[i + 2] == 32 && w[i + 3] == 0) uintType = w[i + 1];
@@ -39,6 +42,9 @@ static class VertexCounterLowering
         bool constants = false;
         for (int i = 5; i < w.Length; i += (int)(w[i] >> 16))
         {
+            NativeTranslationBudget.Check();
+            int count=(int)(w[i]>>16);
+            if(count<1 || count>w.Length-i)throw new InvalidOperationException("counter instruction bounds");
             uint op = w[i] & 65535;
             if (op == 54 && !constants)
             {

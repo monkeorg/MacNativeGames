@@ -1,0 +1,197 @@
+{
+  "patches": [
+    {
+      "after": {
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs": "0032b691fb09f92ac554d901f69fdd74200a6bc7856468c6b94f16d79507c295"
+      },
+      "before": {
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs": "b47548ab49a5a9fb57c363f4afae2018d96d09f14f728fbd3e4e2c25ef6d846c"
+      },
+      "patch": "0001-keep-call-arguments-in-variables.patch",
+      "sha256": "246a50e4b0151a945fbae6146d847f88a7375be442ae2c89372ef07df1c782e1"
+    },
+    {
+      "after": {
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/Optimizer.cs": "e26d1e133e118474988d1fb4aa4989465f38c3d6f86e7f644970f3c900157c55"
+      },
+      "before": {
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/Optimizer.cs": "f62b3b85ae627c138f33699405cfdef53224b5ff296e418f41af72e4aebb90e9"
+      },
+      "patch": "0002-keep-live-call-sources-when-removing-dead-node.patch",
+      "sha256": "2bb6529c1347e24fea3ed8cf4688353abaf8acf069c359a9ee66db929c1f6c58"
+    },
+    {
+      "after": {
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs": "a1a0eba87a53b04c376d21cdad02c2609c2992e3c2a60133e8924aef43adcb70"
+      },
+      "before": {
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs": "0032b691fb09f92ac554d901f69fdd74200a6bc7856468c6b94f16d79507c295"
+      },
+      "patch": "0003-keep-side-effect-assignments-in-the-ast-optimizer.patch",
+      "sha256": "e304f113e108656286ad5c02a92315a8927eca821842450a72a0d731acd75f62"
+    },
+    {
+      "after": {
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs": "56e7d01536e3d03c5f3de52a3a0b870212d97e385b13e172fcf8394af657e6a2"
+      },
+      "before": {
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs": "a1a0eba87a53b04c376d21cdad02c2609c2992e3c2a60133e8924aef43adcb70"
+      },
+      "patch": "0004-no-else-if-flattening.patch",
+      "sha256": "8fe6fe33aa30b10aeff74f7a3471a58ba655cac5db5fb28a14e528bc357e73a9"
+    },
+    {
+      "after": {
+        "src/Ryujinx.Graphics.Shader/Translation/Translator.cs": "f0dc80aef0cf7e1e4dfb436e39a25134feb85eb85481d5ace1bae61e6132eb5e"
+      },
+      "before": {
+        "src/Ryujinx.Graphics.Shader/Translation/Translator.cs": "66c413a2268b38faec700ff0b24df41decb81783c1b5afe7d8a1c290bb91b9ad"
+      },
+      "patch": "0005-initialize-vertex-outputs-without-a-next-stage.patch",
+      "sha256": "a4bdc2c952cbda960d71d4db53e397b9fe51a5e236dbad297f01f090f82e07d8"
+    },
+    {
+      "after": {
+        "src/Ryujinx.Common/Utilities/CanopyTranslationGuard.cs": "db2eab784d43bd81839187b71ea8191bff36b64034689643ab1560e1138e9544",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/CodeGenContext.cs": "9823974391237fca6315ee9201fdde9f56159e944af399c6ef917fc6d4cd39ba",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Declarations.cs": "56a0812ecf7e8f33d3178c3c735d0b1c07206378109ff71b3a49eefa934dfe82",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/GlslGenerator.cs": "4a47d601487391dcb9201c6c91bf1707a1e320269e7c990ab32a7662c320b902",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGen.cs": "20d260f659a39ce97ed12063d5ed90d2fde8a5056b71195df58691cc8d3a251e",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGenCall.cs": "6ca1a3c0675ede6f008f3883809adb6465faf52158685da6e3d6752a68ffa67c",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGenMemory.cs": "518ede10f4b9f7252b781360a21b816fe3f108b085f5959be54f194188fb9003",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Spirv/CodeGenContext.cs": "046dc83c2b22f5fd4951e057777c80345a3722594c27e75a069236de7f42e219",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Declarations.cs": "49909d71e6454cdbd84a2f470d7de9c7252ad55bc59bad054b2fe7d6e535abf8",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Instructions.cs": "4b4d04b08cc0b9fedcf233042b045156e2b2bb0fe40a3fe883e8f0d94751b2a7",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Spirv/SpirvGenerator.cs": "ce0e7d81719dee87a4343a04e1bc7c38de8181f1e0d2bf5b2ce2d67ec969a0e6",
+        "src/Ryujinx.Graphics.Shader/Decoders/Block.cs": "4bbfd204f9ed9de5966553e495903f6359e3e7c266837e55fb42d157ddd9c3ef",
+        "src/Ryujinx.Graphics.Shader/Decoders/Decoder.cs": "cdecf2f95497ba0e6792f6b2124bd301c89c935b5c0c140119ec1baa44c25f8f",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitAttribute.cs": "9a9806c129c1a07448fc4e1152b5f598d5c4606b883d107f0c151ad235d946a9",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitFloatArithmetic.cs": "aa26a6754c83fd87d8119ced014d5aa86805813985752fe54d2584646f9c29a9",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitFlowControl.cs": "1b2790d0f5a6869b6c3f648585de6baccca7ae80ba72e2a527445125ff8c04a7",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitHelper.cs": "3dcbd9d8be1c6f9f44928c097b44424d4f040f1aadc7c726cde64d7c27757df6",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs": "4525fd2b4d5674571754f0ceb1ea7803af665e2591b69606fcabcc5dbeb572e9",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitMove.cs": "05f78e4f3c9f2989f2792f0f937d26e375e0f58c7b40eb67d14f3667a5b10013",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitPredicate.cs": "ad349d17be9dee580fe15cb010770f32d225400982ae8e852d7d65d5bda7a122",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitSurface.cs": "75d9c75243fb40b1075400aa59cdfbb448dcf73e5be14e980c0168d02be91b0d",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitTexture.cs": "ac844dc7a923016378d87595c0fd7cbf816ad588bed1a591cfe405baf286ba9e",
+        "src/Ryujinx.Graphics.Shader/Instructions/Lop3Expression.cs": "75b59ac0908978f8c8366777149c094c0075a2184bcf9b8ef61866204aac7fc5",
+        "src/Ryujinx.Graphics.Shader/IntermediateRepresentation/BasicBlock.cs": "263a27cad6264788787b74cf4608870a8b682157d2e6e8f6bc5a4d71b702d67d",
+        "src/Ryujinx.Graphics.Shader/IntermediateRepresentation/Operand.cs": "d378f044b9df6984459e364225f6c785c804f41c56d594c4112e8f01c98d38e6",
+        "src/Ryujinx.Graphics.Shader/IntermediateRepresentation/Operation.cs": "d0f1e33b7cdb163a93f265cb4c7bff22352ce802332d94b2eccee3890a07006e",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstBlockVisitor.cs": "fc1ad18df43d7e37dc1681374be563ba4bcef57f95543630f8d269367a64c716",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstNode.cs": "27af6b8b50e7c85ead67637e1ca8e87017d3b3372c776a36480ff494e81db7c8",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOperation.cs": "f3aee3749d7af87823848b6677e04d506437663e4f95ce0d9f59ae5835098496",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs": "ff278cd98aee97bb71f596deba675f1892e2bebfdb0aac2818f20492efaba48f",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/GotoElimination.cs": "f9d6736feaa286a3714676d1dae283112dd593517aaa3c6afbb59635ff56500f",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/PhiFunctions.cs": "9e601212ea437a73f54a8a6f112bb5aa314776b1ca3330f71a1d1dbce49553f7",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs": "f94ddece3307a87fd07f8a06618cd03f204f94d3701e0ab8db4ca0b03a204695",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgramContext.cs": "0131e30e8c2a3e407ce54fa0a2150ae259f1df25cd31796db941ebb1b1510325",
+        "src/Ryujinx.Graphics.Shader/Translation/AttributeUsage.cs": "bebefcc64ebd8c038b8c48968760af743f1a96a6b5152c2a23417ae45dba28b9",
+        "src/Ryujinx.Graphics.Shader/Translation/ControlFlowGraph.cs": "651b6810fe50d90d42d921d96fac016ac009364d4782e11b01e455c8d03ceb3b",
+        "src/Ryujinx.Graphics.Shader/Translation/Dominance.cs": "2a465d0522dbd552ba403d4db0732ee8d53556e415355283e72fe1abe77afe8d",
+        "src/Ryujinx.Graphics.Shader/Translation/EmitterContext.cs": "0c86949c0a2a719658db37361638b645dd14beb2d8c453084c9b5afdef768279",
+        "src/Ryujinx.Graphics.Shader/Translation/FunctionMatch.cs": "86520938a832a52dd41ecc33318dceac9685733a603848360e5522bfeacc3a95",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessElimination.cs": "4fe2ed9f2b7f7a0ae7547315538ba0619c9472bbc1293786dd0f0cb0b102c05d",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessToArray.cs": "462ee6fdb2d3463339e2b611cdea29453b61fce94003ac17bb4cacd505805144",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/BranchElimination.cs": "fb58e86167fb4b13138e72e7eee8dc950c0009c17fa7fed799be9e6900f27247",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/ConstantFolding.cs": "c4e9920f7819c19c1e52225ae7f53fb2a587cf948365efddc6a75ccd49a8b1ae",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/DoubleToFloat.cs": "c7c091808412b0ac4a8ed3a8730a064441a31ec6e6f6e669232787840c5cfc42",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs": "55e1ed2421ee61af17105ee5d2502d67f088c7030160a0518d80b0583646cee0",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/Optimizer.cs": "13836776d9b9c1b42013a1b061b9ee97b60507e8a49f381ce1982fd18cc29bbf",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/Utils.cs": "9b7c2e5adb1a20fc0107fe084e9f81b9a443b0a269a00ae45e0883862d0e4cc2",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/XmadOptimizer.cs": "2b4e587e4f59e1298658e4e2839e5b39603b2ca45e20866c0c143cec9f69d325",
+        "src/Ryujinx.Graphics.Shader/Translation/RegisterUsage.cs": "91d0faa9a50b1ef7b34b6cf9de3d6c6b0d7160489de3d762cc5680d2956aa9e9",
+        "src/Ryujinx.Graphics.Shader/Translation/ResourceManager.cs": "3c36e7bb89410207e67eeef3cf74b647172c175a2d1947e0c318049226b1f997",
+        "src/Ryujinx.Graphics.Shader/Translation/ResourceReservations.cs": "d4467d2ce45403fdbbe02cee7c205cad469e1323f5e9335331eb4c13a1cdc6d3",
+        "src/Ryujinx.Graphics.Shader/Translation/ShaderDefinitions.cs": "0eb73ce3a78eb472748d340121092803623976d4eeba773db61ce1fa9e390caa",
+        "src/Ryujinx.Graphics.Shader/Translation/ShaderHeader.cs": "54733e0066865698c6dee73ddaca7331a10e964e6add56d7f839e9ac93c532a2",
+        "src/Ryujinx.Graphics.Shader/Translation/Ssa.cs": "c72a740763dd9430f1fd1ffc9b864bfa143ec54f2a3deb0f1275202be6f45450",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/DrawParametersReplace.cs": "ba915f59ca7f9331fa549eea58e7f14a3fc5e138ef5eaa790ca519082fcf6122",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/GeometryToCompute.cs": "c22640bb235f4cd1b0359e4107eb10695f3faaa51b526f20cabfd221c0653f59",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/TexturePass.cs": "7637957240acb698306d5e090733a454795ee9bf3b03d7a45dd574bd2809ba97",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/TransformPasses.cs": "8d67538e5b8395bbe36e657b70df9fec059390fe0fec2fde5c2025792b1240ad",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/VectorComponentSelect.cs": "62199c769d21611617e6cb0ec3773420a2b51bb0e302ae9537504673932bd7da",
+        "src/Ryujinx.Graphics.Shader/Translation/Translator.cs": "93297aad7b310258cb096f8454aea72932ece0c9c7875a35e39d6b4e93afaef4",
+        "src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs": "86e4414e7b664d611342249b62eb52d2180f6ca6166f8b32a8de6dc51ecbf811",
+        "src/Spv.Generator/DeterministicHashCode.cs": "dd9229c1adaabf367569d01e233e80da1733a1d528ebe93e1a646609d8c93dd2",
+        "src/Spv.Generator/GeneratorPool.cs": "861d89be4a2a8c1d3256d8a77743a4c23a70305acc42bb36d8de7bea6066b474",
+        "src/Spv.Generator/Instruction.cs": "7eae3e3b4b091ca2712346d89b36e8bb354beada8dfaf0b56d78f1cc06db4176",
+        "src/Spv.Generator/InstructionOperands.cs": "54676a7d6946306e6c43608d76f4599e5834c66323fb09cadece2bab446f164d",
+        "src/Spv.Generator/Module.cs": "869f5be95539b522a630bc19d73724adec5b38ec664109b24310979ba9747df5",
+        "src/Spv.Generator/Spv.Generator.csproj": "e280927045202219fae7b53ec5514f3c2203fd5cbba89472e87613159ee5528c"
+      },
+      "before": {
+        "src/Ryujinx.Common/Utilities/CanopyTranslationGuard.cs": null,
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/CodeGenContext.cs": "4743f8ffbbd5b3e94267540d8be41f235f18a023c112d10bdd87505b559df9ae",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Declarations.cs": "ffda44c54eb7c503b03d90aa9708c0f661b399fc2ce98f6af74bde307b372df0",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/GlslGenerator.cs": "b00e56eda18b8767da0c15c7f4abf57aa3d3a2883726cc8b6496124ee8d79791",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGen.cs": "8336af9df244ac7d674e16bfac337ccfba6f9394c036fac3499e1ac1a0876ab0",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGenCall.cs": "e97fe36de9c26a6143be7daac67e5f5c0552e14469b01d76d642c07a8e204e63",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGenMemory.cs": "d4daf05c591b97f414554976de39062bf38b997bd92bdb0eb2d6c90ff4ba50f9",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Spirv/CodeGenContext.cs": "db8a1b1b5e96daddf8c3f5f016a9044100684b75dde7a2ac4c710f78a033d0ac",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Declarations.cs": "63814353c4474f89624b327f464d6a417f2f73d512b3cb8f603c972da268f9d3",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Instructions.cs": "c89d71e97ac66986ead1f56c7b46d4da6f3e669596ba84d52df224e0788a9eea",
+        "src/Ryujinx.Graphics.Shader/CodeGen/Spirv/SpirvGenerator.cs": "44886a62e980a4193b9801c995a899e068979cc06b04ae866e2ce239d0d7964b",
+        "src/Ryujinx.Graphics.Shader/Decoders/Block.cs": "554b60321e3b5d09343ec3e7a3f7b0c516614cae128669489a7c01c32c896413",
+        "src/Ryujinx.Graphics.Shader/Decoders/Decoder.cs": "699049edb12f9042f0697d8b0b94e4683e00b83adac5b2c31c2088d1aca99dc2",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitAttribute.cs": "58948c48aa3abdef7f0ad5195acdfbf7df4e9e943f325bdf16d169499011637a",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitFloatArithmetic.cs": "1e4d554dc3c6f068e722033a375ce1de36d9b2b5cee56867dbb10b3e148096e5",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitFlowControl.cs": "a05a637abf3d7c41adfcfdb84bae8d3e9d58c51e04d8e82af18d56f21d49c401",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitHelper.cs": "2c7b3c3b0651d2232c9f1f2f126ca923ae5b898d0ac623c3a0d2c7a2f1503d02",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs": "5ad31e57c329960145e4d9681f1dbc15fcc4b3096382e436eb8f9831324301f2",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitMove.cs": "a25717209451d928fe7735503bc5512f146a4917b4e629e7ae2eff150926f7dc",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitPredicate.cs": "b7c0793484c997ef9e5324a6bec6651982a339d62666e48cfec238bb2dc57019",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitSurface.cs": "e62e8ece1cbda09e64f69baa17387cce48c3a724960bef63344c88b542b8e58f",
+        "src/Ryujinx.Graphics.Shader/Instructions/InstEmitTexture.cs": "54febdae0cff25561b3d96d72c10225ccb071f3c4831b73d615fb33ab0e42e14",
+        "src/Ryujinx.Graphics.Shader/Instructions/Lop3Expression.cs": "dad4962501e8048a8cd7da4799a56cac6e7d8aefe33452c2c00fa5e2f07feb06",
+        "src/Ryujinx.Graphics.Shader/IntermediateRepresentation/BasicBlock.cs": "282e347df3155609bf80e5bc612e7988845deeebf96bf2fd52694b6fbbc91eb9",
+        "src/Ryujinx.Graphics.Shader/IntermediateRepresentation/Operand.cs": "6d663e822235789cf7460fe6ae5532b1c2fd53346dfd7b53a0385b3e85880ab1",
+        "src/Ryujinx.Graphics.Shader/IntermediateRepresentation/Operation.cs": "a3a4a47a9fe8feb2c63fba8357d2aa0cf0dc090741c584fa2695bab77750aa8a",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstBlockVisitor.cs": "d380b838ec5ac585de4ed441c9ea5df5f2f742c6aa8f342e710dd7764be58a9c",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstNode.cs": "e08a57da34e2f841399ea1ff6494cea1ebea16ffb7f9e30e1351dba89d033ea3",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOperation.cs": "58630ed338ae2df8de55289d24e8469b5794d6088399d427d629446f82438f27",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs": "56e7d01536e3d03c5f3de52a3a0b870212d97e385b13e172fcf8394af657e6a2",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/GotoElimination.cs": "f1c96eeeb6c39a053331d09b19ccff6fef4a87496647f57f8d2a58d0dacc7131",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/PhiFunctions.cs": "6b8dbb1d780cd77eb9cda51fa98058c556bf20ea5a71b5c6b477c838b8fde688",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs": "38587893a0230f6729143aa9d897ca83998f9b185fd8faa155580392c2ad4f35",
+        "src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgramContext.cs": "80a14edaeacdb915e37115451361ca0353f917ff65d33b0604c638f80bba8983",
+        "src/Ryujinx.Graphics.Shader/Translation/AttributeUsage.cs": "0d4b6f35b79524a9c7e3e775cdb74005655b59eb9b8f99dbf8b6e03dd8e75259",
+        "src/Ryujinx.Graphics.Shader/Translation/ControlFlowGraph.cs": "a41e3f4e1b3fd45d3afd535f22a16d407c1337370fafc41e73cc407a3753fb2d",
+        "src/Ryujinx.Graphics.Shader/Translation/Dominance.cs": "3b27c330cdd5af10db5b027750be66e6a017951b0f0dc5e02e55109ace40a429",
+        "src/Ryujinx.Graphics.Shader/Translation/EmitterContext.cs": "09663ef32b645165d1603592f67e5ab41138f0f88ac249de070b3aa94f9f6cad",
+        "src/Ryujinx.Graphics.Shader/Translation/FunctionMatch.cs": "f5bb20c8bdb05d2f432de15908468bc2197a585339cc365940aea6b952d6357a",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessElimination.cs": "3606cd5892168d916152ad302947158355b3cf3aaef03945c774a1802ea7750a",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessToArray.cs": "b14c971e122e2d2d627d72cf3c5a2f2e791e494968d71694bdcf183098810d1c",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/BranchElimination.cs": "e5a9ec80e83514cee54ed07bb200c36f6bd1bf4c02a13d75e5b02164a727d212",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/ConstantFolding.cs": "b508b607d6d00f28df0a57e183905b6f7dd07769dadd2635ab6b1f255f1fca63",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/DoubleToFloat.cs": "225d08884b38b28031cd8ed270326ca44bb72b39ee0d3c317732662563a2647e",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs": "5264b335281028b1719250f83105a75912d32608b17367e049b62052a8bda86f",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/Optimizer.cs": "e26d1e133e118474988d1fb4aa4989465f38c3d6f86e7f644970f3c900157c55",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/Utils.cs": "9f2adc5fe85f799ca95b22aaf35b27a1a2cb5e310bf698abbd2aa615fcb4bff5",
+        "src/Ryujinx.Graphics.Shader/Translation/Optimizations/XmadOptimizer.cs": "e866ccfcf4cc89ef2f79f07b0f44803efafbab4313c05e5353c99d474ac4df95",
+        "src/Ryujinx.Graphics.Shader/Translation/RegisterUsage.cs": "5dfbeaf848eaf5c7e0471bec085c35730e2cf2e67dbd253f0cb853ff6c3e5f5e",
+        "src/Ryujinx.Graphics.Shader/Translation/ResourceManager.cs": "35f9da40216adcad512d49b00ed329e03d10c421a5ab10459808daa2902f2620",
+        "src/Ryujinx.Graphics.Shader/Translation/ResourceReservations.cs": "ae08a2f8dc9a5e26a883571b54d4582dbc3e6b2f1b12d6fa5c583f4d4f4b09a0",
+        "src/Ryujinx.Graphics.Shader/Translation/ShaderDefinitions.cs": "554c0565b1ef25089a93bf91fb8a176a3d08d7239e8a37a541ce897954a46c7b",
+        "src/Ryujinx.Graphics.Shader/Translation/ShaderHeader.cs": "0c8ba0600b5a557a29456170caf51b03ad953b5bbdebe65253dc673c01e111d0",
+        "src/Ryujinx.Graphics.Shader/Translation/Ssa.cs": "8533126b24070c555961bb72728ce5bba86ccf72b5d4bb7ef333b1736cf1449e",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/DrawParametersReplace.cs": "7332f163658fd1c3e13adc50237d207371972b733a6a5489dc7fbef01c14d269",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/GeometryToCompute.cs": "407ac0f6e450288b0fbeb2794c242cbbdd2eede862579a580e24f3a1289a98d2",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/TexturePass.cs": "f5925fe794e8ab02dc332c36fb583436d87a8630c98f7fa112e53972416625d2",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/TransformPasses.cs": "d433875bded694adff161c7c1d35a97715d7138062e1087faf8fd3c28ce49926",
+        "src/Ryujinx.Graphics.Shader/Translation/Transforms/VectorComponentSelect.cs": "3b58a57ee2c1eb6fdc4510325293e8af8ad229854d58061290a56fb7f62bde34",
+        "src/Ryujinx.Graphics.Shader/Translation/Translator.cs": "f0dc80aef0cf7e1e4dfb436e39a25134feb85eb85481d5ace1bae61e6132eb5e",
+        "src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs": "57e842a2b4519ad4dfdaf2aca60dbda0d6424aec2a13c13532c2db1ea390c3b1",
+        "src/Spv.Generator/DeterministicHashCode.cs": "14dba287fd4f951272fb45ae34e114bdedc049ccd425163e9f90b1deb6d63839",
+        "src/Spv.Generator/GeneratorPool.cs": "2dac758a500b67d5f9a526d488eda3708985c8d42a561226e13e83eb5cb9fd9c",
+        "src/Spv.Generator/Instruction.cs": "d7e3f93669ebc1f14168744fd4e7416dccefd828fc90463a94bf1d475f9f23bc",
+        "src/Spv.Generator/InstructionOperands.cs": "6c5c602e2ebc4d926050d61fc17aff653d858d58a8563a5a41d47df36ac1b748",
+        "src/Spv.Generator/Module.cs": "bcd13e6e535ba1e81c136c96a779d7f7b0d0728f4cc4939d56e86bcee16450e1",
+        "src/Spv.Generator/Spv.Generator.csproj": "12452e81253ca4c1c7fdbde30a2967fc76c5f86b9e3feb28a708d084a7d814e1"
+      },
+      "patch": "0006-native-resource-checkpoints.patch",
+      "sha256": "b7b3dd65fcee01b23165feb93e7295b69e668d882438d3ee6d78dcdc3dbe58cd"
+    }
+  ],
+  "schemaVersion": 1
+}
