@@ -55,6 +55,34 @@ class CanopyInstallTests(unittest.TestCase):
         root=self.store/'titles'/DLC/'generations'/report['generation'];self.assertEqual((root/'receipt.bin').read_bytes()[:8],b'CNPYST05')
         self.assertEqual(sorted(p.name for p in root.iterdir()),['.lease','manifest.json','receipt.bin','romfs.bin','runtime-index.bin'])
         self.assertEqual(len(report['job']),32);manifest=json.loads((root/'manifest.json').read_bytes());self.assertEqual(manifest['applicationID'],APP);self.assertEqual(manifest['preparedKind'],'addOn')
+        self.assertEqual(report['streamedBytes'],report['writtenBytes']);self.assertEqual(report['clonedLogicalBytes'],0)
+
+    def test_real_next_addon_revision_uses_only_verified_previous_addon_candidate(self):
+        previous=self.call('normal');self.assertEqual(previous['status'],0)
+        old=self.store/'titles'/DLC/'generations'/previous['generation']
+        before={p.name:(p.stat().st_ino,p.read_bytes()) for p in old.iterdir() if p.is_file()}
+        self.write_addon(version=24)
+        result=self.call('normal');self.assertEqual(result['status'],0);self.assertNotEqual(result['generation'],previous['generation'])
+        self.assertEqual(result['streamedBytes'],result['writtenBytes']+result['comparedEqualBytes']+result['resumedBytes'])
+        if result['clonedAssets']:
+            self.assertEqual(result['clonedAssets'],2);self.assertEqual(result['writtenBytes'],0)
+            self.assertEqual(result['clonedLogicalBytes'],result['streamedBytes'])
+        self.assertEqual(before,{p.name:(p.stat().st_ino,p.read_bytes()) for p in old.iterdir() if p.is_file()})
+
+    def test_existing_corrupt_addon_candidate_is_not_silently_treated_as_missing(self):
+        first=self.call('normal');self.assertEqual(first['status'],0)
+        image=self.store/'titles'/DLC/'generations'/first['generation']/'romfs.bin'
+        image.chmod(0o600);image.write_bytes(b'corrupt candidate')
+        current=(self.store/'titles'/DLC/'current').read_bytes();jobs=sorted((self.store/'jobs').iterdir())
+        self.write_addon(version=24);result=self.call('normal')
+        self.assertEqual(result['status'],5);self.assertFalse(result['commitAttempted'])
+        self.assertEqual((self.store/'titles'/DLC/'current').read_bytes(),current)
+        self.assertEqual(sorted((self.store/'jobs').iterdir()),jobs)
+
+    def test_existing_invalid_current_reference_is_not_optional_absence(self):
+        first=self.call('normal');self.assertEqual(first['status'],0)
+        current=self.store/'titles'/DLC/'current';current.write_bytes(b'invalid pointer\n')
+        self.assertEqual(self.call('normal')['status'],5);self.assertEqual(current.read_bytes(),b'invalid pointer\n')
     def test_real_empty_dlc_index_and_missing_file(self):
         from test_canopy_romfs import romfs
         self.write_addon(image=romfs()[0]);report=self.call('empty');self.assertEqual(report['status'],0);self.assertEqual(report['indexFiles'],0);self.assertTrue(report['mounted'] and report['read'])

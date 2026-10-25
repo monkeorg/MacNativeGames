@@ -10,6 +10,10 @@
 #define MNG_STORE_MAX_ASSETS 128u
 #define MNG_STORE_MAX_BYTES (UINT64_C(64) << 30)
 struct mng_store;
+struct mng_store_io_metrics {
+    uint64_t streamed_bytes,written_bytes,cloned_logical_bytes,compared_equal_bytes,resumed_bytes;
+    uint64_t cloned_assets,clone_fallback_assets;
+};
 /* root_fd is a caller-owned directory, owned by the current effective uid,
  * with no group/other permission bits (0700 or stricter). No ownership is transferred.
  * Holds an exclusive, nonblocking store lock until close. All paths below the
@@ -23,6 +27,25 @@ void mng_store_close(struct mng_store *store);
  * removes the callback but does not clear an already requested cancellation. */
 void mng_store_set_cancel_check(struct mng_store *store,
     int (*check)(void *context), void *context);
+/* Optional optimization, configured before begin. Fully verifies and pins the
+ * exact immutable source generation; errors never select an unverified source.
+ * (title0,generationNULL) clears it. Retained until clear/close. New commits must
+ * have the same title and canonical application owner. Missing candidates must
+ * be distinguished by callers from invalid existing candidates, never silently
+ * treating an integrity failure as absence. Same-path/same-size assets may use
+ * platform COW clone into NEW staging only. Unsupported clones stream normally;
+ * all incoming bytes and final staged assets are still hashed and verified. */
+/* Optional verified_source is furnished from the same complete verification
+ * that holds the retained lease; unchanged on failure. Calls are serialized. */
+enum mng_prepare_status mng_store_set_reuse_generation(struct mng_store *,uint64_t title_id,const char *generation_id,
+    struct mng_prepare_result *verified_source);
+/* Reset on begin; payload counters only, excluding metadata writes. Streamed
+ * counts successful sink writes; written counts actual successful write/pwrite
+ * bytes, including partial writes before failure. Cloned is logical snapshot
+ * length; compared_equal counts matching cloned spans whose writes were skipped.
+ * Resumed counts verified completed-job replay, not cross-generation reuse.
+ * None measures physical allocation, saved disk space or successful publication. */
+void mng_store_get_io_metrics(const struct mng_store *,struct mng_store_io_metrics *);
 /* Begin or resume one lowercase 32-hex job. Complete assets are revalidated;
  * incomplete writes are discarded. Replayed assets are hashed, not rewritten.
  * Cancellation is never reset by begin; reopen to resume a cancelled job. */
