@@ -464,6 +464,20 @@
       },
       "patch": "0041-tessellation-struct-vector-location-bounds.patch",
       "sha256": "3c26bdb75615198b495a1e9a9f01e65cf2dfbbb9025e708d5bb1d0a8a6ed6ff0"
+    },
+    {
+      "after": {
+        "spirv_common.hpp": "02e5d42b84f1e29704e431bc4408a057f31c1c9b0b354e769b0fdea85868357d",
+        "spirv_msl.cpp": "a705609da55ee4f5bc698c20bf6b433d92a0665d2b6526bd4b113185bdefc771",
+        "spirv_parser.cpp": "500e6ab2be7a83f7b93016fbe77fcbb91667c8f51245db97453c53158c57ec19"
+      },
+      "before": {
+        "spirv_common.hpp": "7dd3708d00caec7e87d5a6b01364758db3bb207d6c39446e708665616d81673a",
+        "spirv_msl.cpp": "b6910379fe3203344e2d33c202ae5d6d703925913b76bbe58576d99056e8599c",
+        "spirv_parser.cpp": "ad793162980bbaf372d570f1f7a5cd8f36645c5dc240a1dc1021d99ea86b8f84"
+      },
+      "patch": "0042-fixed-composite-caller-storage-preflight.patch",
+      "sha256": "1ccd1213643aa6333a68d530b2878ee58108b1b6f616df56cfb85ec68b28902c"
     }
   ],
   "schemaVersion": 1
