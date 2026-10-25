@@ -1,0 +1,177 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -2235,6 +2235,7 @@
+ 
+ uint32_t Compiler::evaluate_spec_constant_u32(const SPIRConstantOp &spec) const
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	auto &result_type = get<SPIRType>(spec.basetype);
+ 	if (result_type.basetype != SPIRType::UInt && result_type.basetype != SPIRType::Int &&
+ 	    result_type.basetype != SPIRType::Boolean)
+@@ -2245,6 +2246,53 @@
+ 
+ 	if (!is_scalar(result_type))
+ 		SPIRV_CROSS_THROW("Spec constant evaluation must be a scalar.\n");
++
++	size_t required_arguments = 0;
++	switch (spec.opcode)
++	{
++	case OpLogicalNot:
++	case OpNot:
++	case OpSNegate:
++		required_arguments = 1;
++		break;
++	case OpSelect:
++		required_arguments = 3;
++		break;
++	case OpIAdd:
++	case OpISub:
++	case OpIMul:
++	case OpBitwiseAnd:
++	case OpBitwiseOr:
++	case OpBitwiseXor:
++	case OpLogicalAnd:
++	case OpLogicalOr:
++	case OpShiftLeftLogical:
++	case OpShiftRightLogical:
++	case OpShiftRightArithmetic:
++	case OpLogicalEqual:
++	case OpLogicalNotEqual:
++	case OpIEqual:
++	case OpINotEqual:
++	case OpULessThan:
++	case OpULessThanEqual:
++	case OpUGreaterThan:
++	case OpUGreaterThanEqual:
++	case OpSLessThan:
++	case OpSLessThanEqual:
++	case OpSGreaterThan:
++	case OpSGreaterThanEqual:
++	case OpUMod:
++	case OpSRem:
++	case OpSMod:
++	case OpUDiv:
++	case OpSDiv:
++		required_arguments = 2;
++		break;
++	default:
++		SPIRV_CROSS_THROW("Unsupported spec constant opcode for evaluation.\n");
++	}
++	if (spec.arguments.size() != required_arguments)
++		SPIRV_CROSS_THROW("Invalid specialization constant operand count.\n");
+ 
+ 	uint32_t value = 0;
+ 
+@@ -2262,6 +2310,10 @@
+ 			return c->scalar();
+ 		else
+ 			return evaluate_spec_constant_u32(this->get<SPIRConstantOp>(id));
++	};
++
++	const auto signed32 = [](uint32_t bits) -> int64_t {
++		return bits >= 0x80000000u ? int64_t(bits) - 4294967296ll : int64_t(bits);
+ 	};
+ 
+ #define binary_spec_op(op, binary_op)                                              \
+@@ -2284,9 +2336,24 @@
+ 		binary_spec_op(BitwiseXor, ^);
+ 		binary_spec_op(LogicalAnd, &);
+ 		binary_spec_op(LogicalOr, |);
+-		binary_spec_op(ShiftLeftLogical, <<);
+-		binary_spec_op(ShiftRightLogical, >>);
+-		binary_spec_op_cast(ShiftRightArithmetic, >>, int32_t);
++	case OpShiftLeftLogical:
++	case OpShiftRightLogical:
++	case OpShiftRightArithmetic:
++	{
++		uint32_t a = eval_u32(spec.arguments[0]);
++		uint32_t b = eval_u32(spec.arguments[1]);
++		if (b >= 32)
++			SPIRV_CROSS_THROW("Specialization constant shift count is out of range.\n");
++		if (spec.opcode == OpShiftLeftLogical)
++			value = a << b;
++		else
++		{
++			value = a >> b;
++			if (spec.opcode == OpShiftRightArithmetic && (a & 0x80000000u) != 0)
++				value |= ~(uint32_t(0xffffffffu) >> b);
++		}
++		break;
++	}
+ 		binary_spec_op(LogicalEqual, ==);
+ 		binary_spec_op(LogicalNotEqual, !=);
+ 		binary_spec_op(IEqual, ==);
+@@ -2295,10 +2362,10 @@
+ 		binary_spec_op(ULessThanEqual, <=);
+ 		binary_spec_op(UGreaterThan, >);
+ 		binary_spec_op(UGreaterThanEqual, >=);
+-		binary_spec_op_cast(SLessThan, <, int32_t);
+-		binary_spec_op_cast(SLessThanEqual, <=, int32_t);
+-		binary_spec_op_cast(SGreaterThan, >, int32_t);
+-		binary_spec_op_cast(SGreaterThanEqual, >=, int32_t);
++		binary_spec_op_cast(SLessThan, <, signed32);
++		binary_spec_op_cast(SLessThanEqual, <=, signed32);
++		binary_spec_op_cast(SGreaterThan, >, signed32);
++		binary_spec_op_cast(SGreaterThanEqual, >=, signed32);
+ #undef binary_spec_op
+ #undef binary_spec_op_cast
+ 
+@@ -2311,7 +2378,7 @@
+ 		break;
+ 
+ 	case OpSNegate:
+-		value = uint32_t(-int32_t(eval_u32(spec.arguments[0])));
++		value = uint32_t(0) - eval_u32(spec.arguments[0]);
+ 		break;
+ 
+ 	case OpSelect:
+@@ -2330,18 +2397,18 @@
+ 
+ 	case OpSRem:
+ 	{
+-		auto a = int32_t(eval_u32(spec.arguments[0]));
+-		auto b = int32_t(eval_u32(spec.arguments[1]));
++		int64_t a = signed32(eval_u32(spec.arguments[0]));
++		int64_t b = signed32(eval_u32(spec.arguments[1]));
+ 		if (b == 0)
+ 			SPIRV_CROSS_THROW("Undefined behavior in SRem, b == 0.\n");
+-		value = a % b;
++		value = uint32_t(a % b);
+ 		break;
+ 	}
+ 
+ 	case OpSMod:
+ 	{
+-		auto a = int32_t(eval_u32(spec.arguments[0]));
+-		auto b = int32_t(eval_u32(spec.arguments[1]));
++		int64_t a = signed32(eval_u32(spec.arguments[0]));
++		int64_t b = signed32(eval_u32(spec.arguments[1]));
+ 		if (b == 0)
+ 			SPIRV_CROSS_THROW("Undefined behavior in SMod, b == 0.\n");
+ 		auto v = a % b;
+@@ -2349,7 +2416,7 @@
+ 		// Makes sure we match the sign of b, not a.
+ 		if ((b < 0 && v > 0) || (b > 0 && v < 0))
+ 			v += b;
+-		value = v;
++		value = uint32_t(v);
+ 		break;
+ 	}
+ 
+@@ -2365,11 +2432,13 @@
+ 
+ 	case OpSDiv:
+ 	{
+-		auto a = int32_t(eval_u32(spec.arguments[0]));
+-		auto b = int32_t(eval_u32(spec.arguments[1]));
++		int64_t a = signed32(eval_u32(spec.arguments[0]));
++		int64_t b = signed32(eval_u32(spec.arguments[1]));
+ 		if (b == 0)
+ 			SPIRV_CROSS_THROW("Undefined behavior in SDiv, b == 0.\n");
+-		value = a / b;
++		if (a == -2147483648ll && b == -1)
++			SPIRV_CROSS_THROW("Undefined behavior in SDiv, signed overflow.\n");
++		value = uint32_t(a / b);
+ 		break;
+ 	}
+ 
