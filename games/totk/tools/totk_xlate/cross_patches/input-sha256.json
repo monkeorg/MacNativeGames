@@ -454,6 +454,16 @@
       },
       "patch": "0040-null-constant-helper-delegation.patch",
       "sha256": "067865a1d9ec0a98a85827b89d526e8ebf1adfb73ce79b4348c1b1fed0b0b3f2"
+    },
+    {
+      "after": {
+        "spirv_msl.cpp": "b6910379fe3203344e2d33c202ae5d6d703925913b76bbe58576d99056e8599c"
+      },
+      "before": {
+        "spirv_msl.cpp": "59c149849bfefab36a1c0e7dcfe549259e8ff90173dc67f22774333a4c5b9d83"
+      },
+      "patch": "0041-tessellation-struct-vector-location-bounds.patch",
+      "sha256": "3c26bdb75615198b495a1e9a9f01e65cf2dfbbb9025e708d5bb1d0a8a6ed6ff0"
     }
   ],
   "schemaVersion": 1
