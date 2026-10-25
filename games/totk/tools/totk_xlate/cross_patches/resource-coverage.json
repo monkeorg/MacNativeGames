@@ -809,6 +809,9 @@
     "StringStream append/allocation/final copy",
     "ParsedIR null-constant requested reference slots for temporary plus subconstants (logical charges before noexcept constructors, not actual capacity/heap guarantees)"
   ],
+  "explicitOperandAdmission": [
+    "Parser closed source-access minimums for38 supported type/constant/Undef opcodes before dispatch after ignored trailing-op handling; conditional wide scalar literal second word and Float8 encoding checked before access. Extra/optional operands and aggregate/long-vector/replicated routes retained; not full grammar, ID, string, function/control-flow or image operand-mask validation."
+  ],
   "explicitOwnership": [
     "Parser direct raw-ID self-alias refusal before source lookup and Variant replacement for OpTypeArray/RuntimeArray/Pointer only; UntypedPointer and distinct-pointee forward resolution unchanged, not a global ID/redefinition validator"
   ],

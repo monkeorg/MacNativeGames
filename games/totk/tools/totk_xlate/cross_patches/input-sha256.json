@@ -488,6 +488,16 @@
       },
       "patch": "0043-tessellation-access-chain-bounds.patch",
       "sha256": "b9aa05c886abec62a08910462b4e35ae73f0d5540f2bff8ae81f4b3c565da2ac"
+    },
+    {
+      "after": {
+        "spirv_parser.cpp": "ccb1e00019c5cda07f3b1932edac4551f14fb531eb73e4bcb4192ab2ec27735d"
+      },
+      "before": {
+        "spirv_parser.cpp": "500e6ab2be7a83f7b93016fbe77fcbb91667c8f51245db97453c53158c57ec19"
+      },
+      "patch": "0044-parser-declaration-constant-operand-admission.patch",
+      "sha256": "f8ae8c5d93f70acc1693b911e036f9383524d2c0eff5f27059ef093441e2aa0c"
     }
   ],
   "schemaVersion": 1
