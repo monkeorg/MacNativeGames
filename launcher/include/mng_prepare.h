@@ -54,6 +54,10 @@ struct mng_prepare_result {
     uint64_t source_member_bytes;
     uint32_t source_member_count;
     int asset_hashes_verified, romfs_structure_verified;
+    /* Full-install add-on metadata (role0x82), separate from base/update data.
+     * Zero for every v1-v4 generation. No mount/execute authority is inferred. */
+    uint32_t addon_required_application_version;
+    unsigned char addon_cnmt_sha256[32];
 };
 /* Native NCA3/key-area or common-ticket AES-CTR, checked ExeFS and IVFC.
  * No game compatibility/execution is inferred. Caller passes empty result. */

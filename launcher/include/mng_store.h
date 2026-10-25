@@ -6,6 +6,7 @@
 #define MNG_STORE_RECIPE_V2 "canopy-assets-v2"
 #define MNG_STORE_RECIPE_V3 "canopy-assets-v3"
 #define MNG_STORE_RECIPE_V4 "canopy-assets-v4"
+#define MNG_STORE_RECIPE_V5 "canopy-assets-v5"
 #define MNG_STORE_MAX_ASSETS 128u
 #define MNG_STORE_MAX_BYTES (UINT64_C(64) << 30)
 struct mng_store;

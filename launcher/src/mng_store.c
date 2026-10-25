@@ -27,6 +27,7 @@
 #define HEADER_V2_BYTES 104u
 #define HEADER_V3_BYTES 160u
 #define HEADER_V4_BYTES 216u
+#define HEADER_V5_BYTES 144u
 #define MANIFEST_BYTES 32768u
 struct asset { char path[PATH_BYTES]; uint64_t size; unsigned char sha[32]; };
 struct mng_store {
@@ -69,7 +70,7 @@ static int leaf(const char *p) {
     return 1;
 }
 static int asset_path(const char *p) {
-    return p && (!strcmp(p,"romfs.bin") || !strcmp(p,"input-members.json") || (!strncmp(p,"exefs/",6) && leaf(p+6)));
+    return p && (!strcmp(p,"romfs.bin") || !strcmp(p,"runtime-index.bin") || !strcmp(p,"input-members.json") || (!strncmp(p,"exefs/",6) && leaf(p+6)));
 }
 static int same_path(const char *a, const char *b) {
     while (*a && *b) {
@@ -140,6 +141,16 @@ static void put32(unsigned char *p, uint32_t n) { for (unsigned i=0;i<4;i++) { p
 static uint32_t get32(const unsigned char *p) { uint32_t n=0; for (unsigned i=0;i<4;i++) n|=(uint32_t)p[i]<<(8*i); return n; }
 static int identity_valid(const struct mng_prepare_result *r) {
     static const unsigned char zero[32]={0};
+    if (r->content_role==0x82) {
+        return r->title_id && r->application_id && r->application_id!=r->title_id && r->version_identified==1 &&
+            r->source_size && r->source_size<=(UINT64_C(128)<<30) && memcmp(r->source_sha256,zero,32) &&
+            memcmp(r->addon_cnmt_sha256,zero,32) && r->exefs_verified==0 && r->romfs_verified==1 &&
+            !r->source_kind && !r->source_member_bytes && !r->source_member_count && !r->asset_hashes_verified &&
+            !r->romfs_structure_verified && !memcmp(r->member_inventory_sha256,zero,32) &&
+            !r->update_applied && !r->update_source_size && !r->patch_title_id && !r->base_title_version &&
+            !memcmp(r->update_source_sha256,zero,32);
+    }
+    if (r->addon_required_application_version || memcmp(r->addon_cnmt_sha256,zero,32)) return 0;
     if (r->source_kind) {
         if ((r->source_kind!=MNG_PREPARE_NCA_FOLDER && r->source_kind!=MNG_PREPARE_ASSET_FOLDER) ||
             !r->title_id || r->application_id!=r->title_id || r->source_size || memcmp(r->source_sha256,zero,32) ||
@@ -167,6 +178,7 @@ static int identity_valid(const struct mng_prepare_result *r) {
         (!r->application_id || r->application_id==r->title_id);
 }
 static const char *recipe_for(const struct mng_prepare_result *r) {
+    if (r->content_role==0x82) return MNG_STORE_RECIPE_V5;
     if (r->source_kind) return MNG_STORE_RECIPE_V4;
     if (r->update_applied) return MNG_STORE_RECIPE_V3;
     return r->version_identified ? MNG_STORE_RECIPE_V2:MNG_STORE_RECIPE;
@@ -207,13 +219,14 @@ static int hash_asset(int root, const struct asset *asset, struct mng_store *can
     mng_sha256_free(hash_state); close(fd); return bad==2 ? -2:bad ? -1:0;
 }
 static unsigned char *receipt(const struct asset *assets, size_t count, const struct mng_prepare_result *r, size_t *length) {
+    int addon=r && r->content_role==0x82;
     int folder=r && r->source_kind;
     int applied=r && r->update_applied;
     int identified=r && r->version_identified;
-    size_t header=folder ? HEADER_V4_BYTES:applied ? HEADER_V3_BYTES:identified ? HEADER_V2_BYTES:HEADER_BYTES;
+    size_t header=addon ? HEADER_V5_BYTES:folder ? HEADER_V4_BYTES:applied ? HEADER_V3_BYTES:identified ? HEADER_V2_BYTES:HEADER_BYTES;
     *length=header+count*RECORD_BYTES;
     unsigned char *data=calloc(1,*length); if (!data) return NULL;
-    memcpy(data,folder ? "CNPYST04":applied ? "CNPYST03":identified ? "CNPYST02":"CNPYST01",8); put64(data+24,count);
+    memcpy(data,addon ? "CNPYST05":folder ? "CNPYST04":applied ? "CNPYST03":identified ? "CNPYST02":"CNPYST01",8); put64(data+24,count);
     uint64_t total=0;
     for (size_t i=0;i<count;i++) {
         unsigned char *record=data+header+i*RECORD_BYTES;
@@ -232,6 +245,7 @@ static unsigned char *receipt(const struct asset *assets, size_t count, const st
             data[162]=(unsigned char)r->romfs_structure_verified; memcpy(data+168,r->member_inventory_sha256,32);
             put64(data+200,r->source_member_bytes); put32(data+208,r->source_member_count);
         }
+        if (addon) { put32(data+104,r->addon_required_application_version); memcpy(data+112,r->addon_cnmt_sha256,32); }
     }
     return data;
 }
@@ -247,16 +261,18 @@ static int load_receipt(int dir, struct asset *assets, size_t *count, struct mng
     if (!bad) bad=read_all(fd,data,(size_t)st.st_size);
     close(fd);
     if (bad) return -1;
+    int addon=!memcmp(data,"CNPYST05",8);
     int folder=!memcmp(data,"CNPYST04",8);
     int applied=!memcmp(data,"CNPYST03",8);
-    int identified=applied || !memcmp(data,"CNPYST02",8);
+    int identified=addon || applied || !memcmp(data,"CNPYST02",8);
     if (!folder && !identified && memcmp(data,"CNPYST01",8)) return -1;
-    size_t header=folder ? HEADER_V4_BYTES:applied ? HEADER_V3_BYTES:identified ? HEADER_V2_BYTES:HEADER_BYTES;
+    size_t header=addon ? HEADER_V5_BYTES:folder ? HEADER_V4_BYTES:applied ? HEADER_V3_BYTES:identified ? HEADER_V2_BYTES:HEADER_BYTES;
     uint64_t n=get64(data+24), total=0;
     if (n>MNG_STORE_MAX_ASSETS || header+n*RECORD_BYTES!=(uint64_t)st.st_size || data[72]>1 || data[73]>1) return -1;
     for (size_t i=74;i<HEADER_BYTES;i++) if (data[i]) return -1;
     if (identified || folder) {
         if (folder ? data[92]>1:data[92]!=1) return -1;
+        if (addon && data[93]!=0x82) return -1;
         for (size_t i=94;i<HEADER_V2_BYTES;i++) if (data[i]) return -1;
     }
     if (applied) {
@@ -269,6 +285,7 @@ static int load_receipt(int dir, struct asset *assets, size_t *count, struct mng
         for (size_t i=163;i<168;i++) if (data[i]) return -1;
         for (size_t i=212;i<HEADER_V4_BYTES;i++) if (data[i]) return -1;
     }
+    if (addon) for (size_t i=108;i<112;i++) if (data[i]) return -1;
     for (size_t i=0;i<(size_t)n;i++) {
         const unsigned char *record=data+header+i*RECORD_BYTES;
         if (!memchr(record,0,PATH_BYTES) || !asset_path((const char *)record)) return -1;
@@ -291,6 +308,7 @@ static int load_receipt(int dir, struct asset *assets, size_t *count, struct mng
         r->source_kind=data[160]; r->asset_hashes_verified=data[161]; r->romfs_structure_verified=data[162];
         memcpy(r->member_inventory_sha256,data+168,32); r->source_member_bytes=get64(data+200); r->source_member_count=get32(data+208);
     }
+    if (addon) { r->addon_required_application_version=get32(data+104); memcpy(r->addon_cnmt_sha256,data+112,32); }
     if (!identity_valid(r)) return -1;
     *count=(size_t)n;
     return 0;
@@ -319,9 +337,14 @@ static char *manifest(const struct asset *assets, size_t count, const struct mng
             r->title_id,gen,recipe_for(r),r->source_kind==MNG_PREPARE_NCA_FOLDER ? "nca-folder":"asset-folder",
             inventory,r->source_member_bytes,r->source_member_count);
     } else n=snprintf(json,MANIFEST_BYTES,"{\"schemaVersion\":%u,\"titleID\":\"%016" PRIx64 "\",\"generationID\":\"%s\",\"recipeID\":\"%s\",\"sourceSHA256\":\"%s\",\"sourceSize\":%" PRIu64,
-        r->update_applied ? 3u:r->version_identified ? 2u:1u,r->title_id,gen,recipe_for(r),sha,r->source_size);
+        r->content_role==0x82 ? 5u:r->update_applied ? 3u:r->version_identified ? 2u:1u,r->title_id,gen,recipe_for(r),sha,r->source_size);
     if (n<0 || (size_t)n>=MANIFEST_BYTES) { free(json); return NULL; }
     size_t used=(size_t)n;
+    if (r->content_role==0x82) {
+        char cnmt[65]; hex(r->addon_cnmt_sha256,32,cnmt);
+        n=snprintf(json+used,MANIFEST_BYTES-used,",\"preparedKind\":\"addOn\",\"requiredApplicationVersion\":%" PRIu32 ",\"cnmtSHA256\":\"%s\"",r->addon_required_application_version,cnmt);
+        if (n<0 || (size_t)n>=MANIFEST_BYTES-used) { free(json); return NULL; } used+=(size_t)n;
+    }
     if (r->version_identified) {
         n=snprintf(json+used,MANIFEST_BYTES-used,",\"applicationID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32 ",\"versionIdentified\":true,\"contentRole\":%u",
             r->application_id,r->title_version,(unsigned)r->content_role);
@@ -382,10 +405,10 @@ static int sweep_job(struct mng_store *s, int dir, int exefs) {
             char path[PATH_BYTES];
             if (exefs) { if (!leaf(name)) { bad=1; break; } strcpy(path,"exefs/"); strcat(path,name); }
             else { if (strlen(name)>=sizeof(path)) { bad=1; break; } strcpy(path,name); }
-            if (find_asset(s,path)<0 && (exefs || !strcmp(path,"romfs.bin") || !strcmp(path,"input-members.json") || !strcmp(path,".asset.tmp") ||
+            if (find_asset(s,path)<0 && (exefs || !strcmp(path,"romfs.bin") || !strcmp(path,"runtime-index.bin") || !strcmp(path,"input-members.json") || !strcmp(path,".asset.tmp") ||
                 !strcmp(path,".receipt.tmp") || !strcmp(path,".manifest.tmp") || !strcmp(path,"manifest.json") || !strcmp(path,".lease"))) {
                 if (safe_unlink(dir,name)) bad=1;
-            } else if (!exefs && strcmp(path,"receipt.bin") && strcmp(path,"romfs.bin") && strcmp(path,"input-members.json")) bad=1;
+            } else if (!exefs && strcmp(path,"receipt.bin") && strcmp(path,"romfs.bin") && strcmp(path,"runtime-index.bin") && strcmp(path,"input-members.json")) bad=1;
         }
         if (bad) break;
         errno=0;
@@ -523,18 +546,24 @@ enum mng_prepare_status mng_store_current(struct mng_store *s, uint64_t title, c
 }
 static int complete(const struct asset *assets, size_t count, const struct mng_prepare_result *r) {
     if (!r->title_id || r->asset_count!=count || !identity_valid(r)) return 0;
-    if (!r->source_kind && (!r->source_size || r->exefs_verified!=1 || r->romfs_verified!=1)) return 0;
-    uint64_t total=0; int main_found=0, metadata=0, romfs=0, inventory=0;
+    int addon=r->content_role==0x82;
+    if (!r->source_kind && (!r->source_size || (!addon && r->exefs_verified!=1) || r->romfs_verified!=1)) return 0;
+    uint64_t total=0; int main_found=0, metadata=0, romfs=0, inventory=0, runtime_index=0;
     for (size_t i=0;i<count;i++) { total+=assets[i].size;
         if (!strcmp(assets[i].path,"exefs/main")) main_found=1;
         if (!strcmp(assets[i].path,"exefs/main.npdm")) metadata=1;
-        if (!strcmp(assets[i].path,"romfs.bin")) romfs=1;
+        if (!strcmp(assets[i].path,"romfs.bin")) { if (addon && !assets[i].size) return 0; romfs=1; }
+        if (!strcmp(assets[i].path,"runtime-index.bin")) {
+            runtime_index=1;
+            if (!addon || assets[i].size<24 || assets[i].size>(34u<<20)) return 0;
+        }
         if (!strcmp(assets[i].path,"input-members.json")) {
             inventory=1;
             if (!r->source_kind || memcmp(assets[i].sha,r->member_inventory_sha256,32)) return 0;
         }
     }
-    return total==r->asset_bytes && main_found && metadata && romfs && (r->source_kind ? inventory:!inventory);
+    if (addon) return total==r->asset_bytes && count==2 && romfs && runtime_index && !inventory;
+    return total==r->asset_bytes && main_found && metadata && romfs && !runtime_index && (r->source_kind ? inventory:!inventory);
 }
 static int open_generation(struct mng_store *s, uint64_t title, const char *gen) {
     if (!title || !hex_valid(gen,64)) return -1;

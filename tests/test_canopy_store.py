@@ -13,6 +13,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 TITLE = '0100f2c0115b6000'
 OTHER = '01007ef00011e000'
+ADDON = '0100f2c0115b7001'
 
 
 class CanopyStoreTests(unittest.TestCase):
@@ -90,6 +91,71 @@ class CanopyStoreTests(unittest.TestCase):
         report = self.run_probe('folder_'+kind, job or self.job(), TITLE, 'A')
         self.assertEqual(report['status'], 0, report)
         return report['generation']
+
+    def addon(self, variant='invented-image', job=None):
+        report=self.run_probe('addon',job or self.job(),ADDON,variant)
+        self.assertEqual(report['status'],0,report)
+        return report['generation']
+
+    def test_addon_v5_receipt_binds_owner_cnmt_dependency_and_two_assets(self):
+        base=self.commit()
+        generation=self.addon()
+        root=self.generation(generation,ADDON)
+        receipt=(root/'receipt.bin').read_bytes()
+        self.assertEqual(receipt[:8],b'CNPYST05')
+        self.assertEqual(len(receipt),144+2*120)
+        self.assertEqual(struct.unpack_from('<I',receipt,104)[0],2)
+        self.assertEqual(receipt[108:112],b'\0'*4)
+        self.assertEqual(receipt[112:144],hashlib.sha256(b'meta').digest())
+        self.assertEqual(hashlib.sha256(b'canopy-assets-v5\0'+receipt).hexdigest(),generation)
+        manifest=json.loads((root/'manifest.json').read_text())
+        self.assertEqual((manifest['schemaVersion'],manifest['recipeID'],manifest['preparedKind']),
+                         (5,'canopy-assets-v5','addOn'))
+        self.assertEqual((manifest['titleID'],manifest['applicationID'],manifest['requiredApplicationVersion']),
+                         (ADDON,TITLE,2))
+        self.assertEqual([asset['path'] for asset in manifest['assets']],['romfs.bin','runtime-index.bin'])
+        self.assertIs(manifest['integrity']['exefsVerified'],False)
+        self.assertIs(manifest['integrity']['romfsVerified'],True)
+        self.assertIs(manifest['executionVerified'],False)
+        actual=self.run_probe('verify',ADDON,generation)
+        self.assertEqual((actual['status'],actual['applicationID'],actual['contentRole'],actual['addonRequiredApplicationVersion']),
+                         (0,TITLE,0x82,2))
+        self.assertEqual(actual['addonCNMTSHA256'],hashlib.sha256(b'meta').hexdigest())
+        self.assertEqual(self.run_probe('current',TITLE)['generation'],base)
+
+    def test_addon_invalid_metadata_never_replaces_current_or_base(self):
+        base=self.commit();current=self.addon()
+        for kind in ('owner_zero','owner_same','cnmt','source','version','exefs','chain','folder','update','legacy','missing_index'):
+            with self.subTest(kind=kind):
+                report=self.run_probe('invalid_addon_'+kind,self.job(),ADDON,'new-image')
+                self.assertNotEqual(report['status'],0,report)
+                self.assertEqual(self.run_probe('current',ADDON)['generation'],current)
+                self.assertEqual(self.run_probe('current',TITLE)['generation'],base)
+
+    def test_addon_cancelled_job_replays_both_assets_without_rewriting(self):
+        current=self.addon();job=self.job()
+        report=self.run_probe('addon_cancel',job,ADDON,'new-image')
+        self.assertEqual(report['status'],6,report)
+        stage=self.root/'jobs'/job
+        before={name:(stage/name).stat().st_ino for name in ('romfs.bin','runtime-index.bin')}
+        self.assertEqual(self.run_probe('current',ADDON)['generation'],current)
+        resumed=self.addon('new-image',job)
+        self.assertNotEqual(resumed,current)
+        for name,inode in before.items():self.assertEqual((self.generation(resumed,ADDON)/name).stat().st_ino,inode)
+
+    def test_addon_receipt_truncation_reserved_role_and_index_corruption_refused(self):
+        generation=self.addon();root=self.generation(generation,ADDON);path=root/'receipt.bin'
+        original=path.read_bytes()
+        variants=[original[:length] for length in (80,103,104,107,111,143,144,len(original)-1)]
+        for at in (92,93,108,109,110,111,112,143):
+            changed=bytearray(original);changed[at]^=1;variants.append(bytes(changed))
+        for data in variants:
+            with self.subTest(size=len(data)):
+                path.write_bytes(data)
+                self.assertNotEqual(self.run_probe('verify',ADDON,generation)['status'],0)
+        path.write_bytes(original)
+        index=root/'runtime-index.bin';index.chmod(0o600);index.write_bytes(b'X'+index.read_bytes()[1:])
+        self.assertNotEqual(self.run_probe('verify',ADDON,generation)['status'],0)
 
     def test_folder_receipt_binds_inventory_without_claiming_a_container_hash(self):
         for kind, tag, chain, structure in (('assets', 2, False, True), ('nca', 1, True, False)):

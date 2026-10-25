@@ -130,7 +130,41 @@ int main(int argc,char **argv) {
     if (!strcmp(argv[1],"hold")) {
         puts("ready"); fflush(stdout); (void)getchar(); mng_store_close(store); return 0;
     }
-    if (!strcmp(argv[1],"commit") || !strcmp(argv[1],"cancel") || !strcmp(argv[1],"badcount") ||
+    if (!strncmp(argv[1],"addon",5) || !strncmp(argv[1],"invalid_addon_",14)) {
+        if (argc!=6) return 2;
+        result.title_id=strtoull(argv[4],NULL,16);
+        status=mng_store_begin(store,argv[3]);
+        if (status==MNG_PREPARE_OK) {
+            struct mng_asset_sink sink=mng_store_sink(store);
+            const char *image=argv[5]; unsigned char index[24]={0},sha[32];memcpy(index,"TOTKRFS1",8);index[16]=24;
+            /* Store-only invented bytes: real producer/index validation is
+             * tested separately. This tests typed receipt and storage safety. */
+            int bad=asset(&sink,"romfs.bin",image);
+            if (!bad && strcmp(argv[1],"invalid_addon_missing_index")) {
+                bad=digest(index,sizeof(index),sha) || sink.begin(sink.context,"runtime-index.bin",sizeof(index)) ||
+                    sink.write(sink.context,index,sizeof(index)) || sink.end(sink.context,sha);
+            }
+            result.application_id=UINT64_C(0x0100f2c0115b6000);result.title_version=3;result.version_identified=1;
+            result.content_role=0x82;result.source_size=8;result.romfs_verified=1;
+            result.addon_required_application_version=2;
+            if (digest("invented",8,result.source_sha256) || digest("meta",4,result.addon_cnmt_sha256)) return 4;
+            result.asset_count=!strcmp(argv[1],"invalid_addon_missing_index") ? 1:2;
+            result.asset_bytes=strlen(image)+(result.asset_count==2 ? sizeof(index):0);
+            if (!strcmp(argv[1],"invalid_addon_owner_zero"))result.application_id=0;
+            if (!strcmp(argv[1],"invalid_addon_owner_same"))result.application_id=result.title_id;
+            if (!strcmp(argv[1],"invalid_addon_cnmt"))memset(result.addon_cnmt_sha256,0,32);
+            if (!strcmp(argv[1],"invalid_addon_source"))memset(result.source_sha256,0,32);
+            if (!strcmp(argv[1],"invalid_addon_version"))result.version_identified=0;
+            if (!strcmp(argv[1],"invalid_addon_exefs"))result.exefs_verified=1;
+            if (!strcmp(argv[1],"invalid_addon_chain"))result.romfs_verified=0;
+            if (!strcmp(argv[1],"invalid_addon_folder"))result.source_kind=1;
+            if (!strcmp(argv[1],"invalid_addon_update"))result.update_applied=1;
+            if (!strcmp(argv[1],"invalid_addon_legacy"))result.content_role=0x80;
+            if (!strcmp(argv[1],"addon_cancel"))mng_store_cancel(store);
+            status=bad ? MNG_PREPARE_IO:mng_store_commit(store,&result,generation);
+            if (status==MNG_PREPARE_OK)status=mng_store_verify(store,result.title_id,generation,&result);
+        }
+    } else if (!strcmp(argv[1],"commit") || !strcmp(argv[1],"cancel") || !strcmp(argv[1],"badcount") ||
         !strcmp(argv[1],"badbytes") || !strcmp(argv[1],"badflags") || !strcmp(argv[1],"inject") ||
         !strncmp(argv[1],"reuse_",6) || !strcmp(argv[1],"known") || !strcmp(argv[1],"known_cancel") ||
         !strcmp(argv[1],"legacy_inferred") || !strncmp(argv[1],"invalid_identity_",17) ||
@@ -307,18 +341,19 @@ int main(int argc,char **argv) {
         if (argc!=4) return 2;
         status=mng_store_discard_job(store,argv[3]);
     } else { mng_store_close(store); return 2; }
-    char base_sha[65],update_sha[65],inventory_sha[65]; hex_digest(result.source_sha256,base_sha); hex_digest(result.update_source_sha256,update_sha);
+    char base_sha[65],update_sha[65],inventory_sha[65],cnmt_sha[65]; hex_digest(result.source_sha256,base_sha); hex_digest(result.update_source_sha256,update_sha);
     hex_digest(result.member_inventory_sha256,inventory_sha);
+    hex_digest(result.addon_cnmt_sha256,cnmt_sha);
     printf("{\"status\":%u,\"generation\":\"%s\",\"assetCount\":%" PRIu64 ",\"assetBytes\":%" PRIu64
         ",\"applicationID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32 ",\"versionIdentified\":%s,\"contentRole\":%u"
         ",\"sourceSize\":%" PRIu64 ",\"sourceSHA256\":\"%s\",\"updateApplied\":%s,\"updateSourceSize\":%" PRIu64
         ",\"updateSourceSHA256\":\"%s\",\"patchTitleID\":\"%016" PRIx64 "\",\"baseTitleVersion\":%" PRIu32
         ",\"sourceKind\":%u,\"memberInventorySHA256\":\"%s\",\"sourceMemberBytes\":%" PRIu64 ",\"sourceMemberCount\":%" PRIu32
-        ",\"assetHashesVerified\":%s,\"romfsStructureVerified\":%s}\n",
+        ",\"assetHashesVerified\":%s,\"romfsStructureVerified\":%s,\"addonRequiredApplicationVersion\":%" PRIu32 ",\"addonCNMTSHA256\":\"%s\"}\n",
         (unsigned)status,generation,result.asset_count,result.asset_bytes,result.application_id,result.title_version,
         result.version_identified ? "true":"false",(unsigned)result.content_role,result.source_size,base_sha,
         result.update_applied ? "true":"false",result.update_source_size,update_sha,result.patch_title_id,result.base_title_version,
         (unsigned)result.source_kind,inventory_sha,result.source_member_bytes,result.source_member_count,
-        result.asset_hashes_verified ? "true":"false",result.romfs_structure_verified ? "true":"false");
+        result.asset_hashes_verified ? "true":"false",result.romfs_structure_verified ? "true":"false",result.addon_required_application_version,cnmt_sha);
     mng_store_close(store); return 0;
 }
