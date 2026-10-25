@@ -148,6 +148,18 @@
       },
       "patch": "0012-type-location-count-bounds.patch",
       "sha256": "0808bf44c0e7f9fd9841408ce673cf75eec89a78063b2ad235484d2dc4b2d59b"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "8e7ebc81f8f18eb90bd39dd58dfd788c91b8b8f85fa2d1f0b8e87ae072b30243",
+        "spirv_glsl.cpp": "9f6284ea141e3b5e6b5e9871334223fb5b4b67cd9f3b53a00eb87160bf881023"
+      },
+      "before": {
+        "spirv_cross.cpp": "b7b61608459a70ef3c9029a71f1076732052220d3fdbb825e6f9dc7caf08b64e",
+        "spirv_glsl.cpp": "4f72b3bcabe54383ddada1a0d241cf7b6c9588cd879f2a0a753539d0e5ac6801"
+      },
+      "patch": "0013-traversal-wrapper-loop-checkpoints.patch",
+      "sha256": "2721d274d610d7d6f89f538ae8010211f2058f74e67ef5911a3ba1135eb7a9fa"
     }
   ],
   "schemaVersion": 1
