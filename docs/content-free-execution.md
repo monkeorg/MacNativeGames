@@ -97,3 +97,12 @@ This resolves source compilation for those two targets only. No signing,
 installation, actual permission observation, production-loader integration,
 external native-code loading or title gameplay was performed. The open execution
 and physical acceptance gates above remain open.
+
+## Native Mac call-window follow-up
+
+CI at `923a775` executed the existing original-source `probe-call` target on an
+Apple-silicon Mac: 20,000 calls, four threads, zero errors, with real Darwin TLS
+and return-address checks. See the [evidence record](canopy-inspection.md).
+This narrows the Mac-side call-window uncertainty but leaves the separate
+physical-iPad signed mapper, external module loading and exact-title gameplay
+requirements unverified. No emulator or private game input was used.

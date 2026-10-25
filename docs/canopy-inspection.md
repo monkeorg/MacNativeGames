@@ -103,3 +103,17 @@ Executable SHA-256:
 The app is an unsigned inspection build. Local provisioning/signing and physical
 UI/provider/lifecycle acceptance remain necessary. No installation, game launch,
 multiplayer session, stable-FPS claim, merge or release occurred in this pass.
+
+## Native Mac execution follow-up
+
+At `923a7753d649e1e40938c590aeb983e99f51e1dc`, the existing original-source
+`probe-call` target executed natively on the Apple-silicon macOS runner:
+**20,000 completed calls across four threads, zero errors**. It checked real
+Darwin thread-local storage, host-call arguments/results and original return
+addresses. The same CI job again passed 14 rewrite/fixture tests and compiled
+the unsigned iPhoneOS platform probe.
+
+[Native execution evidence run](https://github.com/monkeorg/MacNativeGames/actions/runs/40186626880).
+This uses the Mac's executable-memory path and a synthetic prepared call window;
+it is not execution of the iOS signed mapper, an imported game, or gameplay.
+It changes no game/runtime source and consumes no private inputs.
