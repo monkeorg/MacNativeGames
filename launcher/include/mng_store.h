@@ -4,6 +4,7 @@
 
 #define MNG_STORE_RECIPE "canopy-assets-v1"
 #define MNG_STORE_RECIPE_V2 "canopy-assets-v2"
+#define MNG_STORE_RECIPE_V3 "canopy-assets-v3"
 #define MNG_STORE_MAX_ASSETS 128u
 #define MNG_STORE_MAX_BYTES (UINT64_C(64) << 30)
 struct mng_store;
@@ -39,7 +40,9 @@ enum mng_prepare_status mng_store_current(struct mng_store *store,
     uint64_t title_id, char generation_id[65]);
 /* Legacy v1 receipts retain their original fingerprint. Their application_id
  * is inferred from title_id; version_identified stays0 (not a CNMT assertion).
- * Identified base metadata uses v2 receipts/recipe, without migrating v1 files.
+ * Identified base metadata uses v2 receipts/recipe; composed updates use v3,
+ * binding the exact base and update container identities independently. Older
+ * receipts have every update field zero. No immutable receipt is migrated.
  * Rehash every asset, recompute generation ID and compare the canonical JSON
  * manifest. Does not infer signature authenticity, execution or compatibility. */
 enum mng_prepare_status mng_store_verify(struct mng_store *store, uint64_t title_id,

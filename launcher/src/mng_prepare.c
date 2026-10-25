@@ -7,6 +7,7 @@
 #include "mng_container.h"
 #include "mng_crypto.h"
 #include "mng_content.h"
+#include "mng_bktr.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,7 @@ struct prep {
     uint64_t size, nca_offset, nca_size;
     const struct mng_key_provider *keys;
     const struct mng_asset_sink *sink;
+    const char *hash_phase;
     enum mng_prepare_status failure;
     unsigned char header_key[32], key[16], header[0xc00];
     struct mng_prepare_result result;
@@ -102,7 +104,7 @@ static int hash_range(struct prep *p,mng_read_at read,void *reader,uint64_t at,
         if (read(reader,at+done,bytes,n)) goto end;
         if (mng_sha256_update(state,bytes,n)) { fail(p,MNG_PREPARE_INTEGRITY); goto end; }
         done+=n;
-        if (read==source_read) progress(p,"hash-source",done,size);
+        if (read==source_read) progress(p,p->hash_phase ? p->hash_phase:"hash-source",done,size);
         else if (read==nca_read) progress(p,"hash-content-nca",done,size);
     }
     memset(bytes,0,sizeof(bytes));
@@ -246,8 +248,8 @@ static int content_key(struct prep *p,const struct ticket *tickets,size_t count)
 done:
     mng_secure_clear(wrapping,sizeof(wrapping)); return result;
 }
-static int emit(struct section *s,uint64_t offset,uint64_t size,const char *path) {
-    struct prep *p=s->p; struct mng_sha256 *hash=NULL;
+static int emit_reader(struct prep *p,mng_read_at read,void *reader,uint64_t offset,uint64_t size,const char *path) {
+    struct mng_sha256 *hash=NULL;
     unsigned char bytes[CHUNK], digest[32]; int result=-1;
     if (p->result.asset_count>=128 || size>MAX_ASSETS-p->result.asset_bytes)
         return fail(p,MNG_PREPARE_LIMIT);
@@ -256,7 +258,7 @@ static int emit(struct section *s,uint64_t offset,uint64_t size,const char *path
     if (p->sink->begin(p->sink->context,path,size)) { fail(p,MNG_PREPARE_IO); goto done; }
     for (uint64_t at=0;at<size;) {
         size_t n=size-at>CHUNK ? CHUNK:(size_t)(size-at);
-        if (section_read(s,offset+at,bytes,n)) goto done;
+        if (read(reader,offset+at,bytes,n)) goto done;
         if (mng_sha256_update(hash,bytes,n)) { fail(p,MNG_PREPARE_INTEGRITY); goto done; }
         if (p->sink->write(p->sink->context,bytes,n)) { fail(p,MNG_PREPARE_IO); goto done; }
         at+=n; progress(p,"write-private-asset",at,size);
@@ -267,6 +269,9 @@ static int emit(struct section *s,uint64_t offset,uint64_t size,const char *path
     p->result.asset_count++; p->result.asset_bytes+=size; result=0;
 done:
     mng_secure_clear(bytes,sizeof(bytes)); mng_sha256_free(hash); return result;
+}
+static int emit(struct section *s,uint64_t offset,uint64_t size,const char *path) {
+    return emit_reader(s->p,section_read,s,offset,size,path);
 }
 static int verified_pfs(struct section *s,struct mng_inventory *inventory,const char *phase) {
     struct prep *p=s->p; const unsigned char *fs=s->fs;
@@ -335,6 +340,14 @@ struct observed_nca {
     const struct mng_entry *entry;
     struct mng_content_candidate candidate;
     uint64_t title_id;
+    struct prep *owner;
+};
+struct catalog {
+    struct observed_nca *observed;
+    struct mng_content_candidate *candidates;
+    struct mng_content *metadata[64];
+    size_t nca_count,meta_count,metadata_bytes;
+    int has_meta;
 };
 static int content_status(struct prep *p,enum mng_content_status status) {
     if (status==MNG_CONTENT_OK) return 0;
@@ -381,50 +394,51 @@ done:
     if (bytes) { mng_secure_clear(bytes,inventory.entries[0].size);free(bytes); }
     mng_inventory_free(&inventory);return result;
 }
-static int choose_program(struct prep *p,const struct mng_inventory *inventory,
-    const struct ticket *tickets,size_t ticket_count) {
-    struct observed_nca *observed=calloc(256,sizeof(*observed));
-    struct mng_content_candidate *candidates=calloc(256,sizeof(*candidates));
-    struct mng_content *metadata[64]={0};
-    size_t nca_count=0,meta_count=0,metadata_bytes=0;int result=-1,has_meta=0;
-    if (!observed || !candidates) { fail(p,MNG_PREPARE_NOMEM);goto done; }
+static void catalog_free(struct catalog *c) {
+    for (size_t i=0;i<c->meta_count;i++) mng_content_free(c->metadata[i]);
+    free(c->observed);free(c->candidates);memset(c,0,sizeof(*c));
+}
+static int catalog_read(struct prep *p,const struct mng_inventory *inventory,
+    const struct ticket *tickets,size_t ticket_count,struct catalog *c) {
+    c->observed=calloc(256,sizeof(*c->observed));
+    c->candidates=calloc(256,sizeof(*c->candidates));
+    if (!c->observed || !c->candidates) return fail(p,MNG_PREPARE_NOMEM);
     /* Inventory all headers first. A present Meta NCA always enters verified
      * metadata handling; malformed metadata can never trigger legacy fallback. */
     for (size_t i=0;i<inventory->count;i++) {
         const struct mng_entry *e=inventory->entries+i;
         if (!suffix(e->name,".nca")) continue;
-        if (nca_count==256) { fail(p,MNG_PREPARE_LIMIT);goto done; }
-        if (header_read(p,e,p->header)) goto done;
-        observed[nca_count].entry=e;
-        observed[nca_count].candidate.nca_type=p->header[0x205];
-        observed[nca_count].title_id=u64(p->header+0x210);
-        if (p->header[0x205]==1) has_meta=1;
-        nca_count++;
+        if (c->nca_count==256) return fail(p,MNG_PREPARE_LIMIT);
+        if (header_read(p,e,p->header)) return -1;
+        struct observed_nca *observed=c->observed+c->nca_count++;
+        observed->entry=e;observed->owner=p;
+        observed->candidate.nca_type=p->header[0x205];
+        observed->title_id=u64(p->header+0x210);
+        if (p->header[0x205]==1) c->has_meta=1;
     }
-    if (!has_meta) { result=choose_legacy_program(p,inventory);goto done; }
-    for (size_t i=0;i<nca_count;i++) {
-        const struct mng_entry *e=observed[i].entry;
-        struct mng_content_candidate *candidate=&observed[i].candidate;
+    if (!c->has_meta) return 0;
+    for (size_t i=0;i<c->nca_count;i++) {
+        const struct mng_entry *e=c->observed[i].entry;
+        struct mng_content_candidate *candidate=&c->observed[i].candidate;
         candidate->size=e->size;
         progress(p,"hash-content-nca",0,e->size);
-        if (hash_range(p,nca_read,p,e->offset,e->size,e->size,candidate->sha256)) goto done;
+        if (hash_range(p,nca_read,p,e->offset,e->size,e->size,candidate->sha256)) return -1;
         progress(p,"hash-content-nca",e->size,e->size);
-        memcpy(candidate->id,candidate->sha256,16);candidates[i]=*candidate;
+        memcpy(candidate->id,candidate->sha256,16);c->candidates[i]=*candidate;
         if (candidate->nca_type!=1) continue;
-        if (meta_count==64) { fail(p,MNG_PREPARE_LIMIT);goto done; }
-        if (header_read(p,e,p->header)) goto done;
+        if (c->meta_count==64) return fail(p,MNG_PREPARE_LIMIT);
+        if (header_read(p,e,p->header)) return -1;
         p->nca_offset=e->offset;p->nca_size=e->size;
-        if (read_metadata(p,tickets,ticket_count,metadata+meta_count,&metadata_bytes)) goto done;
-        meta_count++;
+        if (read_metadata(p,tickets,ticket_count,c->metadata+c->meta_count,&c->metadata_bytes)) return -1;
+        c->meta_count++;
     }
-    uint64_t application=0;
-    for (size_t i=0;i<meta_count;i++) if (metadata[i]->type==MNG_CONTENT_APPLICATION) {
-        application=metadata[i]->application_id;break;
-    }
-    if (!application) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    return 0;
+}
+static int bind_metadata(struct prep *p,struct mng_content *const *metadata,size_t meta_count,
+    const struct observed_nca *observed,const struct mng_content_candidate *candidates,size_t nca_count) {
     for (size_t i=0;i<meta_count;i++) {
         const struct mng_content *owner=metadata[i];
-        if (content_status(p,mng_content_bind(owner,candidates,nca_count))) goto done;
+        if (content_status(p,mng_content_bind(owner,candidates,nca_count))) return -1;
         for (size_t j=0;j<owner->content_count;j++) {
             const struct mng_content_record *record=owner->contents+j;
             /* Bounded single-program mapping: indexed subprograms and nested
@@ -434,21 +448,20 @@ static int choose_program(struct prep *p,const struct mng_inventory *inventory,
              * declared add-on title. Never infer this identity from a name. */
             if (record->id_offset || record->role==0 ||
                 (owner->type==MNG_CONTENT_ADDON && record->role!=2)) {
-                fail(p,MNG_PREPARE_UNSUPPORTED);goto done;
+                return fail(p,MNG_PREPARE_UNSUPPORTED);
             }
             uint64_t expected=owner->type==MNG_CONTENT_ADDON ? owner->title_id:owner->application_id;
             size_t k=0;
             while (k<nca_count && memcmp(record->id,observed[k].candidate.id,16)) k++;
             if (k==nca_count || observed[k].title_id!=expected) {
-                fail(p,MNG_PREPARE_INTEGRITY);goto done;
+                return fail(p,MNG_PREPARE_INTEGRITY);
             }
         }
     }
-    struct mng_content_plan plan={0};
-    if (content_status(p,mng_content_plan((const struct mng_content *const *)metadata,meta_count,
-                                        candidates,nca_count,application,UINT32_MAX,&plan))) goto done;
-    const struct mng_content *base=metadata[plan.base_index];
-    if (base->required_application_version>base->version) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    return 0;
+}
+static int all_declared(struct prep *p,struct mng_content *const *metadata,size_t meta_count,
+    const struct mng_content_candidate *candidates,size_t nca_count) {
     /* Every non-Meta NCA must be declared by one of the verified CNMTs, including
      * bundled updates/DLC. Their metadata is checked; their payload is not
      * silently composed or represented as prepared by this base-only result. */
@@ -457,18 +470,43 @@ static int choose_program(struct prep *p,const struct mng_inventory *inventory,
         int found=0;
         for (size_t j=0;j<meta_count;j++) for (size_t k=0;k<metadata[j]->content_count;k++)
             if (!memcmp(candidates[i].id,metadata[j]->contents[k].id,16)) found=1;
-        if (!found) { fail(p,MNG_PREPARE_INTEGRITY);goto done; }
+        if (!found) return fail(p,MNG_PREPARE_INTEGRITY);
     }
+    return 0;
+}
+static const struct observed_nca *program_observation(struct prep *p,const struct mng_content *base,
+    const struct observed_nca *observed,size_t nca_count) {
     const struct mng_content_record *program=NULL;
     for (size_t i=0;i<base->content_count;i++) if (base->contents[i].role==1) {
-        if (program || base->contents[i].id_offset) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+        if (program || base->contents[i].id_offset) { fail(p,MNG_PREPARE_UNSUPPORTED);return NULL; }
         program=base->contents+i;
     }
-    if (!program) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    if (!program) { fail(p,MNG_PREPARE_UNSUPPORTED);return NULL; }
     size_t selected=0;
-    while (selected<nca_count && memcmp(program->id,candidates[selected].id,16)) selected++;
-    if (selected==nca_count) { fail(p,MNG_PREPARE_INTEGRITY);goto done; }
-    const struct mng_entry *entry=observed[selected].entry;
+    while (selected<nca_count && memcmp(program->id,observed[selected].candidate.id,16)) selected++;
+    if (selected==nca_count) { fail(p,MNG_PREPARE_INTEGRITY);return NULL; }
+    return observed+selected;
+}
+static int choose_program(struct prep *p,const struct mng_inventory *inventory,
+    const struct ticket *tickets,size_t ticket_count) {
+    struct catalog c={0};int result=-1;
+    if (catalog_read(p,inventory,tickets,ticket_count,&c)) goto done;
+    if (!c.has_meta) { result=choose_legacy_program(p,inventory);goto done; }
+    uint64_t application=0;
+    for (size_t i=0;i<c.meta_count;i++) if (c.metadata[i]->type==MNG_CONTENT_APPLICATION) {
+        application=c.metadata[i]->application_id;break;
+    }
+    if (!application) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    if (bind_metadata(p,c.metadata,c.meta_count,c.observed,c.candidates,c.nca_count)) goto done;
+    struct mng_content_plan plan={0};
+    if (content_status(p,mng_content_plan((const struct mng_content *const *)c.metadata,c.meta_count,
+                                        c.candidates,c.nca_count,application,UINT32_MAX,&plan))) goto done;
+    const struct mng_content *base=c.metadata[plan.base_index];
+    if (base->required_application_version>base->version) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    if (all_declared(p,c.metadata,c.meta_count,c.candidates,c.nca_count)) goto done;
+    const struct observed_nca *selected=program_observation(p,base,c.observed,c.nca_count);
+    if (!selected) goto done;
+    const struct mng_entry *entry=selected->entry;
     if (header_read(p,entry,p->header)) goto done;
     if (u64(p->header+0x210)!=base->title_id) { fail(p,MNG_PREPARE_INTEGRITY);goto done; }
     for (unsigned i=0;i<4;i++) if (u32(p->header+0x240+i*16) && p->header[0x404+i*512]==4) {
@@ -479,10 +517,9 @@ static int choose_program(struct prep *p,const struct mng_inventory *inventory,
     p->result.title_version=base->version;p->result.version_identified=1;p->result.content_role=base->type;
     result=0;
 done:
-    for (size_t i=0;i<meta_count;i++) mng_content_free(metadata[i]);
-    free(observed);free(candidates);return result;
+    catalog_free(&c);return result;
 }
-static int romfs(struct section *s) {
+static int verify_romfs(struct section *s,uint64_t *image_offset,uint64_t *image_size) {
     struct prep *p=s->p; const unsigned char *fs=s->fs;
     if (memcmp(fs+8,"IVFC",4) || u32(fs+12)!=0x20000 || u32(fs+16)!=32 || u32(fs+20)!=7)
         return fail(p,MNG_PREPARE_UNSUPPORTED);
@@ -511,23 +548,30 @@ static int romfs(struct section *s) {
             progress(p,"verify-ivfc",index+1,count);
         }
     }
-    if (emit(s,levels[5].offset,levels[5].size,"romfs.bin")) return -1;
+    *image_offset=levels[5].offset;*image_size=levels[5].size;return 0;
+}
+static int romfs(struct section *s) {
+    struct prep *p=s->p;uint64_t offset,size;
+    if (verify_romfs(s,&offset,&size) || emit(s,offset,size,"romfs.bin")) return -1;
     p->result.romfs_verified=1; return 0;
 }
-static int sections(struct prep *p) {
-    struct section exe={0}, rom={0};
+static int program_sections(struct prep *p,struct section *exe,struct section *rom,int bktr) {
     for (unsigned i=0;i<4;i++) {
         uint64_t start=(uint64_t)u32(p->header+0x240+i*16)*512;
         uint64_t end=(uint64_t)u32(p->header+0x244+i*16)*512;
         if (!start) continue;
         const unsigned char *fs=p->header+0x400+i*512;
         struct section s={p,start,end-start,fs};
-        if (fs[4]!=3) return fail(p,MNG_PREPARE_UNSUPPORTED);
-        if (fs[2]==1 && fs[3]==2 && !exe.p) exe=s;
-        else if (fs[2]==0 && fs[3]==3 && !rom.p) rom=s;
+        if (fs[2]==1 && fs[3]==2 && fs[4]==3 && !exe->p) *exe=s;
+        else if (fs[2]==0 && fs[3]==3 && fs[4]==(bktr ? 4:3) && !rom->p) *rom=s;
         else return fail(p,MNG_PREPARE_UNSUPPORTED);
     }
-    if (!exe.p || !rom.p) return fail(p,MNG_PREPARE_UNSUPPORTED);
+    if (!exe->p || !rom->p) return fail(p,MNG_PREPARE_UNSUPPORTED);
+    return 0;
+}
+static int sections(struct prep *p) {
+    struct section exe={0},rom={0};
+    if (program_sections(p,&exe,&rom,0)) return -1;
     return exefs(&exe) || romfs(&rom) ? -1:0;
 }
 static int stable(const struct stat *a,const struct stat *b) {
@@ -542,15 +586,22 @@ static int stable(const struct stat *a,const struct stat *b) {
         a->st_size==b->st_size && am.tv_sec==bm.tv_sec && am.tv_nsec==bm.tv_nsec &&
         ac.tv_sec==bc.tv_sec && ac.tv_nsec==bc.tv_nsec;
 }
-enum mng_prepare_status mng_prepare_fd(int fd,const struct mng_key_provider *keys,
-    const struct mng_asset_sink *sink,struct mng_prepare_result *result) {
+static int arguments_valid(const struct mng_key_provider *keys,const struct mng_asset_sink *sink,
+    const struct mng_prepare_result *result) {
     if (!result || !keys || !keys->lookup || !sink || !sink->begin || !sink->write || !sink->end)
-        return MNG_PREPARE_INVALID;
+        return 0;
     unsigned char zero[32]={0};
     if (result->title_id || result->source_size || result->asset_count || result->asset_bytes ||
         result->exefs_verified || result->romfs_verified || result->application_id || result->title_version ||
-        result->version_identified || result->content_role || memcmp(result->source_sha256,zero,32))
-        return MNG_PREPARE_INVALID;
+        result->version_identified || result->content_role || result->update_applied || result->update_source_size ||
+        result->patch_title_id || result->base_title_version || memcmp(result->source_sha256,zero,32) ||
+        memcmp(result->update_source_sha256,zero,32))
+        return 0;
+    return 1;
+}
+enum mng_prepare_status mng_prepare_fd(int fd,const struct mng_key_provider *keys,
+    const struct mng_asset_sink *sink,struct mng_prepare_result *result) {
+    if (!arguments_valid(keys,sink,result)) return MNG_PREPARE_INVALID;
     struct stat before, after;
     if (fstat(fd,&before)) return MNG_PREPARE_IO;
     if (!S_ISREG(before.st_mode) || before.st_size<0) return MNG_PREPARE_INVALID;
@@ -574,6 +625,161 @@ done:
     mng_inventory_free(&inventory);
     mng_secure_clear(tickets,sizeof(tickets)); mng_secure_clear(&p,sizeof(p));
     return status;
+}
+struct paired_sources {
+    struct prep *base,*update;
+    struct stat base_before,update_before;
+    struct mng_bktr *reader;
+};
+static int paired_stopped(void *opaque) {
+    struct paired_sources *sources=opaque;
+    return cancelled(sources->update)!=0;
+}
+static int paired_changed(void *opaque) {
+    struct paired_sources *sources=opaque;struct stat base,update;
+    return fstat(sources->base->fd,&base) || fstat(sources->update->fd,&update) ||
+        !stable(&sources->base_before,&base) || !stable(&sources->update_before,&update);
+}
+static void paired_progress(void *opaque,const char *phase,uint64_t done,uint64_t total) {
+    progress(((struct paired_sources *)opaque)->update,phase,done,total);
+}
+static int bktr_status(struct prep *p,enum mng_bktr_status status) {
+    switch (status) {
+        case MNG_BKTR_OK:return 0;
+        case MNG_BKTR_CANCELLED:return fail(p,MNG_PREPARE_CANCELLED);
+        case MNG_BKTR_IO:return fail(p,MNG_PREPARE_IO);
+        case MNG_BKTR_UNSUPPORTED:return fail(p,MNG_PREPARE_UNSUPPORTED);
+        case MNG_BKTR_LIMIT:return fail(p,MNG_PREPARE_LIMIT);
+        case MNG_BKTR_NOMEM:return fail(p,MNG_PREPARE_NOMEM);
+        case MNG_BKTR_INTEGRITY:return fail(p,MNG_PREPARE_INTEGRITY);
+        default:return fail(p,MNG_PREPARE_INVALID);
+    }
+}
+static int patch_nca_read(void *opaque,uint64_t offset,void *bytes,size_t size) {
+    struct prep *p=opaque;
+    if (!fits(offset,size,p->nca_size)) return fail(p,MNG_PREPARE_INVALID);
+    return source_read(p,p->nca_offset+offset,bytes,size);
+}
+static int composed_read(void *opaque,uint64_t offset,void *bytes,size_t size) {
+    struct paired_sources *sources=opaque;
+    if (!mng_bktr_read_at(sources->reader,offset,bytes,size)) return 0;
+    return bktr_status(sources->update,mng_bktr_status(sources->reader));
+}
+static enum mng_prepare_status prepare_update(int base_fd,int update_fd,
+    const struct mng_key_provider *keys,const struct mng_asset_sink *sink,
+    uint32_t target_version,int exact,struct mng_prepare_result *result) {
+    if (!arguments_valid(keys,sink,result)) return MNG_PREPARE_INVALID;
+    struct stat base_before,update_before;
+    if (fstat(base_fd,&base_before) || fstat(update_fd,&update_before)) return MNG_PREPARE_IO;
+    if (!S_ISREG(base_before.st_mode) || !S_ISREG(update_before.st_mode) || base_before.st_size<0 || update_before.st_size<0 ||
+        (base_before.st_dev==update_before.st_dev && base_before.st_ino==update_before.st_ino)) return MNG_PREPARE_INVALID;
+    if ((uint64_t)base_before.st_size>MAX_SOURCE || (uint64_t)update_before.st_size>MAX_SOURCE) return MNG_PREPARE_LIMIT;
+    struct prep base={0},update={0};
+    base.fd=base_fd;base.size=(uint64_t)base_before.st_size;base.keys=keys;base.sink=sink;base.hash_phase="hash-base-source";
+    update.fd=update_fd;update.size=(uint64_t)update_before.st_size;update.keys=keys;update.sink=sink;update.hash_phase="hash-update-source";
+    struct paired_sources sources={&base,&update,base_before,update_before,NULL};
+    struct mng_inventory inventories[2]={{0},{0}};
+    struct ticket tickets[2][MAX_TICKETS];size_t ticket_counts[2]={0,0};
+    struct catalog catalogs[2]={{0},{0}};
+    struct observed_nca *observed=calloc(512,sizeof(*observed));
+    struct mng_content_candidate *candidates=calloc(512,sizeof(*candidates));
+    struct mng_content *metadata[128];size_t nca_count=0,meta_count=0;
+    struct prep *inputs[2]={&base,&update};int success=0;
+    if (!observed || !candidates) { fail(&update,MNG_PREPARE_NOMEM);goto done; }
+    for (unsigned input=0;input<2;input++) {
+        struct prep *p=inputs[input];struct catalog *c=catalogs+input;
+        if (cancelled(p) || container_status(p,mng_container_inspect(source_read,p,p->size,inventories+input)) ||
+            key_lookup(p,"header_key",p->header_key,32) || tickets_read(p,inventories+input,tickets[input],ticket_counts+input) ||
+            catalog_read(p,inventories+input,tickets[input],ticket_counts[input],c)) goto done;
+        if (!c->has_meta) { fail(&update,MNG_PREPARE_UNSUPPORTED);goto done; }
+        for (size_t i=0;i<c->meta_count;i++) metadata[meta_count++]=c->metadata[i];
+        for (size_t i=0;i<c->nca_count;i++) {
+            const struct observed_nca *record=c->observed+i;
+            size_t j=0;while (j<nca_count && memcmp(record->candidate.id,observed[j].candidate.id,16)) j++;
+            if (j<nca_count) {
+                const struct observed_nca *previous=observed+j;
+                if (previous->owner==p) { fail(&update,MNG_PREPARE_INVALID);goto done; }
+                if (record->candidate.size!=previous->candidate.size || record->candidate.nca_type!=previous->candidate.nca_type ||
+                    record->title_id!=previous->title_id || memcmp(record->candidate.sha256,previous->candidate.sha256,32)) {
+                    fail(&update,MNG_PREPARE_INTEGRITY);goto done;
+                }
+                continue; /* An identical shared content NCA in both inputs. */
+            }
+            observed[nca_count]=*record;candidates[nca_count++]=record->candidate;
+        }
+    }
+    if (bind_metadata(&update,metadata,meta_count,observed,candidates,nca_count) ||
+        all_declared(&update,metadata,meta_count,candidates,nca_count)) goto done;
+    uint64_t application=0;
+    for (size_t i=0;i<catalogs[0].meta_count;i++) if (catalogs[0].metadata[i]->type==MNG_CONTENT_APPLICATION) {
+        application=catalogs[0].metadata[i]->application_id;break;
+    }
+    int applicable_patch=0;
+    for (size_t i=0;i<catalogs[1].meta_count;i++) if (catalogs[1].metadata[i]->type==MNG_CONTENT_PATCH &&
+        catalogs[1].metadata[i]->application_id==application && (!exact || catalogs[1].metadata[i]->version==target_version)) applicable_patch=1;
+    if (!application || !applicable_patch) { fail(&update,MNG_PREPARE_UNSUPPORTED);goto done; }
+    struct mng_content_plan plan={0};
+    if (content_status(&update,mng_content_plan((const struct mng_content *const *)metadata,meta_count,candidates,nca_count,
+                                               application,exact ? target_version:UINT32_MAX,&plan))) goto done;
+    if (plan.base_index>=catalogs[0].meta_count || plan.patch_index==SIZE_MAX || plan.patch_index<catalogs[0].meta_count ||
+        (exact && metadata[plan.patch_index]->version!=target_version)) { fail(&update,MNG_PREPARE_UNSUPPORTED);goto done; }
+    const struct mng_content *base_meta=metadata[plan.base_index],*patch_meta=metadata[plan.patch_index];
+    const struct observed_nca *base_program=program_observation(&update,base_meta,observed,nca_count);
+    const struct observed_nca *patch_program=program_observation(&update,patch_meta,observed,nca_count);
+    if (!base_program || !patch_program) goto done;
+    if (base_program->owner!=&base || patch_program->owner!=&update) { fail(&update,MNG_PREPARE_UNSUPPORTED);goto done; }
+    if (header_read(&base,base_program->entry,base.header) || header_read(&update,patch_program->entry,update.header)) goto done;
+    base.nca_offset=base_program->entry->offset;base.nca_size=base_program->entry->size;
+    update.nca_offset=patch_program->entry->offset;update.nca_size=patch_program->entry->size;
+    if (content_key(&base,tickets[0],ticket_counts[0]) || content_key(&update,tickets[1],ticket_counts[1])) goto done;
+    struct section base_exe={0},base_rom={0},patch_exe={0},patch_rom={0};
+    if (program_sections(&base,&base_exe,&base_rom,0) || program_sections(&update,&patch_exe,&patch_rom,1)) goto done;
+    struct mng_inventory base_pfs={0};
+    if (verified_pfs(&base_exe,&base_pfs,"verify-base-exefs")) goto done;
+    mng_inventory_free(&base_pfs);
+    uint64_t original_offset,original_size;
+    if (verify_romfs(&base_rom,&original_offset,&original_size)) goto done;
+    struct mng_bktr_config config={0};
+    config.base=(struct mng_bktr_source){&base_rom,base_rom.size,section_read};
+    config.patch_nca=(struct mng_bktr_source){&update,update.nca_size,patch_nca_read};
+    config.section_offset=patch_rom.start;config.section_size=patch_rom.size;config.fs_header=patch_rom.fs;
+    memcpy(config.key,update.key,16);
+    struct mng_bktr_callbacks callbacks={&sources,paired_stopped,paired_changed,paired_progress};
+    enum mng_bktr_status opened=mng_bktr_open(&config,&callbacks,&sources.reader);
+    mng_secure_clear(config.key,16);
+    if (bktr_status(&update,opened) || bktr_status(&update,mng_bktr_verify_ivfc(sources.reader))) goto done;
+    uint64_t offset,size;
+    if (bktr_status(&update,mng_bktr_romfs_range(sources.reader,&offset,&size))) goto done;
+    if (exefs(&patch_exe) || emit_reader(&update,composed_read,&sources,offset,size,"romfs.bin")) goto done;
+    update.result.romfs_verified=1;update.result.title_id=application;update.result.application_id=application;
+    update.result.title_version=patch_meta->version;update.result.version_identified=1;update.result.content_role=MNG_CONTENT_PATCH;
+    update.result.update_applied=1;update.result.base_title_version=base_meta->version;update.result.patch_title_id=patch_meta->title_id;
+    update.result.source_size=base.size;update.result.update_source_size=update.size;
+    if (hash_range(&base,source_read,&base,0,base.size,base.size,update.result.source_sha256) ||
+        hash_range(&update,source_read,&update,0,update.size,update.size,update.result.update_source_sha256) ||
+        cancelled(&base) || cancelled(&update)) goto done;
+    success=1;
+done:;
+    int changed=paired_changed(&sources);
+    if (changed) success=0;
+    enum mng_prepare_status status=changed ? MNG_PREPARE_IO:base.failure ? base.failure:update.failure;
+    if (!success && status==MNG_PREPARE_OK) status=MNG_PREPARE_INTEGRITY;
+    if (success && status==MNG_PREPARE_OK) *result=update.result;
+    mng_bktr_close(sources.reader);
+    for (unsigned i=0;i<2;i++) { catalog_free(catalogs+i);mng_inventory_free(inventories+i); }
+    free(observed);free(candidates);mng_secure_clear(tickets,sizeof(tickets));
+    mng_secure_clear(&base,sizeof(base));mng_secure_clear(&update,sizeof(update));
+    return status;
+}
+enum mng_prepare_status mng_prepare_update_fd(int base_fd,int update_fd,
+    const struct mng_key_provider *keys,const struct mng_asset_sink *sink,
+    uint32_t target_version,struct mng_prepare_result *result) {
+    return prepare_update(base_fd,update_fd,keys,sink,target_version,1,result);
+}
+enum mng_prepare_status mng_prepare_latest_update_fd(int base_fd,int update_fd,
+    const struct mng_key_provider *keys,const struct mng_asset_sink *sink,
+    struct mng_prepare_result *result) {
+    return prepare_update(base_fd,update_fd,keys,sink,0,0,result);
 }
 const char *mng_prepare_status_name(enum mng_prepare_status status) {
     static const char *names[]={"ok","invalid","io","unsupported","key","integrity","cancelled","limit","nomem"};

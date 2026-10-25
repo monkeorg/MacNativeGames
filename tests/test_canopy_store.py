@@ -80,28 +80,39 @@ class CanopyStoreTests(unittest.TestCase):
         self.assertEqual(result['status'], 0, result)
         return result['generation']
 
-    def legacy_fixture(self):
+    def updated(self, version=2, base_version=1, job=None, env=None):
+        result = self.run_probe('updated', job or self.job(), TITLE, 'A', str(version),
+                                env={'CANOPY_TEST_BASE_VERSION': str(base_version), **(env or {})})
+        self.assertEqual(result['status'], 0, result)
+        return result['generation']
+
+    def legacy_fixture(self, version=None):
         """Pre-v2 on-disk encoding, independent of the current store writer."""
         payloads = {'exefs/main': b'nonproprietary main fixture A',
                     'exefs/main.npdm': b'nonproprietary metadata fixture',
                     'romfs.bin': b'nonproprietary romfs fixture'}
-        header = bytearray(80)
-        header[:8] = b'CNPYST01'
+        header = bytearray(80 if version is None else 104)
+        header[:8] = b'CNPYST01' if version is None else b'CNPYST02'
         struct.pack_into('<QQQQ', header, 8, int(TITLE, 16), 1000, 3, sum(map(len, payloads.values())))
         header[40:72] = hashlib.sha256(b'A').digest()
         header[72:74] = b'\x01\x01'
+        if version is not None:
+            struct.pack_into('<QIBB', header, 80, int(TITLE, 16), version, 1, 0x80)
         records, assets = bytearray(), []
         for path, data in sorted(payloads.items()):
             digest = hashlib.sha256(data)
             records += path.encode().ljust(80, b'\0') + struct.pack('<Q', len(data)) + digest.digest()
             assets.append({'path': path, 'size': len(data), 'sha256': digest.hexdigest()})
         receipt = bytes(header + records)
-        generation = hashlib.sha256(b'canopy-assets-v1\0' + receipt).hexdigest()
-        manifest = {'schemaVersion': 1, 'titleID': TITLE, 'generationID': generation,
-                    'recipeID': 'canopy-assets-v1', 'sourceSHA256': hashlib.sha256(b'A').hexdigest(),
-                    'sourceSize': 1000, 'assets': assets,
-                    'integrity': {'exefsVerified': True, 'romfsVerified': True, 'signatureVerified': False},
-                    'executionVerified': False}
+        recipe = 'canopy-assets-v1' if version is None else 'canopy-assets-v2'
+        generation = hashlib.sha256(recipe.encode() + b'\0' + receipt).hexdigest()
+        manifest = {'schemaVersion': 1 if version is None else 2, 'titleID': TITLE, 'generationID': generation,
+                    'recipeID': recipe, 'sourceSHA256': hashlib.sha256(b'A').hexdigest(), 'sourceSize': 1000}
+        if version is not None:
+            manifest.update(applicationID=TITLE, titleVersion=version, versionIdentified=True, contentRole=0x80)
+        manifest.update(assets=assets,
+                        integrity={'exefsVerified': True, 'romfsVerified': True, 'signatureVerified': False},
+                        executionVerified=False)
         directory = self.generation(generation)
         (directory / 'exefs').mkdir(parents=True, mode=0o700)
         for path, data in payloads.items():
@@ -145,6 +156,10 @@ class CanopyStoreTests(unittest.TestCase):
         self.assertEqual(result['applicationID'], TITLE)
         self.assertFalse(result['versionIdentified'])
         self.assertEqual((result['titleVersion'], result['contentRole']), (0, 0))
+        self.assertFalse(result['updateApplied'])
+        self.assertEqual((result['updateSourceSize'], result['baseTitleVersion']), (0, 0))
+        self.assertEqual(result['updateSourceSHA256'], '0' * 64)
+        self.assertEqual(result['patchTitleID'], '0' * 16)
         self.assertEqual(self.commit(), generation)  # Unknown application_id=0 accepted.
         inferred = self.run_probe('legacy_inferred', self.job(), TITLE, 'A')
         self.assertEqual(inferred['status'], 0)
@@ -152,6 +167,128 @@ class CanopyStoreTests(unittest.TestCase):
         self.assertEqual((directory / 'romfs.bin').stat().st_ino, inode)
         for name, data in before.items():
             self.assertEqual((directory / name).read_bytes(), data)
+
+    def test_existing_v2_fixture_keeps_exact_fingerprint_without_update_fields(self):
+        generation = self.legacy_fixture(version=65536)
+        directory = self.generation(generation)
+        before = {name: (directory / name).read_bytes() for name in ('receipt.bin', 'manifest.json')}
+        inode = (directory / 'romfs.bin').stat().st_ino
+        result = self.run_probe('verify', TITLE, generation)
+        self.assertEqual(result['status'], 0)
+        self.assertTrue(result['versionIdentified'])
+        self.assertEqual(result['titleVersion'], 65536)
+        self.assertFalse(result['updateApplied'])
+        self.assertEqual((result['updateSourceSize'], result['baseTitleVersion']), (0, 0))
+        self.assertEqual(result['updateSourceSHA256'], '0' * 64)
+        self.assertEqual(result['patchTitleID'], '0' * 16)
+        self.assertEqual(self.known(65536), generation)
+        self.assertEqual((directory / 'romfs.bin').stat().st_ino, inode)
+        for name, data in before.items():
+            self.assertEqual((directory / name).read_bytes(), data)
+
+    def test_v3_roundtrip_binds_exact_base_and_update_identities_in_order(self):
+        generation = self.updated()
+        directory = self.generation(generation)
+        receipt = (directory / 'receipt.bin').read_bytes()
+        self.assertEqual(receipt[:8], b'CNPYST03')
+        self.assertEqual(len(receipt), 160 + 3 * 120)
+        self.assertEqual(struct.unpack_from('<QIBB', receipt, 80), (int(TITLE, 16), 2, 1, 0x81))
+        patch = int(TITLE, 16) + 0x800
+        self.assertEqual(struct.unpack_from('<QQIB', receipt, 104), (777, patch, 1, 1))
+        self.assertEqual(receipt[125:128], bytes(3))
+        self.assertEqual(receipt[128:160], hashlib.sha256(b'original update container A').digest())
+        self.assertEqual(hashlib.sha256(b'canopy-assets-v3\0' + receipt).hexdigest(), generation)
+        result = self.run_probe('verify', TITLE, generation)
+        self.assertEqual(result['status'], 0)
+        self.assertTrue(result['updateApplied'])
+        self.assertEqual((result['titleVersion'], result['baseTitleVersion'], result['contentRole']), (2, 1, 0x81))
+        self.assertEqual(result['sourceSHA256'], hashlib.sha256(b'A').hexdigest())
+        self.assertEqual(result['sourceSize'], 1000)
+        self.assertEqual(result['updateSourceSHA256'], hashlib.sha256(b'original update container A').hexdigest())
+        self.assertEqual(result['updateSourceSize'], 777)
+        self.assertEqual(result['patchTitleID'], f'{patch:016x}')
+        manifest = json.loads((directory / 'manifest.json').read_text())
+        self.assertEqual((manifest['schemaVersion'], manifest['recipeID']), (3, 'canopy-assets-v3'))
+        self.assertTrue(manifest['updateApplied'])
+        self.assertEqual(manifest['sourceSHA256'], hashlib.sha256(b'A').hexdigest())
+        self.assertEqual(manifest['sources'], [
+            {'role': 'base', 'titleID': TITLE, 'titleVersion': 1, 'sourceSHA256': hashlib.sha256(b'A').hexdigest(), 'sourceSize': 1000},
+            {'role': 'update', 'titleID': f'{patch:016x}', 'titleVersion': 2,
+             'sourceSHA256': hashlib.sha256(b'original update container A').hexdigest(), 'sourceSize': 777}])
+        self.assertFalse(manifest['executionVerified'])
+        self.assertFalse(manifest['integrity']['signatureVerified'])
+
+    def test_v3_identity_changes_cannot_alias_or_overwrite_generations(self):
+        first = self.updated()
+        asset = self.generation(first) / 'romfs.bin'
+        before = asset.stat()
+        self.assertEqual(self.updated(), first)
+        self.assertEqual((asset.stat().st_ino, asset.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+        generations = {first, self.updated(version=3), self.updated(base_version=0),
+                       self.updated(env={'CANOPY_TEST_UPDATE_TEXT': 'original update container B'}),
+                       self.updated(env={'CANOPY_TEST_UPDATE_SIZE': '778'}),
+                       self.updated(env={'CANOPY_TEST_PATCH_ID': f'{int(TITLE, 16) + 0x1000:016x}'})}
+        self.assertEqual(len(generations), 6)
+        self.assertNotIn(self.known(2), generations)
+        self.assertNotIn(self.commit(), generations)
+
+    def test_v3_accepts_zero_equal_and_maximum_declared_versions(self):
+        for base, final in ((0, 0), (0, 1), (1, 1), (0xffffffff, 0xffffffff)):
+            with self.subTest(base=base, final=final):
+                generation = self.updated(version=final, base_version=base)
+                result = self.run_probe('verify', TITLE, generation)
+                self.assertEqual(result['status'], 0)
+                self.assertEqual((result['baseTitleVersion'], result['titleVersion']), (base, final))
+
+    def test_v3_illegal_metadata_and_legacy_field_leaks_are_refused(self):
+        original = self.commit()
+        for suffix in ('flag', 'unknown', 'role', 'app', 'patch_zero', 'patch_same', 'downgrade', 'size',
+                       'legacy_size', 'legacy_patch', 'legacy_baseversion', 'legacy_sha', 'unknown_sha'):
+            with self.subTest(suffix=suffix):
+                result = self.run_probe('invalid_update_' + suffix, self.job(), TITLE, 'A')
+                self.assertEqual(result['status'], 1)
+                self.assertEqual(self.current(), original)
+
+    def test_v3_receipt_provenance_and_manifest_corruption_is_rejected(self):
+        generation = self.updated()
+        directory = self.generation(generation)
+        receipt = directory / 'receipt.bin'
+        original = receipt.read_bytes()
+        for offset, value in ((7, ord('4')), (94, 1), (104, 0), (112, original[112] ^ 1), (120, 3),
+                              (124, 0), (124, 2), (125, 1), (128, original[128] ^ 1)):
+            with self.subTest(offset=offset, value=value):
+                changed = bytearray(original)
+                changed[offset] = value
+                receipt.write_bytes(changed)
+                self.assertNotEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+        for length in (80, 103, 104, 127, 159, 160, len(original) - 1):
+            with self.subTest(length=length):
+                receipt.write_bytes(original[:length])
+                self.assertNotEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+        receipt.write_bytes(original)
+        manifest = directory / 'manifest.json'
+        before = manifest.read_bytes()
+        changed = json.loads(before)
+        changed['sources'].reverse()
+        manifest.write_text(json.dumps(changed, separators=(',', ':')) + '\n')
+        self.assertNotEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+        manifest.write_bytes(before)
+        self.assertEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+
+    def test_v3_failed_publication_job_resumes_without_rewriting_complete_assets(self):
+        original = self.commit('Z')
+        job = self.job()
+        result = self.run_probe('updated', job, TITLE, 'A', '2', env={'CANOPY_TEST_FAULT': 'generation_rename'})
+        self.assertEqual(result['status'], 2)
+        staged = self.root / 'jobs' / job
+        self.assertEqual((staged / 'receipt.bin').read_bytes()[:8], b'CNPYST03')
+        before = (staged / 'exefs/main').stat().st_ino
+        self.assertEqual(self.current(), original)
+        generation = self.updated(job=job)
+        self.assertEqual((self.generation(generation) / 'exefs/main').stat().st_ino, before)
+        result = self.run_probe('verify', TITLE, generation)
+        self.assertTrue(result['updateApplied'])
+        self.assertEqual(result['baseTitleVersion'], 1)
 
     def test_known_metadata_v2_roundtrip_including_version_zero_and_maximum(self):
         for version in (0, 65536, 0xffffffff):

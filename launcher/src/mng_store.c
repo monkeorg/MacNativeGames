@@ -25,6 +25,7 @@
 #define RECORD_BYTES 120u
 #define HEADER_BYTES 80u
 #define HEADER_V2_BYTES 104u
+#define HEADER_V3_BYTES 160u
 #define MANIFEST_BYTES 32768u
 struct asset { char path[PATH_BYTES]; uint64_t size; unsigned char sha[32]; };
 struct mng_store {
@@ -137,11 +138,18 @@ static uint64_t get64(const unsigned char *p) { uint64_t n=0; for (unsigned i=0;
 static void put32(unsigned char *p, uint32_t n) { for (unsigned i=0;i<4;i++) { p[i]=(unsigned char)n; n>>=8; } }
 static uint32_t get32(const unsigned char *p) { uint32_t n=0; for (unsigned i=0;i<4;i++) n|=(uint32_t)p[i]<<(8*i); return n; }
 static int identity_valid(const struct mng_prepare_result *r) {
+    static const unsigned char zero[32]={0};
+    if (r->update_applied==1) return r->version_identified==1 && r->title_id && r->application_id==r->title_id &&
+        r->content_role==0x81 && r->patch_title_id && r->patch_title_id!=r->title_id &&
+        r->base_title_version<=r->title_version && r->update_source_size;
+    if (r->update_applied || r->update_source_size || r->patch_title_id || r->base_title_version ||
+        memcmp(r->update_source_sha256,zero,32)) return 0;
     if (r->version_identified==1) return r->title_id && r->application_id==r->title_id && r->content_role==0x80;
     return r->version_identified==0 && !r->title_version && !r->content_role &&
         (!r->application_id || r->application_id==r->title_id);
 }
 static const char *recipe_for(const struct mng_prepare_result *r) {
+    if (r->update_applied) return MNG_STORE_RECIPE_V3;
     return r->version_identified ? MNG_STORE_RECIPE_V2:MNG_STORE_RECIPE;
 }
 static int asset_parent(int root, const char *path, int create, const char **name) {
@@ -180,11 +188,12 @@ static int hash_asset(int root, const struct asset *asset, struct mng_store *can
     mng_sha256_free(hash_state); close(fd); return bad==2 ? -2:bad ? -1:0;
 }
 static unsigned char *receipt(const struct asset *assets, size_t count, const struct mng_prepare_result *r, size_t *length) {
+    int applied=r && r->update_applied;
     int identified=r && r->version_identified;
-    size_t header=identified ? HEADER_V2_BYTES:HEADER_BYTES;
+    size_t header=applied ? HEADER_V3_BYTES:identified ? HEADER_V2_BYTES:HEADER_BYTES;
     *length=header+count*RECORD_BYTES;
     unsigned char *data=calloc(1,*length); if (!data) return NULL;
-    memcpy(data,identified ? "CNPYST02":"CNPYST01",8); put64(data+24,count);
+    memcpy(data,applied ? "CNPYST03":identified ? "CNPYST02":"CNPYST01",8); put64(data+24,count);
     uint64_t total=0;
     for (size_t i=0;i<count;i++) {
         unsigned char *record=data+header+i*RECORD_BYTES;
@@ -196,6 +205,8 @@ static unsigned char *receipt(const struct asset *assets, size_t count, const st
         data[72]=(unsigned char)r->exefs_verified; data[73]=(unsigned char)r->romfs_verified;
         if (identified) { put64(data+80,r->application_id); put32(data+88,r->title_version);
             data[92]=1; data[93]=r->content_role; }
+        if (applied) { put64(data+104,r->update_source_size); put64(data+112,r->patch_title_id);
+            put32(data+120,r->base_title_version); data[124]=1; memcpy(data+128,r->update_source_sha256,32); }
     }
     return data;
 }
@@ -206,20 +217,25 @@ static int save_receipt(int dir, const struct asset *assets, size_t count, const
 static int load_receipt(int dir, struct asset *assets, size_t *count, struct mng_prepare_result *r) {
     int fd=openat(dir,"receipt.bin",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
     if (fd<0) return -1;
-    struct stat st; unsigned char data[HEADER_V2_BYTES+MNG_STORE_MAX_ASSETS*RECORD_BYTES];
+    struct stat st; unsigned char data[HEADER_V3_BYTES+MNG_STORE_MAX_ASSETS*RECORD_BYTES];
     int bad=regular(fd,sizeof(data),&st) || st.st_size<HEADER_BYTES;
     if (!bad) bad=read_all(fd,data,(size_t)st.st_size);
     close(fd);
     if (bad) return -1;
-    int identified=!memcmp(data,"CNPYST02",8);
+    int applied=!memcmp(data,"CNPYST03",8);
+    int identified=applied || !memcmp(data,"CNPYST02",8);
     if (!identified && memcmp(data,"CNPYST01",8)) return -1;
-    size_t header=identified ? HEADER_V2_BYTES:HEADER_BYTES;
+    size_t header=applied ? HEADER_V3_BYTES:identified ? HEADER_V2_BYTES:HEADER_BYTES;
     uint64_t n=get64(data+24), total=0;
     if (n>MNG_STORE_MAX_ASSETS || header+n*RECORD_BYTES!=(uint64_t)st.st_size || data[72]>1 || data[73]>1) return -1;
     for (size_t i=74;i<HEADER_BYTES;i++) if (data[i]) return -1;
     if (identified) {
         if (data[92]!=1) return -1;
         for (size_t i=94;i<HEADER_V2_BYTES;i++) if (data[i]) return -1;
+    }
+    if (applied) {
+        if (data[124]!=1) return -1;
+        for (size_t i=125;i<128;i++) if (data[i]) return -1;
     }
     for (size_t i=0;i<(size_t)n;i++) {
         const unsigned char *record=data+header+i*RECORD_BYTES;
@@ -237,6 +253,8 @@ static int load_receipt(int dir, struct asset *assets, size_t *count, struct mng
     r->exefs_verified=data[72]; r->romfs_verified=data[73];
     r->application_id=identified ? get64(data+80):r->title_id;
     if (identified) { r->title_version=get32(data+88); r->version_identified=1; r->content_role=data[93]; }
+    if (applied) { r->update_applied=1; r->update_source_size=get64(data+104); r->patch_title_id=get64(data+112);
+        r->base_title_version=get32(data+120); memcpy(r->update_source_sha256,data+128,32); }
     if (!identity_valid(r)) return -1;
     *count=(size_t)n;
     return 0;
@@ -258,12 +276,21 @@ static char *manifest(const struct asset *assets, size_t count, const struct mng
     char *json=calloc(1,MANIFEST_BYTES), sha[65]; if (!json) return NULL;
     hex(r->source_sha256,32,sha);
     int n=snprintf(json,MANIFEST_BYTES,"{\"schemaVersion\":%u,\"titleID\":\"%016" PRIx64 "\",\"generationID\":\"%s\",\"recipeID\":\"%s\",\"sourceSHA256\":\"%s\",\"sourceSize\":%" PRIu64,
-        r->version_identified ? 2u:1u,r->title_id,gen,recipe_for(r),sha,r->source_size);
+        r->update_applied ? 3u:r->version_identified ? 2u:1u,r->title_id,gen,recipe_for(r),sha,r->source_size);
     if (n<0 || (size_t)n>=MANIFEST_BYTES) { free(json); return NULL; }
     size_t used=(size_t)n;
     if (r->version_identified) {
         n=snprintf(json+used,MANIFEST_BYTES-used,",\"applicationID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32 ",\"versionIdentified\":true,\"contentRole\":%u",
             r->application_id,r->title_version,(unsigned)r->content_role);
+        if (n<0 || (size_t)n>=MANIFEST_BYTES-used) { free(json); return NULL; } used+=(size_t)n;
+    }
+    if (r->update_applied) {
+        char update_sha[65]; hex(r->update_source_sha256,32,update_sha);
+        n=snprintf(json+used,MANIFEST_BYTES-used,",\"updateApplied\":true,\"sources\":[{\"role\":\"base\",\"titleID\":\"%016" PRIx64
+            "\",\"titleVersion\":%" PRIu32 ",\"sourceSHA256\":\"%s\",\"sourceSize\":%" PRIu64
+            "},{\"role\":\"update\",\"titleID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32
+            ",\"sourceSHA256\":\"%s\",\"sourceSize\":%" PRIu64 "}]",
+            r->title_id,r->base_title_version,sha,r->source_size,r->patch_title_id,r->title_version,update_sha,r->update_source_size);
         if (n<0 || (size_t)n>=MANIFEST_BYTES-used) { free(json); return NULL; } used+=(size_t)n;
     }
     n=snprintf(json+used,MANIFEST_BYTES-used,",\"assets\":[");

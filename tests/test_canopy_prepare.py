@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 HAS_FIXTURE_CRYPTO = importlib.util.find_spec('cryptography') is not None
@@ -59,6 +60,7 @@ class CanopyPrepareTests(unittest.TestCase):
         result = subprocess.run([*common, str(ROOT / 'launcher/tests/prepare_probe.c'),
             str(ROOT / 'launcher/src/mng_container.c'), str(ROOT / 'launcher/src/mng_crypto.c'),
             str(ROOT / 'launcher/src/mng_content.c'),
+            str(ROOT / 'launcher/src/mng_bktr.c'),
             str(prepare_object), *libraries, '-o', str(cls.probe)],
             capture_output=True, text=True, timeout=60)
         if result.returncode:
@@ -188,6 +190,95 @@ class CanopyPrepareTests(unittest.TestCase):
             files += [('addon-data.nca',data), ('addon-meta.nca',dlc_meta)]
         return files
 
+    def update_pair(self, image=None, shared_control=False, managed_update=False, patch_transform=None,
+                    base_version=7, patch_version=12, patch_main=b'updated native bytes'):
+        """Independent encrypted BKTR NCA with real base and patch CNMTs."""
+        import test_canopy_bktr as bk
+        f,cf=self.fixture,self.content_fixture
+        original=image if image is not None else f.romfs()
+        updated=original[:-1]+bytes((original[-1]^0x55,))
+        fs,virtual=f.ivfc(updated)
+        virtual=bytes(virtual)
+        base_program=self.custom_nca(image=original)
+        template=self.custom_nca([('main',patch_main),('main.npdm',b'updated metadata')],image=updated)
+        header=bytearray(b''.join(self.decrypt(f.HEADER,self.modes.XTS(i.to_bytes(16,'big')),
+                                              template[i*512:(i+1)*512]) for i in range(6)))
+        section_start=struct.unpack_from('<I',header,0x250)[0]*512
+        change=5*4096+len(original)-1
+        relocations=[(0,0,1),(5*4096,5*4096,0),(change,5*4096,1),(change+1,change+1,0)]
+        physical_end=2*bk.PAGE
+        physical=bytearray(physical_end)
+        physical[:5*4096]=virtual[:5*4096]
+        physical[5*4096:5*4096+1]=virtual[change:change+1]
+        subsections=[(0,0,0x1020304),(0x100,0,0xaabbccdd),(0x4000,0,0x02030405)]
+        reloc=bk.table(relocations,len(virtual),True)
+        subs=bk.table(subsections,physical_end,False)
+        plaintext=physical+reloc+subs
+        fs[4]=4;fs[0x140:0x148]=bk.PREFIX[::-1]
+        struct.pack_into('<QQ4sIII',fs,0x100,physical_end,len(reloc),b'BKTR',1,len(relocations),0)
+        struct.pack_into('<QQ4sIII',fs,0x120,physical_end+len(reloc),len(subs),b'BKTR',1,len(subsections),0)
+        encrypted=bytearray(len(plaintext))
+        with mock.patch.object(bk,'KEY',f.CONTENT):
+            for i,(start,_,counter) in enumerate(subsections):
+                end=subsections[i+1][0] if i+1<len(subsections) else physical_end
+                encrypted[start:end]=bk.ctr(bytes(plaintext[start:end]),section_start+start,
+                                           bk.PREFIX[:4]+counter.to_bytes(4,'big'))
+            encrypted[physical_end:]=bk.ctr(bytes(plaintext[physical_end:]),section_start+physical_end,bk.PREFIX)
+        header[0x600:0x800]=fs
+        header[0x2a0:0x2c0]=hashlib.sha256(fs).digest()
+        struct.pack_into('<I',header,0x254,(section_start+len(encrypted))//512)
+        struct.pack_into('<Q',header,0x208,section_start+len(encrypted))
+        if managed_update:
+            header[0x230:0x240]=f.RIGHTS
+        patch_program=b''.join(f.encrypt(f.HEADER,self.modes.XTS(i.to_bytes(16,'big')),
+                                        header[i*512:(i+1)*512]) for i in range(6))+template[0xc00:section_start]+encrypted
+        if patch_transform:
+            patch_program=patch_transform(patch_program)
+        base_records=[self.observed_record(base_program)]
+        patch_records=[self.observed_record(patch_program)]
+        base_files=[('base-program.nca',base_program)]
+        patch_files=[('update-program.nca',patch_program)]
+        if shared_control:
+            control=f.nca(title=cf.APP,content=2)
+            base_files.append(('control.nca',control));patch_files.append(('same-control.nca',control))
+            base_records.append(self.observed_record(control,3));patch_records.append(self.observed_record(control,3))
+        base_files.append(('base-meta.nca',self.metadata_nca(base_records,version=base_version)))
+        patch_files.append(('patch-meta.nca',self.metadata_nca(patch_records,kind=0x81,title=cf.PATCH,version=patch_version)))
+        if managed_update:
+            patch_files.append(('common.tik',f.ticket()))
+        return base_files,patch_files,original,updated
+
+    def compose(self,base_data,patch_data,mode='normal',target=12,expected='ok',base_version=7,latest=False):
+        self.index+=1
+        base=self.root/f'base-{self.index}.nsp';patch=self.root/f'update-{self.index}.nsp'
+        base.write_bytes(base_data);patch.write_bytes(patch_data)
+        output=self.root/f'composed-{self.index}';output.mkdir()
+        run=subprocess.run([str(self.probe),str(base),str(output),mode,str(patch),'latest' if latest else str(target)],
+                            capture_output=True,text=True,timeout=30)
+        self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+        report=json.loads(run.stdout)
+        self.assertEqual(report['status'],expected,report)
+        self.assertTrue(report['descriptor_preserved'])
+        if not mode.startswith('mutate'):
+            self.assertEqual(base.read_bytes(),base_data)
+            self.assertEqual(patch.read_bytes(),patch_data)
+        for secret in (self.fixture.HEADER,self.fixture.AREA,self.fixture.TITLEKEK,self.fixture.CONTENT):
+            self.assertNotIn(secret.hex(),run.stdout+run.stderr)
+        if expected=='ok':
+            self.assertFalse(report['result_empty'])
+            self.assertTrue(report['update_applied'])
+            self.assertTrue(report['version_identified'])
+            self.assertEqual((report['title_version'],report['base_title_version'],report['content_role']),(target,base_version,0x81))
+            self.assertEqual(report['source_size'],len(base_data))
+            self.assertEqual(report['source_sha256'],hashlib.sha256(base_data).hexdigest())
+            self.assertEqual(report['update_source_size'],len(patch_data))
+            self.assertEqual(report['update_source_sha256'],hashlib.sha256(patch_data).hexdigest())
+            self.assertEqual(report['patch_title_id'],f'{self.content_fixture.PATCH:016x}')
+            self.assertEqual((report['exefs_verified'],report['romfs_verified']),(1,1))
+        else:
+            self.assertTrue(report['result_empty'])
+        return output,report
+
     def test_exact_plaintext_key_area_common_ticket_and_xci(self):
         f = self.fixture
         for kind, managed in (('nsp', False), ('nsp', True), ('xci', False), ('xci', True)):
@@ -201,6 +292,8 @@ class CanopyPrepareTests(unittest.TestCase):
                 self.assertFalse(report['version_identified'])
                 self.assertEqual(report['title_version'], 0)
                 self.assertEqual(report['content_role'], 0)
+                self.assertFalse(report['update_applied'])
+                self.assertEqual(report['update_source_sha256'], '0'*64)
                 self.assertEqual(report['asset_count'], 3)
                 self.assertEqual(report['asset_bytes'], len(b'synthetic main')+len(b'synthetic metadata')+len(f.romfs()))
 
@@ -424,6 +517,113 @@ class CanopyPrepareTests(unittest.TestCase):
                                      title=cf.DLC, version=3)
         self.inspect(f.partition(self.identified_package()+[('d.nca',addon_program),('dm.nca',metadata)]),
                      expected='unsupported')
+
+    def test_real_two_source_update_composes_romfs_and_selects_update_exefs(self):
+        f=self.fixture
+        for common,shared in ((False,False),(True,True)):
+            with self.subTest(common=common,shared=shared):
+                base,patch,original,updated=self.update_pair(shared_control=shared,managed_update=common)
+                output,report=self.compose(f.partition(base),f.partition(patch))
+                self.assertEqual((output/'exefs/main').read_bytes(),b'updated native bytes')
+                self.assertEqual((output/'exefs/main.npdm').read_bytes(),b'updated metadata')
+                self.assertEqual((output/'romfs.bin').read_bytes(),updated)
+                self.assertNotEqual(updated,original)
+                self.assertEqual(report['asset_count'],3)
+
+    def test_update_streaming_crosses_chunks_and_inputs_may_be_xci(self):
+        from test_canopy_romfs import romfs
+        base,patch,_,updated=self.update_pair(image=romfs([('large',bytes(range(251))*900)])[0])
+        output,_=self.compose(self.fixture.card_with_update(base),self.fixture.partition(patch),'short')
+        self.assertEqual((output/'romfs.bin').read_bytes(),updated)
+
+    def test_update_exact_version_and_verified_metadata_are_mandatory(self):
+        f=self.fixture
+        base,patch,_,_=self.update_pair()
+        for target in (0,11,13,0xffffffff):
+            with self.subTest(target=target):
+                self.compose(f.partition(base),f.partition(patch),target=target,expected='unsupported')
+        self.compose(f.game_image('nsp'),f.partition(patch),expected='unsupported')
+        self.compose(f.partition(base),f.partition(patch[:-1]),expected='unsupported')
+        changed=bytearray(patch[-1][1]);changed[0xc00+512]^=1
+        self.compose(f.partition(base),f.partition(patch[:-1]+[('bad-meta.nca',bytes(changed))]),expected='integrity')
+
+    def test_update_bktr_and_wrong_base_fail_after_exact_cnmt_binding(self):
+        f=self.fixture
+        def corrupt_payload(data):
+            altered=bytearray(data)
+            # Patch physical byte0 contains updated IVFC root data. Its NCA
+            # hash is rebound in valid metadata, so composed-IVFC must reject.
+            altered[0x1000]^=1
+            return bytes(altered)
+        base,patch,_,_=self.update_pair(patch_transform=corrupt_payload)
+        self.compose(f.partition(base),f.partition(patch),expected='integrity')
+        base,patch,original,_=self.update_pair()
+        wrong=bytearray(original);wrong[-2]^=1
+        wrong_program=self.custom_nca(image=bytes(wrong))
+        wrong_meta=self.metadata_nca([self.observed_record(wrong_program)],version=7)
+        self.compose(f.partition([('base.nca',wrong_program),('meta.nca',wrong_meta)]),f.partition(patch),expected='integrity')
+
+    def test_update_cancellation_io_quotas_and_both_source_stability(self):
+        f=self.fixture;base,patch,_,_=self.update_pair()
+        for mode,status in (('cancelinitial','cancelled'),('cancel-merge','cancelled'),
+                            ('cancel-updatehash','cancelled'),('readfailure','io'),('quota','io'),
+                            ('mutate','io'),('mutateupdate','io'),('mutateaftermerge','io')):
+            with self.subTest(mode=mode):
+                self.compose(f.partition(base),f.partition(patch),mode,expected=status)
+
+    def test_update_literal_zero_maximum_and_same_source_refusal(self):
+        f=self.fixture
+        for base_version,patch_version in ((0,0),(7,0xffffffff)):
+            with self.subTest(version=patch_version):
+                base,patch,_,_=self.update_pair(base_version=base_version,patch_version=patch_version)
+                self.compose(f.partition(base),f.partition(patch),target=patch_version,base_version=base_version)
+        base,patch,_,_=self.update_pair()
+        self.compose(f.partition(base),f.partition(patch),'same-source',expected='invalid')
+
+    def test_new_result_fields_must_be_empty_for_all_entrypoints(self):
+        f=self.fixture;base_files,patch_files,_,_=self.update_pair()
+        for entrypoint in ('base','exact','latest'):
+            self.index+=1
+            base=self.root/f'dirty-base-{self.index}';base.write_bytes(f.partition(base_files))
+            patch=self.root/f'dirty-update-{self.index}';patch.write_bytes(f.partition(patch_files))
+            output=self.root/f'dirty-output-{self.index}';output.mkdir()
+            args=[str(self.probe),str(base),str(output),'dirty-updatefield']
+            if entrypoint!='base': args += [str(patch),'latest' if entrypoint=='latest' else '12']
+            run=subprocess.run(args,capture_output=True,text=True,timeout=10)
+            self.assertEqual(run.returncode,0,run.stderr)
+            report=json.loads(run.stdout)
+            self.assertEqual(report['status'],'invalid')
+            self.assertEqual(report['update_source_size'],1)
+            self.assertTrue(report['descriptor_preserved'])
+            self.assertEqual(list((output/'exefs').iterdir()),[])
+
+    def test_explicit_latest_selects_highest_while_exact_can_select_lower(self):
+        f=self.fixture
+        base,lower,_,_=self.update_pair(patch_version=12,patch_main=b'lower version code')
+        _,higher,_,_=self.update_pair(patch_version=13,patch_main=b'higher version code')
+        combined=[('lower-'+name,data) for name,data in lower]+[('higher-'+name,data) for name,data in higher]
+        output,_=self.compose(f.partition(base),f.partition(combined),target=12)
+        self.assertEqual((output/'exefs/main').read_bytes(),b'lower version code')
+        output,_=self.compose(f.partition(base),f.partition(combined),target=13,latest=True)
+        self.assertEqual((output/'exefs/main').read_bytes(),b'higher version code')
+
+    def test_latest_corrupt_highest_is_not_replaced_by_lower_version(self):
+        f=self.fixture
+        base,lower,_,_=self.update_pair(patch_version=12)
+        def corrupt_authenticated_virtual_data(data):
+            altered=bytearray(data);altered[0x1000]^=1;return bytes(altered)
+        _,higher,_,_=self.update_pair(patch_version=13,patch_transform=corrupt_authenticated_virtual_data)
+        combined=[('lower-'+name,data) for name,data in lower]+[('higher-'+name,data) for name,data in higher]
+        # Higher content hash/CNMT is valid, but reconstruction fails IVFC.
+        self.compose(f.partition(base),f.partition(combined),latest=True,expected='integrity')
+        # Present metadata is always verified, even if a lower exact version
+        # could be selected; a damaged higher CNMT cannot be silently ignored.
+        _,higher,_,_=self.update_pair(patch_version=13)
+        damaged=bytearray(higher[-1][1]);damaged[0xc00+512]^=1
+        higher[-1]=(higher[-1][0],bytes(damaged))
+        combined=[('lower-'+name,data) for name,data in lower]+[('higher-'+name,data) for name,data in higher]
+        self.compose(f.partition(base),f.partition(combined),latest=True,expected='integrity')
+        self.compose(f.partition(base),f.partition(combined),target=12,expected='integrity')
 
 
 if __name__ == '__main__':

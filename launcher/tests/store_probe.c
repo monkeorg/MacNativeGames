@@ -106,6 +106,9 @@ static int fill(struct mng_asset_sink *sink,const char *variant,struct mng_prepa
     r->exefs_verified=1; r->romfs_verified=1;
     return digest(variant,strlen(variant),r->source_sha256);
 }
+static void hex_digest(const unsigned char digest_bytes[32],char out[65]) {
+    for (unsigned i=0;i<32;i++) (void)snprintf(out+2*i,3,"%02x",digest_bytes[i]);
+}
 int main(int argc,char **argv) {
     if (argc<3) return 2;
     int root=open(argv[2],O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
@@ -130,7 +133,8 @@ int main(int argc,char **argv) {
     if (!strcmp(argv[1],"commit") || !strcmp(argv[1],"cancel") || !strcmp(argv[1],"badcount") ||
         !strcmp(argv[1],"badbytes") || !strcmp(argv[1],"badflags") || !strcmp(argv[1],"inject") ||
         !strncmp(argv[1],"reuse_",6) || !strcmp(argv[1],"known") || !strcmp(argv[1],"known_cancel") ||
-        !strcmp(argv[1],"legacy_inferred") || !strncmp(argv[1],"invalid_identity_",17)) {
+        !strcmp(argv[1],"legacy_inferred") || !strncmp(argv[1],"invalid_identity_",17) ||
+        !strcmp(argv[1],"updated") || !strncmp(argv[1],"invalid_update_",15)) {
         if (argc!=6 && argc!=7) return 2;
         result.title_id=strtoull(argv[4],NULL,16);
         if (fault("hook_resume")) cancel_target=store;
@@ -145,6 +149,38 @@ int main(int argc,char **argv) {
                     unsigned long long version=argc==7 ? strtoull(argv[6],NULL,10):0;
                     if (version>UINT32_MAX) return 2;
                     result.title_version=(uint32_t)version;
+                }
+                if (!strcmp(argv[1],"updated") || !strncmp(argv[1],"invalid_update_",15)) {
+                    result.application_id=result.title_id; result.version_identified=1; result.content_role=0x81;
+                    unsigned long long final_version=argc==7 ? strtoull(argv[6],NULL,10):2;
+                    const char *base=getenv("CANOPY_TEST_BASE_VERSION"), *update=getenv("CANOPY_TEST_UPDATE_TEXT");
+                    const char *size=getenv("CANOPY_TEST_UPDATE_SIZE"), *patch=getenv("CANOPY_TEST_PATCH_ID");
+                    unsigned long long base_version=base ? strtoull(base,NULL,10):1;
+                    if (final_version>UINT32_MAX || base_version>UINT32_MAX) return 2;
+                    result.title_version=(uint32_t)final_version; result.base_title_version=(uint32_t)base_version;
+                    result.update_applied=1; result.update_source_size=size ? strtoull(size,NULL,10):777;
+                    result.patch_title_id=patch ? strtoull(patch,NULL,16):result.title_id+0x800;
+                    if (!update) update="original update container A";
+                    if (digest(update,strlen(update),result.update_source_sha256)) return 4;
+                }
+                if (!strcmp(argv[1],"invalid_update_flag")) result.update_applied=2;
+                if (!strcmp(argv[1],"invalid_update_unknown")) result.version_identified=0;
+                if (!strcmp(argv[1],"invalid_update_role")) result.content_role=0x80;
+                if (!strcmp(argv[1],"invalid_update_app")) result.application_id++;
+                if (!strcmp(argv[1],"invalid_update_patch_zero")) result.patch_title_id=0;
+                if (!strcmp(argv[1],"invalid_update_patch_same")) result.patch_title_id=result.title_id;
+                if (!strcmp(argv[1],"invalid_update_downgrade")) result.base_title_version=result.title_version+1;
+                if (!strcmp(argv[1],"invalid_update_size")) result.update_source_size=0;
+                if (!strncmp(argv[1],"invalid_update_legacy_",22) || !strcmp(argv[1],"invalid_update_unknown_sha")) {
+                    result.update_applied=0; result.content_role=0x80; result.update_source_size=0;
+                    result.patch_title_id=0; result.base_title_version=0; memset(result.update_source_sha256,0,32);
+                    if (!strcmp(argv[1],"invalid_update_legacy_size")) result.update_source_size=1;
+                    if (!strcmp(argv[1],"invalid_update_legacy_patch")) result.patch_title_id=result.title_id+0x800;
+                    if (!strcmp(argv[1],"invalid_update_legacy_baseversion")) result.base_title_version=1;
+                    if (!strcmp(argv[1],"invalid_update_legacy_sha")) result.update_source_sha256[0]=1;
+                    if (!strcmp(argv[1],"invalid_update_unknown_sha")) {
+                        result.version_identified=0; result.content_role=0; result.title_version=0; result.update_source_sha256[0]=1;
+                    }
                 }
                 if (!strcmp(argv[1],"legacy_inferred")) result.application_id=result.title_id;
                 if (!strncmp(argv[1],"invalid_identity_unknown_",25)) {
@@ -238,9 +274,13 @@ int main(int argc,char **argv) {
         if (argc!=4) return 2;
         status=mng_store_discard_job(store,argv[3]);
     } else { mng_store_close(store); return 2; }
+    char base_sha[65],update_sha[65]; hex_digest(result.source_sha256,base_sha); hex_digest(result.update_source_sha256,update_sha);
     printf("{\"status\":%u,\"generation\":\"%s\",\"assetCount\":%" PRIu64 ",\"assetBytes\":%" PRIu64
-        ",\"applicationID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32 ",\"versionIdentified\":%s,\"contentRole\":%u}\n",
+        ",\"applicationID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32 ",\"versionIdentified\":%s,\"contentRole\":%u"
+        ",\"sourceSize\":%" PRIu64 ",\"sourceSHA256\":\"%s\",\"updateApplied\":%s,\"updateSourceSize\":%" PRIu64
+        ",\"updateSourceSHA256\":\"%s\",\"patchTitleID\":\"%016" PRIx64 "\",\"baseTitleVersion\":%" PRIu32 "}\n",
         (unsigned)status,generation,result.asset_count,result.asset_bytes,result.application_id,result.title_version,
-        result.version_identified ? "true":"false",(unsigned)result.content_role);
+        result.version_identified ? "true":"false",(unsigned)result.content_role,result.source_size,base_sha,
+        result.update_applied ? "true":"false",result.update_source_size,update_sha,result.patch_title_id,result.base_title_version);
     mng_store_close(store); return 0;
 }

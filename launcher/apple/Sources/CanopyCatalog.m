@@ -69,10 +69,14 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
         }
         if (result.title_id != title) { [issues addObject:@"A verified generation returned an inconsistent title identity."]; continue; }
         NSDictionary *entry = @{@"titleID":titleID, @"generationID":[NSString stringWithUTF8String:generation],
-            @"recipeID":result.version_identified ? @MNG_STORE_RECIPE_V2 : @MNG_STORE_RECIPE,
+            @"recipeID":result.update_applied ? @MNG_STORE_RECIPE_V3 : result.version_identified ? @MNG_STORE_RECIPE_V2 : @MNG_STORE_RECIPE,
             @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)result.application_id],
             @"titleVersion":@(result.title_version), @"versionIdentified":result.version_identified ? @YES : @NO,
             @"contentRole":@(result.content_role),
+            @"updateApplied":result.update_applied ? @YES : @NO,
+            @"baseTitleVersion":@(result.base_title_version),
+            @"patchTitleID":[NSString stringWithFormat:@"%016llx", (unsigned long long)result.patch_title_id],
+            @"updateSourceSHA256":HexDigest(result.update_source_sha256), @"updateSourceSize":@(result.update_source_size),
             @"displayName":[_settings displayNameForTitleID:titleID] ?: titleID,
             @"sourceSHA256":HexDigest(result.source_sha256), @"sourceSize":@(result.source_size),
             @"assetCount":@(result.asset_count), @"assetBytes":@(result.asset_bytes),

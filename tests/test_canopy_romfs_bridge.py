@@ -33,7 +33,7 @@ class CanopyRomFSBridgeTests(unittest.TestCase):
         cls.addClassCleanup(cls.build.cleanup)
         directory=Path(cls.build.name).resolve()
         objects=[]
-        for name in ('mng_container','mng_crypto','mng_keys','mng_content','mng_prepare','mng_store','mng_romfs'):
+        for name in ('mng_container','mng_crypto','mng_keys','mng_content','mng_prepare','mng_store','mng_romfs','mng_bktr'):
             output=directory/(name+'.o')
             cls.compile(['xcrun','clang','-std=c11','-D_DARWIN_C_SOURCE','-Wall','-Wextra','-Werror',
                 '-I',str(ROOT/'launcher/include'),'-c',str(ROOT/f'launcher/src/{name}.c'),'-o',str(output)])
