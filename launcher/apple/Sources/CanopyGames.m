@@ -511,6 +511,11 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         NSUInteger next=++self->_profileEpoch;
         [self dismissViewControllerAnimated:YES completion:^{if(next==self->_profileEpoch)[self openProfile:nil];}];
     }]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"Inspect label recovery" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        (void)action;if(epoch!=self->_profileEpoch || ![self profileAvailable])return;
+        NSUInteger next=++self->_profileEpoch;
+        [self dismissViewControllerAnimated:YES completion:^{if(next==self->_profileEpoch)[self inspectProfileLabelRecovery];}];
+    }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Create empty profile" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
         (void)action;if(epoch!=self->_profileEpoch || ![self profileAvailable])return;
         NSUInteger next=++self->_profileEpoch;
@@ -519,6 +524,67 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){(void)action;if(epoch==self->_profileEpoch)++self->_profileEpoch;}]];
     menu.popoverPresentationController.sourceView=self.tableView;menu.popoverPresentationController.sourceRect=[self.tableView rectForRowAtIndexPath:[NSIndexPath indexPathForRow:3 inSection:3]];
     [self presentViewController:menu animated:YES completion:nil];
+}
+- (void)inspectProfileLabelRecovery {
+    if(![self profileAvailable] || self.presentedViewController)return;
+    _saveLoading=YES;_profileNeedsReload=YES;_saveError=@"Inspecting label-only recovery. Play remains unavailable until profile selection is reconciled.";
+    NSUInteger epoch=++_profileEpoch;
+    if(!_saveQueue)_saveQueue=dispatch_queue_create("org.monkeorg.canopy.save-profile",DISPATCH_QUEUE_SERIAL);
+    NSURL *support=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *root=[[support URLByAppendingPathComponent:@"Canopy" isDirectory:YES] URLByAppendingPathComponent:@"Profiles" isDirectory:YES];
+    NSString *title=[_entry[@"titleID"] copy],*oldID=[_profileID copy];CanopySaveStore *old=_saves;
+    dispatch_async(_saveQueue,^{@autoreleasepool {
+        NSError *error=nil;
+        CanopyProfileLabelRepair *repair=[self->_profiles prepareLabelRepairForTitleID:title error:&error];
+        NSDictionary *snapshot=repair.candidateSnapshot;NSString *identifier=repair.selectedID,*name=nil;
+        for(NSDictionary *row in snapshot[@"profiles"])if([row[@"identifier"] isEqual:identifier])name=row[@"displayName"];
+        CanopySaveStore *candidate=nil;
+        // The token's exact selection is authoritative; never choose default,
+        // migrate identity or commit labels before its actual store is open.
+        if(repair && [repair.titleID isEqual:title] && [snapshot[@"selectedID"] isEqual:identifier] && name)
+            candidate=old && [oldID isEqual:identifier] ? old : [[CanopySaveStore alloc] initWithRootURL:root titleID:title profileID:identifier externalValidator:CanopyGameSaveValidatorForTitleID(title) error:&error];
+        dispatch_async(dispatch_get_main_queue(),^{
+            self->_saveLoading=NO;
+            if(epoch!=self->_profileEpoch || ![self profileAvailable]) {
+                self->_saveError=@"Label recovery inspection was canceled. The previous live profile was retained; reload selection before Play.";
+                [self.tableView reloadData];return;
+            }
+            if(!repair || !candidate || candidate.sealed || candidate.recoveryRequired) {
+                self->_saveError=error.localizedDescription ?: @"Label-only recovery is unavailable or the exact selected store could not be opened. Existing metadata and the previous live profile were retained. Reload selection before Play.";
+                [self.tableView reloadData];return;
+            }
+            [self confirmProfileLabelRepair:repair candidate:candidate name:name epoch:epoch];
+        });
+    }});[self.tableView reloadData];
+}
+- (void)confirmProfileLabelRepair:(CanopyProfileLabelRepair *)repair candidate:(CanopySaveStore *)candidate name:(NSString *)name epoch:(NSUInteger)epoch {
+    if(epoch!=_profileEpoch || ![self profileAvailable] || self.presentedViewController)return;
+    NSString *message=[NSString stringWithFormat:@"Repair %lu display label(s) for this title. The exact selected profile remains %@ (label: %@). Original current metadata is quarantined; previous metadata, save bytes, backups and account identity are unchanged. This does not reset schema or choose a different profile.",(unsigned long)repair.repairedLabelCount,repair.selectedID,name];
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Repair profile labels only?" message:message preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){
+        (void)action;if(epoch!=self->_profileEpoch)return;++self->_profileEpoch;
+        self->_saveError=@"Label recovery canceled. No repair was applied. The previous live profile was retained; reload selection before Play.";
+        [self.tableView reloadData];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Repair labels" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        (void)action;if(epoch!=self->_profileEpoch || ![self profileAvailable])return;
+        NSUInteger next=++self->_profileEpoch;
+        [self dismissViewControllerAnimated:YES completion:^{
+            if(next!=self->_profileEpoch || ![self profileAvailable] || self.presentedViewController || candidate.sealed || candidate.recoveryRequired)return;
+            NSError *error=nil;
+            // Main-thread exclusion and metadata CAS keep final apply and the
+            // live store/name/snapshot swap indivisible with respect to Play.
+            if([self->_profiles applyLabelRepair:repair expectedSelection:repair.selectedID error:&error]) {
+                self->_saves=candidate;self->_profileID=[repair.selectedID copy];self->_profileName=[name copy];
+                self->_profileSnapshot=[repair.candidateSnapshot copy];self->_profileNeedsReload=NO;self->_saveError=nil;
+            } else {
+                self->_profileNeedsReload=YES;
+                self->_saveError=error.localizedDescription ?: @"Label repair could not be confirmed. The previous live store was retained. Reload persisted selection before Play; metadata publication may require reconciliation.";
+            }
+            [self.tableView reloadData];
+        }];
+    }]];
+    [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)askProfileName {
     if(![self profileAvailable]||self.presentedViewController)return;NSUInteger epoch=++_profileEpoch;
