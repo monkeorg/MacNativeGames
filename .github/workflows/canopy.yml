@@ -1,0 +1,50 @@
+name: Canopy public host checks
+
+on:
+  push:
+    branches:
+      - 'feat/canopy-*'
+      - 'ci/canopy-*'
+  pull_request:
+    paths:
+      - 'launcher/**'
+      - 'tools/launcher/build_canopy.py'
+      - 'tests/test_canopy_*'
+      - 'tests/canopy_library_probe.m'
+      - '.github/workflows/canopy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  canopy:
+    name: Canopy on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Configure portable Canopy CLI
+        run: cmake -S launcher -B "$RUNNER_TEMP/canopy-cli" -DCMAKE_BUILD_TYPE=Release
+      - name: Compile portable Canopy CLI
+        run: cmake --build "$RUNNER_TEMP/canopy-cli" --parallel 2
+      - name: Run synthetic Canopy tests
+        # Foundation tests visibly skip on Linux and execute on macOS.
+        # The runner's Python is sufficient; no package installation is needed.
+        run: python3 -m unittest discover -s tests -p 'test_canopy_*.py' -v
+      - name: Build unsigned iPhoneOS Canopy host with Xcode
+        if: runner.os == 'macOS'
+        run: python3 tools/launcher/build_canopy.py --out "$RUNNER_TEMP/canopy-unsigned"
+      - name: Upload build observation only
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canopy-build-observation
+          path: ${{ runner.temp }}/canopy-unsigned/build-observation.json
+          if-no-files-found: warn
+          retention-days: 7
