@@ -596,7 +596,8 @@
     "MSL used-location spans and automatic builtin search advancement reserve the existing unknown-location sentinel (upstream caller offset arithmetic excluded)",
     "eight interface base-offset/cursor additions in three MSL flattening methods and GLSL accumulated-member lookup refuse the unknown sentinel before arithmetic (other location math excluded)",
     "existing 32-bit specialization opcodes: exact operand arity, bounded shifts, unsigned negate/sign-fill, int64 signed comparison/division/remainders and signed-division overflow refusal (not a full SPIR-V validator)",
-    "ParsedIR null-constant array/literal shape and member-count narrowing; uint64 logical slot-byte charge for both reference buffers"
+    "ParsedIR null-constant array/literal shape and member-count narrowing; uint64 logical slot-byte charge for both reference buffers",
+    "two array-dimension query overloads reject empty/default narrowing and mismatched/indexed metadata before access (zero dimension values and existing default-spec evaluation preserved)"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
