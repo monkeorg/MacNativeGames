@@ -35,10 +35,16 @@ NS_ASSUME_NONNULL_BEGIN
     error:(NSError * _Nullable * _Nullable)error;
 - (nullable NSArray<NSString *> *)identitiesForTitleID:(NSString *)title
     error:(NSError * _Nullable * _Nullable)error;
+/// Reconcile only this cache's durable recorded removal under its operation
+/// lock. Opens an existing private root; absent retirement metadata is a no-op.
+/// Unknown/corrupt records, replaced identities and active leases are refused.
+- (BOOL)recoverPendingRemovalWithError:(NSError * _Nullable * _Nullable)error;
 - (nullable NSDictionary<NSString *,NSNumber *> *)usageForIdentityHash:(NSString *)identity
     titleID:(NSString *)title error:(NSError * _Nullable * _Nullable)error;
 /// Refuse active leases. Clear preserves the immutable seed; remove deletes
 /// only the exact owned identity. Never traverses symlinks or touches saves.
+/// Removal errors may occur after retirement/deletion; retry or reload invokes
+/// exact-record recovery. Unrecorded partial identities are never deleted.
 - (BOOL)clearRuntimeForIdentityHash:(NSString *)identity titleID:(NSString *)title
     error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)removeIdentityHash:(NSString *)identity titleID:(NSString *)title

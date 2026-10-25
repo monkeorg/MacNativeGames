@@ -253,6 +253,164 @@ static BOOL SCIdentity(NSDictionary *identity) {
         SCHex(identity[@"translatorSHA256"],64) && SCHex(identity[@"spirvCrossSHA256"],64) && SCHex(identity[@"preparationSHA256"],64) &&
         SCText(identity[@"chain"],128) && SCDevice(identity[@"device"]);
 }
+static NSDictionary *SCReceipt(int folder,NSString *hash,NSString *title) {
+    NSDictionary *receipt=SCParse(SCData(folder,@"identity.json",16384,YES));
+    if(![receipt isKindOfClass:NSDictionary.class] || receipt.count!=3 || !SCNumber(receipt[@"schema"],1,1) ||
+        ![receipt[@"identityHash"] isEqual:hash] || !SCIdentity(receipt[@"identity"]) ||
+        ![receipt[@"identity"][@"titleID"] isEqual:title] || ![SCDigest(SCJSON(receipt[@"identity"])) isEqual:hash])return nil;
+    return receipt;
+}
+/* One operation-owned retirement, independent of seed/receipt fingerprints.
+ * No directory without this durable record is recoverable deletion authority.
+ * Layout: magic8,title16,hash64,dir dev/ino16,lease dev/ino16,
+ * raw receipt SHA64,then SHA64 over the preceding184 bytes. */
+#define SCRetirementBytes 248u
+static void SCPut64(unsigned char *p,uint64_t n) {for(unsigned i=0;i<8;i++)p[i]=(unsigned char)(n>>(8*i));}
+static uint64_t SCGet64(const unsigned char *p) {uint64_t n=0;for(unsigned i=0;i<8;i++)n|=(uint64_t)p[i]<<(8*i);return n;}
+static int SCRetirement(int root,BOOL create) {
+    if(create && mkdirat(root,".shader-retirement",0700) && errno!=EEXIST)return -1;
+    int fd=openat(root,".shader-retirement",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if(fd>=0 && !SCPrivate(fd,YES)){close(fd);errno=EINVAL;return -1;}
+    /* Also confirms an earlier mkdir whose parent fsync failed. */
+    if(fd>=0 && create && fsync(root)){close(fd);return -1;}return fd;
+}
+static BOOL SCRetirementShape(int directory,unsigned *flags) {
+    int fd=openat(directory,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    DIR *d=fd>=0?fdopendir(fd):NULL;if(!d){if(fd>=0)close(fd);return NO;}
+    BOOL ok=YES;unsigned found=0,count=0;struct dirent *e;errno=0;
+    while((e=readdir(d))) {
+        if(!strcmp(e->d_name,".") || !strcmp(e->d_name,"..")){errno=0;continue;}
+        unsigned bit=!strcmp(e->d_name,"intent.bin")?1:!strcmp(e->d_name,".intent.tmp")?2:!strcmp(e->d_name,"target")?4:0;
+        struct stat s;
+        if(++count>3 || !bit || (found&bit) || fstatat(directory,e->d_name,&s,AT_SYMLINK_NOFOLLOW) ||
+            s.st_uid!=geteuid() || (s.st_mode&077) || (bit==4 ? !S_ISDIR(s.st_mode):
+            (!S_ISREG(s.st_mode) || s.st_nlink!=1 || s.st_size<0 || (uint64_t)s.st_size>SCRetirementBytes ||
+             (bit==1 && s.st_size!=SCRetirementBytes)))){ok=NO;break;}
+        found|=bit;errno=0;
+    }
+    if(!e && errno)ok=NO;closedir(d);if(ok)*flags=found;return ok;
+}
+static BOOL SCRecordedFD(int fd,uint64_t device,uint64_t inode,BOOL directory) {
+    struct stat s;return SCPrivate(fd,directory) && !fstat(fd,&s) &&
+        (uint64_t)s.st_dev==device && (uint64_t)s.st_ino==inode && (directory || !s.st_size);
+}
+static BOOL SCRecordedName(int parent,const char *name,uint64_t device,uint64_t inode,BOOL directory) {
+    struct stat s;return !fstatat(parent,name,&s,AT_SYMLINK_NOFOLLOW) && s.st_uid==geteuid() && !(s.st_mode&077) &&
+        (uint64_t)s.st_dev==device && (uint64_t)s.st_ino==inode &&
+        (directory ? S_ISDIR(s.st_mode):(S_ISREG(s.st_mode) && s.st_nlink==1 && !s.st_size));
+}
+static BOOL SCRetiredContents(int target,unsigned *flags) {
+    int fd=openat(target,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    DIR *d=fd>=0?fdopendir(fd):NULL;if(!d){if(fd>=0)close(fd);return NO;}
+    unsigned found=0,count=0;BOOL ok=YES;struct dirent *e;errno=0;
+    while((e=readdir(d))) {
+        if(!strcmp(e->d_name,".") || !strcmp(e->d_name,"..")){errno=0;continue;}
+        unsigned bit=!strcmp(e->d_name,"seed")?1:!strcmp(e->d_name,"runtime")?2:
+            !strcmp(e->d_name,"identity.json")?4:!strcmp(e->d_name,".lease")?8:0;struct stat s;
+        if(++count>4 || !bit || (found&bit) || fstatat(target,e->d_name,&s,AT_SYMLINK_NOFOLLOW) ||
+            s.st_uid!=geteuid() || (s.st_mode&077) || (bit<4 ? !S_ISDIR(s.st_mode):
+            (!S_ISREG(s.st_mode) || s.st_nlink!=1 || s.st_size<0 || (bit==8 ? s.st_size!=0:s.st_size>16384)))){ok=NO;break;}
+        found|=bit;errno=0;
+    }
+    if(!e && errno)ok=NO;closedir(d);if(ok)*flags=found;return ok;
+}
+static BOOL SCRetiredPayloads(int target,unsigned contents) {
+    int seed=-1,runtime=-1;BOOL ok=NO;uint64_t bytes=0,count=0;
+    if(contents&1){seed=SCChild(target,"seed",NO);if(seed<0 || !SCWalk(seed,0,&bytes,&count,NO,YES,nil))goto done;}
+    if(contents&2){runtime=SCChild(target,"runtime",NO);if(runtime<0 || !SCWalk(runtime,0,&bytes,&count,NO,NO,nil))goto done;}
+    bytes=0;count=0;
+    if(seed>=0 && (!SCWalk(seed,0,&bytes,&count,YES,YES,nil) || fsync(seed) || unlinkat(target,"seed",AT_REMOVEDIR)))goto done;
+    if(runtime>=0 && (!SCWalk(runtime,0,&bytes,&count,YES,NO,nil) || fsync(runtime) || unlinkat(target,"runtime",AT_REMOVEDIR)))goto done;
+    if(fsync(target))goto done;
+    if((contents&4) && unlinkat(target,"identity.json",0))goto done;
+    if(fsync(target))goto done;ok=YES;
+done:
+    if(seed>=0)close(seed);if(runtime>=0)close(runtime);return ok;
+}
+static BOOL SCCheckRetirementPayloads(int target) {
+    uint64_t bytes=0,count=0;const char *names[]={"seed","runtime"};
+    for(unsigned i=0;i<2;i++) {
+        int fd=SCChild(target,names[i],NO);if(fd<0)return NO;
+        BOOL ok=SCWalk(fd,0,&bytes,&count,NO,i==0,nil);close(fd);if(!ok)return NO;
+    }
+    return YES;
+}
+/* Caller holds the existing root operation lock. A missing lease is acceptable
+ * only for an already-retired, recorded, completely empty directory. */
+static BOOL SCRecoverRemoval(int root,NSString **completed,NSString **completedTitle) {
+    int retired=SCRetirement(root,NO);if(retired<0)return errno==ENOENT;
+    int target=-1,lease=-1,journal=-1;BOOL ok=NO,canonical=NO;unsigned flags=0,contents=0;
+    NSData *raw=nil;NSString *title=nil,*hash=nil,*receiptSHA=nil,*checksum=nil;
+    struct stat before={0},after={0},named={0};const unsigned char *p=NULL;
+    if(!SCRetirementShape(retired,&flags))goto done;
+    if(!flags){ok=YES;goto done;}
+    if(flags==2){ok=!unlinkat(retired,".intent.tmp",0) && !fsync(retired);goto done;}
+    if(!(flags&1) || (flags&2))goto done;
+    journal=openat(retired,"intent.bin",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if(!SCPrivate(journal,NO) || fstat(journal,&before) || before.st_size!=SCRetirementBytes)goto done;
+    raw=SCData(retired,@"intent.bin",SCRetirementBytes,YES);
+    if(raw.length!=SCRetirementBytes || fstat(journal,&after) || !SCStable(&before,&after) ||
+        fstatat(retired,"intent.bin",&named,AT_SYMLINK_NOFOLLOW) || named.st_dev!=before.st_dev || named.st_ino!=before.st_ino)goto done;
+    p=raw.bytes;
+    title=[[NSString alloc] initWithBytes:p+8 length:16 encoding:NSASCIIStringEncoding];
+    hash=[[NSString alloc] initWithBytes:p+24 length:64 encoding:NSASCIIStringEncoding];
+    receiptSHA=[[NSString alloc] initWithBytes:p+120 length:64 encoding:NSASCIIStringEncoding];
+    checksum=[[NSString alloc] initWithBytes:p+184 length:64 encoding:NSASCIIStringEncoding];
+    if(memcmp(p,"CNPYSC01",8) || !SCHex(title,16) || !SCHex(hash,64) || !SCHex(receiptSHA,64) ||
+        ![SCDigest([raw subdataWithRange:NSMakeRange(0,184)]) isEqual:checksum] || !SCGet64(p+96) || !SCGet64(p+112))goto done;
+    canonical=!fstatat(root,hash.UTF8String,&named,AT_SYMLINK_NOFOLLOW);
+    if(!canonical && errno!=ENOENT)goto done;
+    if(canonical && (flags&4))goto done;
+    if(canonical || (flags&4)) {
+        target=openat(canonical?root:retired,canonical?hash.UTF8String:"target",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+        if(!SCRecordedFD(target,SCGet64(p+88),SCGet64(p+96),YES) || !SCRetiredContents(target,&contents))goto done;
+        if(canonical && (contents!=15 || !SCReceipt(target,hash,title)))goto done;
+        if((contents&4) && ![SCDigest(SCData(target,@"identity.json",16384,YES)) isEqual:receiptSHA])goto done;
+        if(!(contents&4) && (contents&3))goto done;
+        lease=openat(target,".lease",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+        if(lease<0) {if(canonical || errno!=ENOENT || contents)goto done;}
+        else if(!SCRecordedFD(lease,SCGet64(p+104),SCGet64(p+112),NO) || flock(lease,LOCK_EX|LOCK_NB))goto done;
+        /* Revalidate a still-canonical recorded tree before moving its name.
+         * An intent alone never permits retiring newly unsupported contents. */
+        if(canonical && !SCCheckRetirementPayloads(target))goto done;
+        if(canonical && (!SCRecordedName(root,hash.UTF8String,SCGet64(p+88),SCGet64(p+96),YES) ||
+            renameatx_np(root,hash.UTF8String,retired,"target",RENAME_EXCL)))goto done;
+        if(!SCRecordedName(retired,"target",SCGet64(p+88),SCGet64(p+96),YES) || fsync(root) || fsync(retired))goto done;
+        if(lease>=0) {
+            if(!SCRetiredPayloads(target,contents) || !SCRetiredContents(target,&contents) || contents!=8 ||
+                !SCRecordedName(target,".lease",SCGet64(p+104),SCGet64(p+112),NO) || unlinkat(target,".lease",0) || fsync(target))goto done;
+        }
+        if(!SCRetiredContents(target,&contents) || contents || fsync(target) ||
+            !SCRecordedName(retired,"target",SCGet64(p+88),SCGet64(p+96),YES) || unlinkat(retired,"target",AT_REMOVEDIR))goto done;
+    }
+    if(fsync(root) || fsync(retired) || fstat(journal,&after) || !SCStable(&before,&after) ||
+        fstatat(retired,"intent.bin",&named,AT_SYMLINK_NOFOLLOW) || named.st_dev!=before.st_dev || named.st_ino!=before.st_ino ||
+        unlinkat(retired,"intent.bin",0) || fsync(retired))goto done;
+    if(completed)*completed=hash;if(completedTitle)*completedTitle=title;ok=YES;
+done:
+    if(journal>=0)close(journal);if(lease>=0)close(lease);if(target>=0)close(target);close(retired);return ok;
+}
+static BOOL SCRecordRemoval(int root,NSString *hash,NSString *title,int folder,int lease) {
+    int retired=SCRetirement(root,YES);if(retired<0)return NO;
+    struct stat directory,held;unsigned flags=0;BOOL ok=NO;
+    NSData *receipt=SCData(folder,@"identity.json",16384,YES);NSString *receiptSHA=SCDigest(receipt);
+    unsigned char record[SCRetirementBytes]={0};NSString *checksum=nil;
+    if(!receipt || !SCHex(receiptSHA,64) || !SCReceipt(folder,hash,title) || !SCIdentityShape(folder) ||
+        fstat(folder,&directory) || fstat(lease,&held) || !SCPrivate(folder,YES) || !SCPrivate(lease,NO) || held.st_size ||
+        !SCRecordedName(root,hash.UTF8String,(uint64_t)directory.st_dev,(uint64_t)directory.st_ino,YES) ||
+        !SCRecordedName(folder,".lease",(uint64_t)held.st_dev,(uint64_t)held.st_ino,NO) ||
+        !SCRetirementShape(retired,&flags) || flags)goto done;
+    memcpy(record,"CNPYSC01",8);memcpy(record+8,title.UTF8String,16);memcpy(record+24,hash.UTF8String,64);
+    SCPut64(record+88,(uint64_t)directory.st_dev);SCPut64(record+96,(uint64_t)directory.st_ino);
+    SCPut64(record+104,(uint64_t)held.st_dev);SCPut64(record+112,(uint64_t)held.st_ino);memcpy(record+120,receiptSHA.UTF8String,64);
+    checksum=SCDigest([NSData dataWithBytes:record length:184]);if(!SCHex(checksum,64))goto done;
+    memcpy(record+184,checksum.UTF8String,64);
+    if(!SCWrite(retired,".intent.tmp",[NSData dataWithBytes:record length:sizeof(record)]) ||
+        renameatx_np(retired,".intent.tmp",retired,"intent.bin",RENAME_EXCL) || fsync(retired))goto done;
+    ok=YES;
+done:
+    close(retired);return ok;
+}
 @interface CanopyShaderCacheLease ()
 - (instancetype)initWithRoot:(NSURL *)root identity:(NSString *)identity fd:(int)fd metrics:(NSDictionary *)metrics;
 @end
@@ -290,7 +448,7 @@ static BOOL SCIdentity(NSDictionary *identity) {
     if(!SCHex(title,16) || !SCHex(romfs,64) || !SCHex(manifestSHA,64) || !SCText(chain,128) || !SCDevice(device))goto finish;
     if(cancel && cancel())goto finish;
     verificationStage=2;device=SCParse(SCJSON(device));if(!SCDevice(device))goto finish;
-    verificationStage=3;root=SCRoot(_root,YES,YES);if(root<0)goto finish;lock=SCLock(root);if(lock<0)goto finish;
+    verificationStage=3;root=SCRoot(_root,YES,YES);if(root<0)goto finish;lock=SCLock(root);if(lock<0 || !SCRecoverRemoval(root,NULL,NULL))goto finish;
     verificationStage=4;input=SCRoot(source,NO,NO);if(input<0)goto finish;
     verificationStage=5;raw=SCData(input,@"seed-manifest.json",SCManifestBytes,NO);
     if(![SCDigest(raw) isEqual:manifestSHA])goto finish;
@@ -376,18 +534,17 @@ finish:
 /* Storage controls validate the class-owned identity receipt before walking.
  * No actual device details or caller/source paths appear in returned metrics. */
 - (NSDictionary *)receiptAt:(int)folder identity:(NSString *)hash title:(NSString *)title {
-    NSDictionary *receipt=SCParse(SCData(folder,@"identity.json",16384,YES));
-    if(![receipt isKindOfClass:NSDictionary.class] || receipt.count!=3 || !SCNumber(receipt[@"schema"],1,1) ||
-        ![receipt[@"identityHash"] isEqual:hash] || ![receipt[@"identity"] isKindOfClass:NSDictionary.class] ||
-        !SCIdentity(receipt[@"identity"]) || ![receipt[@"identity"][@"titleID"] isEqual:title] ||
-        ![SCDigest(SCJSON(receipt[@"identity"])) isEqual:hash]) {
-        return nil;
-    }
-    return receipt;
+    return SCReceipt(folder,hash,title);
+}
+- (BOOL)recoverPendingRemovalWithError:(NSError **)error {
+    int root=SCRoot(_root,NO,YES),lock=root<0?-1:SCLock(root);
+    BOOL ok=lock>=0 && SCRecoverRemoval(root,NULL,NULL);
+    if(lock>=0)close(lock);if(root>=0)close(root);if(!ok && error)*error=SCError(1);return ok;
 }
 - (NSArray *)identitiesForTitleID:(NSString *)title error:(NSError **)error {
     if(!SCHex(title,16)){if(error)*error=SCError(1);return nil;}int root=SCRoot(_root,NO,YES),lock=root<0 ? -1:SCLock(root);
     if(lock<0){if(root>=0)close(root);if(error)*error=SCError(1);return nil;}
+    if(!SCRecoverRemoval(root,NULL,NULL)){close(lock);close(root);if(error)*error=SCError(1);return nil;}
     NSMutableArray *result=[NSMutableArray new];int fd=openat(root,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);DIR *d=fd>=0 ? fdopendir(fd):NULL;
     if(!d){if(fd>=0)close(fd);close(lock);close(root);if(error)*error=SCError(1);return nil;}
     BOOL ok=YES;NSUInteger count=0;struct dirent *e;errno=0;
@@ -401,8 +558,13 @@ finish:
 }
 - (NSDictionary *)controlIdentity:(NSString *)hash title:(NSString *)title action:(unsigned)action error:(NSError **)error {
     int root=-1,lock=-1,folder=-1,lease=-1,seed=-1,runtime=-1;NSDictionary *result=nil;BOOL busy=NO;
+    NSString *completed=nil,*completedTitle=nil;
     if(!SCHex(hash,64) || !SCHex(title,16))goto done;
     root=SCRoot(_root,NO,YES);if(root<0)goto done;lock=SCLock(root);if(lock<0){busy=YES;goto done;}
+    if(!SCRecoverRemoval(root,&completed,&completedTitle))goto done;
+    if(action==2 && [completed isEqual:hash] && [completedTitle isEqual:title]) {
+        result=@{@"seedBytes":@0,@"runtimeBytes":@0,@"filesAndDirectories":@0,@"clearedBytes":@0};goto done;
+    }
     folder=SCChild(root,hash.UTF8String,NO);if(folder<0 || ![self receiptAt:folder identity:hash title:title] || !SCIdentityShape(folder))goto done;
     seed=SCChild(folder,"seed",NO);runtime=SCChild(folder,"runtime",NO);if(seed<0 || runtime<0)goto done;
     lease=openat(folder,".lease",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);struct stat s;
@@ -412,9 +574,13 @@ finish:
     if(!SCWalk(seed,0,&seedBytes,&count,NO,YES,nil) || !SCWalk(runtime,0,&runtimeBytes,&count,NO,NO,nil))goto done;
     if(action==1) {uint64_t bytes=0,n=0;if(!SCWalk(runtime,0,&bytes,&n,YES,NO,nil) ||
         !SCWrite(runtime,".canopy-private-cache",[NSData data]) || fsync(runtime))goto done;}
-    if(action==2) {uint64_t bytes=0,n=0;if(!SCWalk(seed,0,&bytes,&n,YES,YES,nil) || !SCWalk(runtime,0,&bytes,&n,YES,NO,nil))goto done;
-        if(unlinkat(folder,"seed",AT_REMOVEDIR) || unlinkat(folder,"runtime",AT_REMOVEDIR) || unlinkat(folder,"identity.json",0) ||
-            unlinkat(folder,".lease",0) || unlinkat(root,hash.UTF8String,AT_REMOVEDIR) || fsync(root))goto done;}
+    if(action==2) {
+        if(!SCRecordRemoval(root,hash,title,folder,lease))goto done;
+        /* Recovery reacquires the recorded genuine EX lease under the still
+         * held root lock; do not conflict with our own separate flock FD. */
+        close(runtime);runtime=-1;close(seed);seed=-1;close(lease);lease=-1;close(folder);folder=-1;
+        if(!SCRecoverRemoval(root,NULL,NULL))goto done;
+    }
     result=@{@"seedBytes":@(seedBytes),@"runtimeBytes":@(runtimeBytes),@"filesAndDirectories":@(count),@"clearedBytes":@(action ? (action==1 ? runtimeBytes:seedBytes+runtimeBytes):0)};
 done:
     if(runtime>=0)close(runtime);if(seed>=0)close(seed);if(lease>=0)close(lease);if(folder>=0)close(folder);if(lock>=0)close(lock);if(root>=0)close(root);
