@@ -42,8 +42,13 @@ static BOOL copyDirectory(int source, int dest, unsigned depth, CopyBudget *budg
     if (fstat(source,&directory)) return failure(error,@"Cannot read the save folder.");
     if (directory.st_dev == budget->destinationDevice && directory.st_ino == budget->destinationInode)
         return failure(error,@"Select the console save folder, not a folder containing this app's save storage.");
-    DIR *dir = fdopendir(dup(source));
-    if (!dir) return failure(error, @"Cannot read the save folder.");
+    int iteration = dup(source);
+    if (iteration < 0) return failure(error, @"Cannot read the save folder.");
+    DIR *dir = fdopendir(iteration);
+    if (!dir) {
+        close(iteration); // Ownership transfers to closedir only when fdopendir succeeds.
+        return failure(error, @"Cannot read the save folder.");
+    }
     BOOL ok = YES;
     struct dirent *entry;
     errno = 0;
