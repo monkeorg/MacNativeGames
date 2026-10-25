@@ -424,6 +424,16 @@
       },
       "patch": "0037-shared-member-metadata-preparation.patch",
       "sha256": "b1a0b22a72e6bb77e2dd0fd0bc6171136915280f1c767a43d50d919dc46d07ae"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "12750626485ef2835a27869cac3f58facd04f13c2a0038bf1b60c8bc73740d63"
+      },
+      "before": {
+        "spirv_glsl.cpp": "d18ab68492932e75df49c50e06ea7224e0ecdb6b6a6990db58aa88cd1540dc42"
+      },
+      "patch": "0038-flattened-member-path-bounds.patch",
+      "sha256": "7b9eacd45987977cdd005e2273e486533404ec82580b04e424b2a78cb5cd4b17"
     }
   ],
   "schemaVersion": 1

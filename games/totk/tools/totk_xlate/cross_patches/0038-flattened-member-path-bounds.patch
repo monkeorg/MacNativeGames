@@ -1,0 +1,82 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -3002,6 +3002,9 @@
+ void CompilerGLSL::emit_flattened_io_block_member(const std::string &basename, const SPIRType &type, const char *qual,
+                                                   const SmallVector<uint32_t> &indices)
+ {
++	if (indices.empty())
++		SPIRV_CROSS_THROW("Flattened member path is empty.");
++
+ 	uint32_t member_type_id = type.self;
+ 	const SPIRType *member_type = &type;
+ 	const SPIRType *parent_type = nullptr;
+@@ -3009,6 +3012,8 @@
+ 	for (auto &index : indices)
+ 	{
+ 		canopy_cross_budget::step();
++		if (index >= member_type->member_types.size())
++			SPIRV_CROSS_THROW("Flattened member path exceeds the type member list.");
+ 		flattened_name += "_";
+ 		flattened_name += to_member_name(*member_type, index);
+ 		parent_type = member_type;
+@@ -3027,6 +3032,8 @@
+ 	ParsedIR::sanitize_underscores(flattened_name);
+ 
+ 	uint32_t last_index = indices.back();
++	if (last_index >= parent_type->member_types.size())
++		SPIRV_CROSS_THROW("Flattened member alias exceeds the type member list.");
+ 
+ 	// Pass in the varying qualifier here so it will appear in the correct declaration order.
+ 	// Replace member name while emitting it so it encodes both struct name and member name.
+@@ -3041,17 +3048,27 @@
+ void CompilerGLSL::emit_flattened_io_block_struct(const std::string &basename, const SPIRType &type, const char *qual,
+                                                   const SmallVector<uint32_t> &indices)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	auto sub_indices = indices;
+ 	sub_indices.push_back(0);
+ 
+ 	const SPIRType *member_type = &type;
+ 	for (auto &index : indices)
++	{
++		canopy_cross_budget::step();
++		if (index >= member_type->member_types.size())
++			SPIRV_CROSS_THROW("Flattened member path exceeds the type member list.");
+ 		member_type = &get<SPIRType>(member_type->member_types[index]);
+-
+-	assert(member_type->basetype == SPIRType::Struct);
++	}
++
++	if (member_type->basetype != SPIRType::Struct)
++		SPIRV_CROSS_THROW("Flattened I/O block member is not a struct.");
+ 
+ 	if (!member_type->array.empty())
+ 		SPIRV_CROSS_THROW("Cannot flatten array of structs in I/O blocks.");
++
++	if (member_type->member_types.size() > (std::numeric_limits<uint32_t>::max)())
++		SPIRV_CROSS_THROW("Flattened member count exceeds the index range.");
+ 
+ 	for (uint32_t i = 0; i < uint32_t(member_type->member_types.size()); i++)
+ 	{
+@@ -11876,12 +11893,21 @@
+ void CompilerGLSL::store_flattened_struct(const string &basename, uint32_t rhs_id, const SPIRType &type,
+                                           const SmallVector<uint32_t> &indices)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	SmallVector<uint32_t> sub_indices = indices;
+ 	sub_indices.push_back(0);
+ 
+ 	auto *member_type = &type;
+ 	for (auto &index : indices)
++	{
++		canopy_cross_budget::step();
++		if (index >= member_type->member_types.size())
++			SPIRV_CROSS_THROW("Flattened member path exceeds the type member list.");
+ 		member_type = &get<SPIRType>(member_type->member_types[index]);
++	}
++
++	if (member_type->member_types.size() > (std::numeric_limits<uint32_t>::max)())
++		SPIRV_CROSS_THROW("Flattened member count exceeds the index range.");
+ 
+ 	for (uint32_t i = 0; i < uint32_t(member_type->member_types.size()); i++)
+ 	{
