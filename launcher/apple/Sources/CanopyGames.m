@@ -29,6 +29,16 @@ static UITableViewCell *GamesCell(UITableView *table, NSString *title, NSString 
     cell.imageView.image = nil;
     return cell;
 }
+static NSString *PreparationIOSummary(NSDictionary *metrics) {
+    if(![metrics isKindOfClass:NSDictionary.class] || ![metrics[@"scope"] isEqual:@"logicalPayloadIO"])return nil;
+    NSArray *keys=@[@"streamedBytes",@"writtenBytes",@"clonedLogicalBytes",@"comparedEqualBytes"];
+    NSMutableArray *values=[NSMutableArray array];
+    for(NSString *key in keys) {
+        NSNumber *value=metrics[key];if(![value isKindOfClass:NSNumber.class] || value.longLongValue<0)return nil;
+        [values addObject:[NSByteCountFormatter stringFromByteCount:value.longLongValue countStyle:NSByteCountFormatterCountStyleFile]];
+    }
+    return [NSString stringWithFormat:@"Logical payload I/O: streamed %@; written %@; old snapshots cloned %@; matching retained spans %@. These observations do not measure physical space or establish publication.",values[0],values[1],values[2],values[3]];
+}
 static void GamesAlert(UIViewController *owner, NSString *title, NSString *message) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
@@ -369,6 +379,8 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 @property(nonatomic, copy) CanopySettingsApply applySettings;
 @property(nonatomic, copy) CanopySettingsStateProvider settingStates;
 @property(nonatomic, strong) CanopyControllers *controllers;
+@property(nonatomic, copy) void (^prepareUpdate)(void);
+@property(nonatomic, copy) BOOL (^libraryIdle)(void);
 - (instancetype)initWithEntry:(NSDictionary *)entry settings:(CanopySettings *)settings;
 @end
 @implementation CanopyGameDetails {
@@ -397,6 +409,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 - (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
 - (BOOL)profileAvailable {
     return !self.settingStates && !_saveLoading && !_saves.sealed &&
+        (!self.libraryIdle || self.libraryIdle()) &&
         ![CanopySessionController nativeSessionOwnsProcess] &&
         UIApplication.sharedApplication.applicationState==UIApplicationStateActive &&
         self.navigationController.topViewController==self;
@@ -499,8 +512,10 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 - (void)viewWillDisappear:(BOOL)animated {[super viewWillDisappear:animated];if(self.isMovingFromParentViewController||self.isBeingDismissed)++_profileEpoch;}
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 2 ? 7 : section < 3 ? 6 : section == 3 ? 4 : 1; }
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Prepared assets",@"Graphics preferences",@"Control preferences",@"Saves & native session",@"Language"][(NSUInteger)section]; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+    (void)tableView;return section==3 ? (self.prepareUpdate ? 5:4) : section==2 ? 7 : section<3 ? 6:1;
+}
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Prepared assets",@"Graphics preferences",@"Control preferences",self.prepareUpdate ? @"Updates, saves & native session" : @"Saves & native session",@"Language"][(NSUInteger)section]; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section == 0) {
@@ -527,6 +542,12 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         UITableViewCell *cell = GamesCell(tableView,titles[(NSUInteger)path.row],details[(NSUInteger)path.row]); cell.selectionStyle = UITableViewCellSelectionStyleNone; return cell;
     }
     if (path.section == 3) {
+        if(path.row==4) {
+            UITableViewCell *cell=GamesCell(tableView,@"Prepare update",@"Reselect the original base, matching update and local keys. Reuse is verified against this exact prepared generation.");
+            if([self profileAvailable] && !self.presentedViewController)cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
+            else {cell.selectionStyle=UITableViewCellSelectionStyleNone;cell.textLabel.textColor=UIColor.secondaryLabelColor;}
+            return cell;
+        }
         if(path.row==3) {
             UITableViewCell *cell=GamesCell(tableView,@"Save profile",_saveLoading ? @"Opening the actual private profile…" : _profileName ?: @"Reload profile selection");
             if(!self.settingStates&&!_saveLoading&&!_saves.sealed&&![CanopySessionController nativeSessionOwnsProcess])cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;
@@ -592,6 +613,8 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES]; if (!path.section) return;
     if (path.section == 3) {
+        if(self.libraryIdle && !self.libraryIdle())return;
+        if(path.row==4){if(self.prepareUpdate && [self profileAvailable] && !self.presentedViewController)self.prepareUpdate();return;}
         if(path.row==3){[self chooseSaveProfile];return;}
         if(path.row==2) {
             if(self.settingStates || _saves.sealed || [CanopySessionController nativeSessionOwnsProcess])return;
@@ -599,7 +622,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
             NSURL *base=[support URLByAppendingPathComponent:@"Canopy" isDirectory:YES];
             CanopyAddonsController *addons=CanopyMakeAddonsController(_entry,[base URLByAppendingPathComponent:@"Prepared" isDirectory:YES],[base URLByAppendingPathComponent:@"Caches" isDirectory:YES],_settings);
             __weak CanopyGameDetails *owner=self;
-            addons.mutationAllowed=^BOOL {CanopyGameDetails *current=owner;return current && !current.settingStates && !current->_saves.sealed && ![CanopySessionController nativeSessionOwnsProcess];};
+            addons.mutationAllowed=^BOOL {CanopyGameDetails *current=owner;return current && !current.settingStates && !current->_saves.sealed && (!current.libraryIdle || current.libraryIdle()) && ![CanopySessionController nativeSessionOwnsProcess];};
             [self.navigationController pushViewController:addons animated:YES];return;
         }
         if (self.settingStates || _saveLoading || _saves.sealed || [CanopySessionController nativeSessionOwnsProcess]) return;
@@ -658,7 +681,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     GamesAnchor(sheet,tableView,path); [self presentViewController:sheet animated:YES completion:nil];
 }
 - (void)startNativeSession {
-    if(![self profileAvailable] || _profileNeedsReload || !_profileID)return;
+    if(![self profileAvailable] || self.presentedViewController || _profileNeedsReload || !_profileID)return;
     NSError *profileError=nil;NSDictionary *current=[_profiles snapshotForTitleID:_entry[@"titleID"] error:&profileError];
     if(!current || ![current[@"selectedID"] isEqual:_profileID]){_profileNeedsReload=YES;_saveError=profileError.localizedDescription ?: @"The persisted profile changed. Reload the actual selected profile before Play.";[self.tableView reloadData];return;}
     if (![CanopyRuntime trustedProfileForTitleID:_entry[@"titleID"]] || !_saves || _saves.sealed || _saves.recoveryRequired || !self.controllers) return;
@@ -754,6 +777,7 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     BOOL _refreshing, _cancelRequested;
     NSUInteger _scanToken;
     struct mng_preparation_selection _selection;
+    CanopyGameDetails *_selectionOrigin;
     dispatch_queue_t _catalogQueue;
 }
 - (void)viewDidLoad {
@@ -855,7 +879,16 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES]; if ([self working]) return;
     if (!path.section) {
-        if (_entries.count) { CanopyGameDetails *detail = [[CanopyGameDetails alloc] initWithEntry:_entries[(NSUInteger)path.row] settings:_settings]; detail.controllers = _controllers; [self.navigationController pushViewController:detail animated:YES]; }
+        if (_entries.count) {
+            NSDictionary *entry=_entries[(NSUInteger)path.row];
+            CanopyGameDetails *detail=[[CanopyGameDetails alloc] initWithEntry:entry settings:_settings];detail.controllers=_controllers;
+            NSDictionary *selected=@{@"titleID":[entry[@"titleID"] copy],@"generationID":[entry[@"generationID"] copy]};
+            __weak CanopyGamesController *owner=self;__weak CanopyGameDetails *origin=detail;
+            detail.libraryIdle=^BOOL {CanopyGamesController *current=owner;return current && ![current working] && ![CanopySessionController nativeSessionOwnsProcess];};
+            detail.prepareUpdate=^{CanopyGamesController *current=owner;CanopyGameDetails *sender=origin;
+                if(current && sender)[current beginUpdateForEntry:selected origin:sender];};
+            [self.navigationController pushViewController:detail animated:YES];
+        }
         return;
     }
     if (path.row == 0) [self chooseSource];
@@ -911,6 +944,28 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
         !_preparation.busy && !_refreshing && ![CanopySessionController nativeSessionOwnsProcess];
 }
 - (void)chooseSource { [self beginSelectionForJob:nil]; }
+- (BOOL)selectionOriginMatches:(uint64_t)epoch {
+    if(!_selection.origin)return _selectionOrigin==nil && _selection.epoch==epoch;
+    return _selectionOrigin && mng_selection_origin_is(&_selection,epoch,(uintptr_t)(__bridge void *)_selectionOrigin);
+}
+- (void)beginUpdateForEntry:(NSDictionary *)entry origin:(CanopyGameDetails *)origin {
+    if([self working] || [CanopySessionController nativeSessionOwnsProcess] ||
+        UIApplication.sharedApplication.applicationState!=UIApplicationStateActive ||
+        self.navigationController.topViewController!=origin || origin.presentedViewController || self.presentedViewController ||
+        ![origin profileAvailable] || !mng_selection_begin_reuse(&_selection,[entry[@"titleID"] UTF8String],
+            [entry[@"generationID"] UTF8String],(uintptr_t)(__bridge void *)origin))return;
+    _selectionOrigin=origin;uint64_t epoch=_selection.epoch;[self refreshUI];
+    [self.navigationController popToViewController:self animated:YES];
+    id<UIViewControllerTransitionCoordinator> transition=self.navigationController.transitionCoordinator;
+    if(transition) {
+        BOOL registered=[transition animateAlongsideTransition:nil completion:^(id<UIViewControllerTransitionCoordinatorContext> context){
+            if(![self selectionOriginMatches:epoch])return;
+            if(context.isCancelled){[self clearSelection];[self refreshUI];}
+            else [self presentModeAtEpoch:epoch];
+        }];
+        if(!registered && [self selectionOriginMatches:epoch]){[self clearSelection];[self refreshUI];}
+    } else [self presentModeAtEpoch:epoch];
+}
 - (void)beginSelectionForJob:(NSString *)job {
     if(![self selectionAvailable] || [self working] || self.presentedViewController ||
         !mng_selection_begin(&_selection,job ? job.UTF8String : NULL))return;
@@ -918,8 +973,22 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
 }
 - (void)presentModeAtEpoch:(uint64_t)epoch {
     if(!mng_selection_is(&_selection,epoch,MNG_SELECT_MODE))return;
-    if(![self selectionAvailable] || self.presentedViewController){[self clearSelection];[self refreshUI];return;}
+    if(![self selectionAvailable] || ![self selectionOriginMatches:epoch] || self.presentedViewController){[self clearSelection];[self refreshUI];return;}
     (void)[_controllers setFocused:NO];[self refreshUI];
+    if(_selection.origin) {
+        NSString *message=[NSString stringWithFormat:@"Title %@ • generation %@. Reselect your original base, matching update and local keys. Native verification must match this exact reusable generation and its title/application owner. The highest declared matching update is selected automatically; preparation does not grant gameplay compatibility.",[NSString stringWithUTF8String:_selection.reuse_title],[NSString stringWithUTF8String:_selection.reuse_generation]];
+        UIAlertController *setup=[UIAlertController alertControllerWithTitle:@"Prepare update for this title" message:message preferredStyle:UIAlertControllerStyleAlert];
+        [setup addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){
+            (void)action;if(mng_selection_is(&self->_selection,epoch,MNG_SELECT_MODE) && [self selectionOriginMatches:epoch]){[self clearSelection];[self refreshUI];}
+        }]];
+        [setup addAction:[UIAlertAction actionWithTitle:@"Choose original base" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            (void)action;if(!mng_selection_is(&self->_selection,epoch,MNG_SELECT_MODE) || ![self selectionOriginMatches:epoch])return;
+            if(![self selectionAvailable]){[self clearSelection];[self refreshUI];return;}
+            if(!mng_selection_choose(&self->_selection,epoch,MNG_SELECT_PAIRED))return;
+            [self dismissViewControllerAnimated:YES completion:^{[self presentSelectionPickerAtEpoch:epoch];}];
+        }]];
+        [self presentViewController:setup animated:YES completion:nil];return;
+    }
     NSString *job=_selection.job[0] ? [NSString stringWithUTF8String:_selection.job] : nil;
     NSString *message=job ? [NSString stringWithFormat:@"Job %@. Select its original mode and inputs again. Native verification must match the retained job; filenames and this ID do not establish a match. Add-ons must use the exact base's Add-ons screen.",job] :
         @"Choose base-only preparation, base plus matching update, or a folder. To update an existing title, select its original base again. The latest declared matching update revision is selected automatically.";
@@ -938,10 +1007,11 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     [self presentViewController:menu animated:YES completion:nil];
 }
 - (void)clearSelection {
-    _pendingSource=nil;_pendingUpdate=nil;mng_selection_cancel(&_selection);
+    _pendingSource=nil;_pendingUpdate=nil;_selectionOrigin=nil;mng_selection_cancel(&_selection);
 }
 - (void)presentSelectionPickerAtEpoch:(uint64_t)epoch {
-    if(![self selectionAvailable] || _selection.epoch!=epoch || _selection.picker || self.presentedViewController)return;
+    if(_selection.epoch!=epoch || _selection.picker || self.presentedViewController)return;
+    if(![self selectionAvailable] || ![self selectionOriginMatches:epoch]){[self clearSelection];[self refreshUI];return;}
     BOOL keys=_selection.stage==MNG_SELECT_KEYS;
     if(!keys && _selection.stage!=MNG_SELECT_SOURCE && _selection.stage!=MNG_SELECT_UPDATE)return;
     BOOL folder=!keys && _selection.mode>=MNG_SELECT_NCA_FOLDER;
@@ -952,7 +1022,8 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     [self presentViewController:picker animated:YES completion:nil];
 }
 - (void)chooseKeysAtEpoch:(uint64_t)epoch {
-    if(![self selectionAvailable] || self.presentedViewController || !mng_selection_is(&_selection,epoch,MNG_SELECT_KEY_PROMPT) || !_pendingSource)return;
+    if(self.presentedViewController || !mng_selection_is(&_selection,epoch,MNG_SELECT_KEY_PROMPT) || !_pendingSource)return;
+    if(![self selectionAvailable] || ![self selectionOriginMatches:epoch]){[self clearSelection];[self refreshUI];return;}
     UIAlertController *explanation=[UIAlertController alertControllerWithTitle:@"Choose your local key file"
         message:@"Keys are used in memory for this attempt. Canopy retains no key file, path or bookmark. Resume requires reselecting local inputs and native verification of the retained job."
         preferredStyle:UIAlertControllerStyleAlert];
@@ -960,7 +1031,9 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
         (void)action;if(mng_selection_is(&self->_selection,epoch,MNG_SELECT_KEY_PROMPT)){[self clearSelection];[self refreshUI];}
     }]];
     [explanation addAction:[UIAlertAction actionWithTitle:@"Choose file" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
-        (void)action;if(![self selectionAvailable] || !mng_selection_request_keys(&self->_selection,epoch))return;
+        (void)action;if(!mng_selection_is(&self->_selection,epoch,MNG_SELECT_KEY_PROMPT))return;
+        if(![self selectionAvailable] || ![self selectionOriginMatches:epoch]){[self clearSelection];[self refreshUI];return;}
+        if(!mng_selection_request_keys(&self->_selection,epoch))return;
         [self dismissViewControllerAnimated:YES completion:^{[self presentSelectionPickerAtEpoch:epoch];}];
     }]];
     [self presentViewController:explanation animated:YES completion:nil];
@@ -972,7 +1045,7 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
     uintptr_t token=(uintptr_t)(__bridge void *)controller;
     if(!mng_selection_owns(&_selection,token))return;
-    if(![self selectionAvailable] || urls.count!=1 || !urls.firstObject.isFileURL){[self clearSelection];[self refreshUI];return;}
+    if(![self selectionAvailable] || ![self selectionOriginMatches:_selection.epoch] || urls.count!=1 || !urls.firstObject.isFileURL){[self clearSelection];[self refreshUI];return;}
     NSURL *url=urls.firstObject;unsigned stage=_selection.stage;uint64_t epoch=_selection.epoch;
     if(stage!=MNG_SELECT_KEYS && _selection.mode<=MNG_SELECT_PAIRED && ![@[@"nsp",@"xci"] containsObject:url.pathExtension.lowercaseString]) {
         [self clearSelection];[self refreshUI];GamesAlert(self,@"Unsupported preparation input",@"Choose an NSP or XCI container, or explicitly select a folder mode.");return;
@@ -990,10 +1063,14 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
 }
 - (void)startSource:(NSURL *)source update:(NSURL *)update keys:(NSURL *)keys epoch:(uint64_t)epoch {
     if(!mng_selection_is(&_selection,epoch,MNG_SELECT_READY))return;
-    if(![self selectionAvailable] || self.presentedViewController){[self clearSelection];_status=@"Preparation is unavailable. Reselect inputs after other operations finish.";[self refreshUI];return;}
-    char jobText[33];unsigned mode=0;
-    if(!mng_selection_take(&_selection,epoch,jobText,&mode))return;
-    NSString *job=jobText[0] ? [NSString stringWithUTF8String:jobText] : nil;
+    if(![self selectionAvailable] || ![self selectionOriginMatches:epoch] || self.presentedViewController){[self clearSelection];_status=@"Preparation is unavailable. Reselect inputs after other operations finish.";[self refreshUI];return;}
+    struct mng_preparation_request request;
+    if(!mng_selection_take_request(&_selection,epoch,(uintptr_t)(__bridge void *)_selectionOrigin,&request))return;
+    _selectionOrigin=nil;
+    unsigned mode=request.mode;
+    NSString *job=request.job[0] ? [NSString stringWithUTF8String:request.job] : nil;
+    NSString *reuseTitle=request.reuse_title[0] ? [NSString stringWithUTF8String:request.reuse_title] : nil;
+    NSString *reuseGeneration=request.reuse_generation[0] ? [NSString stringWithUTF8String:request.reuse_generation] : nil;
     _cancelRequested=NO;_progressText=nil;_status=nil;
     void (^completion)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable)=^(NSDictionary *result,NSError *error){
         self->_cancelRequested=NO;self->_progressText=nil;
@@ -1001,11 +1078,13 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
         if(self->_diagnostics.enabled)(void)[[self diagnosticSources] snapshotWithDiagnostics:self->_diagnostics recordIfEnabled:YES];
         if(result)self->_status=@"Prepared assets were published. The library will verify the current generation; Play requires an approved native profile.";
         else self->_status=error.localizedDescription ?: @"Preparation ended without a published result. Reselect the retained job from Storage to resume.";
+        NSString *observed=PreparationIOSummary(result[@"ioMetrics"] ?: error.userInfo[@"ioMetrics"]);
+        if(observed)self->_status=[self->_status stringByAppendingFormat:@"\n%@",observed];
         // Native completion, including publication uncertainty, stays authoritative.
         [self reloadCatalog];[self refreshUI];
     };
     BOOL accepted=mode>=MNG_SELECT_NCA_FOLDER ? [_preparation startFolderURL:source keysURL:keys jobIdentifier:job completion:completion] :
-        [_preparation startSourceURL:source updateURL:update keysURL:keys jobIdentifier:job completion:completion];
+        [_preparation startSourceURL:source updateURL:update keysURL:keys reuseTitleID:reuseTitle reuseGenerationID:reuseGeneration jobIdentifier:job completion:completion];
     if(accepted){_observedPhase=nil;_phaseDone=0;_phaseTotal=0;_lastPreparationError=nil;_lastPreparationResult=nil;}
     else _status=@"The job could not start. Its retained data is unchanged; select it in Storage and reselect inputs.";
     [self refreshUI];

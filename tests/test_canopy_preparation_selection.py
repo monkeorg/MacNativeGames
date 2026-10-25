@@ -42,3 +42,12 @@ class PreparationSelectionTests(unittest.TestCase):
 
     def test_invalid_ids_modes_duplicate_callbacks_and_epoch_overflow_refused(self):
         self.scenario('invalid')
+
+    def test_selected_update_copies_exact_ids_and_requires_epoch_origin_and_paired_route(self):
+        self.scenario('reuse')
+
+    def test_selected_update_cancel_clears_candidate_before_generic_resume_or_folder(self):
+        self.scenario('reuse-cancel')
+
+    def test_selected_update_invalid_ids_origin_and_active_flow_refuse_atomically(self):
+        self.scenario('reuse-invalid')
