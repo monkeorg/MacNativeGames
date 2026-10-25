@@ -70,6 +70,50 @@ class ExecutionFixture(unittest.TestCase):
         self.assertIn('0x1c0\tsvc', sites)
         self.assertIn('\tsvc\t1\t', (self.output/'rewritten/fixture.gates.tsv').read_text())
 
+    @unittest.skipUnless(shutil.which('cc'), 'requires native C compiler for actual Module ABI')
+    def test_generated_original_metadata_compiles_against_production_module_abi(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source=Path(temporary)/'metadata.c';binary=Path(temporary)/'metadata'
+            source.write_text('''#define _POSIX_C_SOURCE 200809L
+#include "runtime.h"
+#include "fixture_module.h"
+#include <assert.h>
+#include <string.h>
+int main(void) {
+    assert(sizeof(modules)/sizeof(*modules)==1);
+    Module *m=modules;
+    assert(!strcmp(m->name,"fixture") && strlen(m->digest)==64);
+    assert(m->nsym==5 && m->nreloc==1 && m->ngate==1);
+    assert(!strcmp(m->symbols[3].name,"fixture_tls") && m->symbols[3].value==0x180);
+    assert(!strcmp(m->symbols[4].name,"fixture_service") && m->symbols[4].value==0x1c0);
+    assert(m->relocs[0].where==0x8000 && m->relocs[0].kind==1027 && m->relocs[0].addend==0x140);
+    assert(m->gates[0].arg==1 && !m->gates[0].timer && m->gates[0].original==0x1c0);
+    assert(m->gates[0].ret>=m->patch_off && m->gates[0].ret<m->file_size);
+    return 0;
+}
+''')
+            build=subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',
+                '-I'+str(ROOT/'games/totk/runtime'),'-I'+str(self.output/'generated'),
+                str(source),'-o',str(binary)],capture_output=True,text=True,timeout=30)
+            self.assertEqual(build.returncode,0,build.stderr)
+            run=subprocess.run([str(binary)],capture_output=True,text=True,timeout=10)
+            self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+
+    def test_fixture_metadata_refuses_wrong_layout_relocation_symbols_and_gate(self):
+        image=(self.output/'rewritten/fixture.patched.bin').read_bytes()
+        for offset,format,value in ((fixture.RELA,'<Q',0), (fixture.HASH+4,'<I',65),
+                                    (fixture.SYMBOLS+24,'<I',128)):
+            with self.subTest(offset=offset):
+                changed=bytearray(image);struct.pack_into(format,changed,offset,value)
+                with self.assertRaises(ValueError):fixture.module_metadata(changed,self.output/'rewritten')
+        with tempfile.TemporaryDirectory() as temporary:
+            rewrite=Path(temporary);shutil.copytree(self.output/'rewritten',rewrite,dirs_exist_ok=True)
+            (rewrite/'fixture.gates.tsv').write_text('0x10064\tsvc\t2\t0x1c0\n')
+            with self.assertRaises(ValueError):fixture.module_metadata(image,rewrite)
+            shutil.copy2(self.output/'rewritten/fixture.gates.tsv',rewrite/'fixture.gates.tsv')
+            path=rewrite/'fixture.fixups.tsv';path.write_text(path.read_text().replace('KEY_PAGE_OFF\t0xc000','KEY_PAGE_OFF\t0x8000'))
+            with self.assertRaises(ValueError):fixture.module_metadata(image,rewrite)
+
     def test_embed_sections_hash_exact_rewritten_bytes_and_padding(self):
         image = (self.output/'rewritten/fixture.patched.bin').read_bytes()
         chunks = (image[:0x4000], image[0x4000:0x10000], image[0x10000:])

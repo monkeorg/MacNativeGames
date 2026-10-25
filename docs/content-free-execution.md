@@ -106,3 +106,34 @@ and return-address checks. See the [evidence record](canopy-inspection.md).
 This narrows the Mac-side call-window uncertainty but leaves the separate
 physical-iPad signed mapper, external module loading and exact-title gameplay
 requirements unverified. No emulator or private game input was used.
+
+## Shared production-loader source integration
+
+The original fixture now has a shared implementation route rather than a second
+Apple mapper. Production `runtime/loader.c` and
+`tools/launcher/fixture/fixture_runner.c` include the same internal
+`loader_module_core.h`. Its symbol helpers, both Mac/iPhoneOS mapper branches,
+relocation, seal/permission checks and gate dispatch were extracted verbatim.
+Game boot/patches, the TOTK-only SDK-return behavior and service implementations
+remain in their original runtime. No new imported-code backend is enabled.
+
+The artifact generator emits bounded original Module/Symbol/Reloc/Gate metadata
+from its authored NSO and real rewriter outputs. The UIKit probe now only displays
+and records results; it links unchanged production `gate.S`. The native fixture
+checks indirect host calls, Darwin TLS, actual relative relocation, permissions
+and the rewritten SVC gate through an original handler and fixture-owned host
+stack. It does not substitute that handler for actual title services or claim
+full SDK/HLE-wrapper compatibility.
+
+`test_launcher_loader_core.py` supplies actual Apple-silicon execution and
+fresh-process negative cases for the Mac mapper, and an unsigned iPhoneOS
+compile/link gate for the signed-section mapper. Those cases skip explicitly on
+Linux. The original portable metadata/artifact checks are separate from execution.
+The previous standalone permission-probe compile and Mac call-window result do
+not validate this new integration automatically.
+
+Physical signed/no-debugger execution of this revision remains required. Even a
+passing embedded original fixture would not establish externally imported native
+code execution in a clean public host, standalone on-iPad rewrite/sign/setup,
+exact-title gameplay or full runtime teardown. A private Mac-built embedded game
+app remains an intermediate result only.

@@ -9,6 +9,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 from pathlib import Path
 import struct
 import subprocess
@@ -64,11 +65,11 @@ def original_nso():
             (8, 24), (9, 24), (0, 0))
     for i, pair in enumerate(tags):
         struct.pack_into('<qQ', memory, DYNAMIC + 16*i, *pair)
-    # SysV hash: one bucket, three chains (null plus two defined symbols).
-    struct.pack_into('<6I', memory, HASH, 1, 3, 1, 0, 2, 0)
-    names = b'\0fixture_entry\0fixture_helper\0'
+    # SysV hash: one bucket, null plus four original defined symbols.
+    struct.pack_into('<8I', memory, HASH, 1, 5, 1, 0, 2, 3, 4, 0)
+    names = b'\0fixture_entry\0fixture_helper\0fixture_tls\0fixture_service\0'
     memory[STRINGS:STRINGS+len(names)] = names
-    for i, name, address in ((1, 1, ENTRY), (2, 15, HELPER)):
+    for i, name, address in ((1, 1, ENTRY), (2, 15, HELPER), (3, 30, TLS), (4, 42, SERVICE)):
         struct.pack_into('<IBBHQQ', memory, SYMBOLS+24*i, name, 0x12,
                          0, 1, address, 0x20)
     struct.pack_into('<QQq', memory, RELA, DATA, 1027, HELPER)
@@ -93,6 +94,62 @@ def run_rewriter(source, destination):
                           capture_output=True, text=True, check=True)
 
 
+def module_metadata(image, rewritten):
+    """Generate trusted fixture-only Module records from actual rewrite outputs.
+
+    This deliberately bounded generator accepts our one authored layout, not
+    arbitrary imported game metadata or approval claims.
+    """
+    if len(image) > 1 << 20:
+        raise ValueError('original fixture image exceeds bound')
+    layout = {}
+    for line in (rewritten/'fixture.fixups.tsv').read_text().splitlines():
+        marker, name, value = line.split()
+        if marker != '#' or name in layout:
+            raise ValueError('invalid fixture layout output')
+        layout[name] = int(value, 0)
+    if (layout.get('TEXT_END'), layout.get('RO_OFF'), layout.get('DATA_OFF'),
+            layout.get('KEY_PAGE_OFF'), layout.get('PATCH_OFF')) != (TEXT_END, RO, DATA, 0xc000, 0x10000):
+        raise ValueError('original fixture rewrite layout changed')
+    symbols = []
+    count = struct.unpack_from('<I', image, HASH+4)[0]
+    if count != 5:
+        raise ValueError('original fixture symbol count changed')
+    for index in range(count):
+        name, info, _, section, value, size = struct.unpack_from('<IBBHQQ', image, SYMBOLS+24*index)
+        if name >= 128:
+            raise ValueError('fixture string offset exceeds bound')
+        end = image.index(0, STRINGS+name, STRINGS+128)
+        text = image[STRINGS+name:end].decode('ascii')
+        if text and not re.fullmatch(r'fixture_[a-z]+', text):
+            raise ValueError('unexpected original symbol')
+        symbols.append((text, value, size, int(bool(section)), info >> 4, info & 15))
+    where, info, addend = struct.unpack_from('<QQq', image, RELA)
+    if (where, info, addend) != (DATA, 1027, HELPER):
+        raise ValueError('original fixture relocation changed')
+    gates = []
+    for line in (rewritten/'fixture.gates.tsv').read_text().splitlines():
+        ret, kind, argument, original = line.split()
+        record = (int(ret, 0), int(original, 0), int(kind != 'svc'), int(argument))
+        if kind != 'svc' or record[1:] != (SERVICE, 0, 1) or not 0x10000 <= record[0] < len(image):
+            raise ValueError('unexpected original fixture gate')
+        gates.append(record)
+    if len(gates) != 1:
+        raise ValueError('original fixture requires exactly one service gate')
+    lines = ['/* Original fixture metadata derived from the real rewrite; no game pins. */',
+             'static const Reloc fixture_relocs[]={{%dULL,1027,0,%dLL}};' % (where, addend),
+             'static const Symbol fixture_symbols[]={']
+    lines += ['{%s,%dULL,%dULL,%d,%d,%d},' % (json.dumps(name), value, size, defined, binding, kind)
+              for name, value, size, defined, binding, kind in symbols]
+    lines += ['};', 'static const Gate fixture_gates[]={']
+    lines += ['{%dULL,%dULL,%d,%d},' % record for record in gates]
+    lines += ['};', 'static Module modules[]={{.name="fixture",.digest="%s",.file_size=%dULL,'
+              '.text_end=%dULL,.ro_off=%dULL,.data_off=%dULL,.patch_off=0x10000ULL,.key_off=0xc000ULL,'
+              '.symbols=fixture_symbols,.nsym=5,.relocs=fixture_relocs,.nreloc=1,'
+              '.gates=fixture_gates,.ngate=1}};' % (hashlib.sha256(image).hexdigest(), len(image), TEXT_END, RO, DATA)]
+    return '\n'.join(lines)+'\n'
+
+
 def build(destination):
     destination = Path(destination).resolve()
     destination.mkdir(parents=True, exist_ok=False)
@@ -110,6 +167,7 @@ def build(destination):
     # text is the exact text input consumed by the production embed generator.
     generated = destination/'generated'
     generated.mkdir()
+    (generated/'fixture_module.h').write_text(module_metadata(image, rewritten))
     result = subprocess.run([sys.executable, str(EMBEDDER), str(rewritten),
                              str(generated/'embed.S'), '--text-dir', str(text),
                              'fixture'], capture_output=True, text=True, check=True)
