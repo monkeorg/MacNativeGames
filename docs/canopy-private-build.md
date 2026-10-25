@@ -213,3 +213,11 @@ against the selected SDK. Signing and physical-device native acceptance are
 separate gates; existing vm-remap source is not proof of permission on a device.
 The host remains single use. CPU pause, safe stop, save-writer teardown and
 in-process relaunch are still development work, not solved by producing an app.
+
+### Optional linked native shader provider (source only)
+
+Seed-only remains the default. To request the actual in-process consumer, add both `--shader-native-products /trusted/local/publish-output` and `--shader-native-build-sha256 <independently-reviewed-native-build.json-sha256>` to the private build. The directory must be real `publish_library.py --rid ios-arm64 --kind Static` output with a completed static-consumer link, current source recipe, both archives, native dependency plan/properties and license texts. This option never downloads or builds the translator.
+
+The builder verifies captured bytes and each actual archive object's arm64/iPhoneOS identity, rejects unsupported linker arguments, and links captured runtime-pack dependencies into the unsigned app. Every actual dependency package must provide its local LICENSE.TXT and third-party notices, captured and distributed with hashes; no package download or arbitrary ancestor search supplies missing notices. The exact framework package suffix runtimes/ios-arm64/native and declared host root are supported; unknown layouts refuse. The compiled provider recipe includes actual archives and consumer sources; runtime shader payloads/indexes use a separate recipe directory inside the retained shader-cache lease. Renderer PSO/observed/patched-variant files keep their existing directory. Neither report metadata nor a user preference grants runtime provider authority. Missing or incompatible products cause a failed build, not a seed-only substitution disguised as native translation.
+
+The strict reader currently supports explicit platform-bearing Mach-O archives and a closed set of .NET10 static link arguments; an unknown SDK/runtime-pack spelling refuses until inspected on its actual toolchain. The resulting source path is unbuilt and unexecuted here. NativeAOT static linking, managed/Cross parity and resource behavior, Metal compilation, signing/external-code permission and actual iPad gameplay require their own evidence. This cohort ran no tests, probes, builds or CI.

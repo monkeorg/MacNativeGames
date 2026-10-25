@@ -3,6 +3,15 @@
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 #include <stdint.h>
+#if defined(CANOPY_HOST_RUNTIME)
+#include "totk_shader_provider.h"
+/* Install exactly once on main before any cache/render access; NULL keeps seed-only. */
+int totk_rt_install_provider(const struct totk_shader_provider *provider);
+int totk_rt_native_epoch_current(uint64_t epoch);
+void totk_rt_set_checked_ready_hook(int (*hook)(NSString *,int,uint64_t));
+/* Actual NVN consumer installs its checked Metal loader before host worker. */
+void nvn_canopy_install_shader_ready_hook(void);
+#endif
 NSString *totk_rt_dir(void);
 // A file of the translation cache by name: the cache folder, or on iOS the seed inside the app for the files it brings
 // (read in place, never copied). totk_rt_list: every file name of both, sorted.

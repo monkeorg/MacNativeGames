@@ -40,9 +40,30 @@ extern char **environ;
 static pthread_mutex_t g_rt_lock = PTHREAD_MUTEX_INITIALIZER;
 static NSMutableDictionary<NSString *, NSMutableArray<NSDictionary *> *> *g_variants;
 static NSMutableSet<NSString *> *g_msl_checked;
+static NSString *g_dir;
+#if defined(CANOPY_HOST_RUNTIME)
+static const struct totk_shader_provider *g_provider;
+int totk_rt_install_provider(const struct totk_shader_provider *provider) {
+    if (!NSThread.isMainThread || g_provider || g_variants || g_dir) return -1;
+    if (!provider) return 0;
+    if (provider->abi != TOTK_SHADER_PROVIDER_ABI || provider->size != sizeof(*provider) ||
+        !provider->recipe_sha256 || strlen(provider->recipe_sha256) != 64 ||
+        !provider->chain || strcmp(provider->chain, DMSH_CHAIN) || !provider->translate || !provider->publish_index ||
+        !provider->is_current || !provider->file || !provider->files) return -1;
+    for (unsigned i=0;i<64;i++) if (!((provider->recipe_sha256[i]>='0' && provider->recipe_sha256[i]<='9') ||
+        (provider->recipe_sha256[i]>='a' && provider->recipe_sha256[i]<='f'))) return -1;
+    g_provider=provider;return 0;
+}
+int totk_rt_native_epoch_current(uint64_t epoch) {return g_provider && g_provider->is_current(epoch);}
+static int (*g_checked_ready_hook)(NSString *,int,uint64_t);
+void totk_rt_set_checked_ready_hook(int (*hook)(NSString *,int,uint64_t)) {g_checked_ready_hook=hook;}
+#define RT_NATIVE_PROVIDER (g_provider != NULL)
+#else
+#define RT_NATIVE_PROVIDER 0
+#endif
 typedef struct { FILE *in, *out; } rt_svc;   // one translator service process
 static rt_svc g_svc;   // the caller's (the submit thread); background jobs have their own (bg_translate)
-static NSString *g_root, *g_dir;
+static NSString *g_root;
 /* iOS: the seed inside the signed app is read where it is instead of being copied into the cache (totk_shader_seed.h
    totk_seed_sealed). Its files are taken from there; the cache holds the rest (fill packs, pso_collected.tsv), and a
    shader's .variants lists of both places are joined. nil on the Mac, where the seed is cloned into the cache. */
@@ -245,16 +266,31 @@ static NSString *json_string(id obj) {
 }
 NSString *totk_rt_file(NSString *name) {
     NSString *dir = totk_rt_dir();
+#if defined(CANOPY_HOST_RUNTIME)
+    if (g_provider && !(g_seed_dir && [g_seed_names containsObject:name])) return g_provider->file(name);
+#endif
     return g_seed_dir && [g_seed_names containsObject:name] ? [g_seed_dir stringByAppendingPathComponent:name]
                                                              : [dir stringByAppendingPathComponent:name];
 }
 NSArray<NSString *> *totk_rt_list(void) {
-    NSArray<NSString *> *cached = [NSFileManager.defaultManager contentsOfDirectoryAtPath:totk_rt_dir() error:nil] ?: @[];
+    (void)totk_rt_dir();
+    NSArray<NSString *> *cached;
+#if defined(CANOPY_HOST_RUNTIME)
+    if (g_provider) cached=g_provider->files();
+    else
+#endif
+    cached = [NSFileManager.defaultManager contentsOfDirectoryAtPath:totk_rt_dir() error:nil] ?: @[];
     if (!g_seed_dir) return [cached sortedArrayUsingSelector:@selector(compare:)];
     NSMutableSet<NSString *> *all = [g_seed_names mutableCopy]; [all addObjectsFromArray:cached];
     return [all.allObjects sortedArrayUsingSelector:@selector(compare:)];
 }
-static NSString *index_path(NSString *shader) { return [totk_rt_dir() stringByAppendingFormat:@"/%@.variants", shader]; }
+static NSString *index_path(NSString *shader) {
+    (void)totk_rt_dir(); /* Initialize the verified seed before caching rows. */
+#if defined(CANOPY_HOST_RUNTIME)
+    if(g_provider)return g_provider->file([shader stringByAppendingString:@".variants"]);
+#endif
+    return [totk_rt_dir() stringByAppendingFormat:@"/%@.variants", shader];
+}
 static NSMutableArray *variants_of(NSString *shader);
 static NSArray *variants_file(NSString *path) {
     NSData *d = [NSData dataWithContentsOfFile:path];
@@ -302,8 +338,9 @@ static int deps_match(NSDictionary *deps, NSDictionary *ans) {
    shaders would skip, with the same miss records and skipped draws). */
 static int no_translator(void) {
 #if TARGET_OS_IPHONE
-    return 1;
+    return !RT_NATIVE_PROVIDER;
 #else
+    if (RT_NATIVE_PROVIDER) return 0;
     static int v = -1;
     if (v < 0) { const char *e = getenv("TOTK_SHADER_NO_TRANSLATE"); v = e && !strcmp(e, "1"); }
     return v;
@@ -340,13 +377,14 @@ static NSString *stage_name(int stage) { return stage == 0 ? @"vs" : stage == 1 
 static NSMutableDictionary *variant_request(NSString *shader, int stage, const uint8_t *control, const uint8_t *code,
                                             NSDictionary *answers, NSArray *local, NSData **code_out) {
     uint32_t c1o, c1t; memcpy(&c1o, control + 0x700, 4); memcpy(&c1t, control + 0x704, 4);
-    if (!c1t || c1t > 16u << 20 || c1o > c1t || (stage != 5 && c1o < 0x30)) die("shader %s: code area %#x / c1 %#x", shader.UTF8String, c1t, c1o);
-    if (!stage_name(stage)) die("shader %s: NVN stage %d has no translation chain (tessellation/geometry)", shader.UTF8String, stage);
+    if (!c1t || c1t > 16u << 20 || c1o > c1t || (stage != 5 && c1o < 0x30)) { if (RT_NATIVE_PROVIDER) return nil; die("shader %s: code area %#x / c1 %#x", shader.UTF8String, c1t, c1o); }
+    if (!stage_name(stage)) { if (RT_NATIVE_PROVIDER) return nil; die("shader %s: NVN stage %d has no translation chain (tessellation/geometry)", shader.UTF8String, stage); }
+    size_t skip = stage == 5 ? 0 : 0x30;
+    if (RT_NATIVE_PROVIDER && (c1t < skip || c1t-skip > 65536 || c1t-c1o > 4096)) return nil;
     uint8_t md[32]; NSData *ad = [json_string(answers) dataUsingEncoding:NSUTF8StringEncoding]; CC_SHA256(ad.bytes, (CC_LONG)ad.length, md);
     NSString *variant = [NSString stringWithFormat:@"%@-%@", shader, hex(md, 6)];
     NSString *code_path = [totk_rt_dir() stringByAppendingFormat:@"/%@.code", variant];
     // Graphics code drops the 0x30-byte NVN header (the translator wants SPH + instructions); compute keeps it, as in D2R's build.
-    size_t skip = stage == 5 ? 0 : 0x30;
     NSData *bytes = [NSData dataWithBytes:code + skip length:c1t - skip];
     if (code_out) *code_out = bytes;
     else if (![bytes writeToFile:code_path atomically:YES]) die("write shader code %s", code_path.UTF8String);
@@ -419,7 +457,12 @@ static void record_miss(NSString *shader, NSDictionary *rq, NSDictionary *answer
         [rq[@"stage"] UTF8String], variant.UTF8String, (unsigned long)missed.count);
 }
 /* One request through a translator service; the reflection of the new variant. */
-static NSDictionary *translate(rt_svc *svc, NSDictionary *rq, uint64_t started) {
+static NSDictionary *translate(rt_svc *svc, NSDictionary *rq, NSData *code, uint64_t started, uint64_t *epoch) {
+    *epoch=0;
+#if defined(CANOPY_HOST_RUNTIME)
+    if (g_provider) return g_provider->translate(rq, code, epoch);
+#endif
+    (void)code;
     NSString *variant = rq[@"variant"]; const char *stage = [rq[@"stage"] UTF8String];
     service_start(svc);
     fprintf(svc->in, "%s\n", json_string(rq).UTF8String); fflush(svc->in);
@@ -438,13 +481,21 @@ static NSDictionary *translate(rt_svc *svc, NSDictionary *rq, uint64_t started) 
     return refl;
 }
 /* A translated variant into the shader's index, the counters and the contribution file (g_rt_lock held). */
-static void variant_record(NSString *shader, NSDictionary *rq, NSDictionary *refl, BOOL existed, uint64_t started, uint64_t queued) {   // queued: 0, or when a background job was queued
+static BOOL variant_record(NSString *shader, NSDictionary *rq, NSDictionary *refl, BOOL existed, uint64_t started, uint64_t queued, uint64_t epoch) {   // queued: 0, or when a background job was queued
     NSString *variant = rq[@"variant"];
     NSMutableArray *vs = variants_of(shader);
+#if defined(CANOPY_HOST_RUNTIME)
+    if (g_provider) {
+        NSMutableArray *next=[vs mutableCopy];
+        [next addObject:@{@"variant": variant, @"deps": refl[@"deps"] ?: @{}}];
+        if (g_provider->publish_index(shader,next,epoch)) return NO;
+        [vs setArray:next];
+    } else
+#endif
     [vs addObject:@{@"variant": variant, @"deps": refl[@"deps"] ?: @{}}];
     if (!g_msl_checked) g_msl_checked = [NSMutableSet set];
     [g_msl_checked addObject:variant];
-    [[json_string(vs) dataUsingEncoding:NSUTF8StringEncoding] writeToFile:index_path(shader) atomically:YES];
+    if (!RT_NATIVE_PROVIDER) [[json_string(vs) dataUsingEncoding:NSUTF8StringEncoding] writeToFile:index_path(shader) atomically:YES];
     g_translated++;
     if (!existed) { atomic_fetch_add(&g_new_variants, 1); atomic_store(&g_new_variant_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW)); }   // discovered, translated, in the cache
     if (!existed && contrib_wanted(shader, variant)) totk_contrib_add(shader, refl[@"deps"] ?: @{});   // the seed would have had it if the shared list named it
@@ -454,6 +505,7 @@ static void variant_record(NSString *shader, NSDictionary *rq, NSDictionary *ref
         [refl[@"softfloat64"] boolValue] ? " (FP64 fallback)" : "",
         queued ? [NSString stringWithFormat:@" (background, with its Metal library; queued %.2f ms before)", (started - queued) / 1e6].UTF8String : "");
     if (g_translated <= 8 || g_translated % 100 == 0) LOG("[shader] translated %llu: %s %s", (unsigned long long)g_translated, [rq[@"stage"] UTF8String], variant.UTF8String);
+    return YES;
 }
 
 /* Background translation (Mac, user 2026-10-21: new shaders are prepared the way games stream their content): a variant
@@ -495,14 +547,19 @@ uint64_t totk_rt_ready_gen(void) { return atomic_load(&g_rt_gen); }
 /* One job: translate on svc, compile its Metal library (the ready hook), record it and wake the waiters. */
 static void rt_job_run(NSString *shader, NSMutableArray *job, rt_svc *svc, uint64_t queued) {
     NSDictionary *rq = job[1]; int stage = [job[2] intValue]; BOOL existed = [job[3] boolValue]; NSData *code = job[4];
-    if (![code writeToFile:rq[@"code"] atomically:YES]) die("write shader code %s", [rq[@"code"] UTF8String]);
+    if (!RT_NATIVE_PROVIDER && ![code writeToFile:rq[@"code"] atomically:YES]) die("write shader code %s", [rq[@"code"] UTF8String]);
     uint64_t started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
-    NSDictionary *refl = translate(svc, rq, started);
-    if (g_rt_ready_hook) g_rt_ready_hook(rq[@"variant"], stage);   // the Metal library too, off the submit thread
+    uint64_t epoch=0;
+    NSDictionary *refl = translate(svc, rq, code, started,&epoch);
+#if defined(CANOPY_HOST_RUNTIME)
+    if(g_provider && (!refl || !g_provider->is_current(epoch) || !g_checked_ready_hook ||
+        !g_checked_ready_hook(rq[@"variant"],stage,epoch) || !g_provider->is_current(epoch))) refl=nil;
+#endif
+    if (refl && !RT_NATIVE_PROVIDER && g_rt_ready_hook) g_rt_ready_hook(rq[@"variant"], stage);   // the Metal library too, off the submit thread
     pthread_mutex_lock(&g_rt_lock);
-    variant_record(shader, rq, refl, existed, started, queued);
+    BOOL recorded=refl && variant_record(shader, rq, refl, existed, started, queued,epoch);
     if (g_rt_pending[shader] == job) [g_rt_pending removeObjectForKey:shader];
-    atomic_fetch_add(&g_rt_gen, 1);
+    if (recorded) atomic_fetch_add(&g_rt_gen, 1);
     pthread_cond_broadcast(&g_rt_done);
     pthread_mutex_unlock(&g_rt_lock);
 }
@@ -570,14 +627,21 @@ NSString *totk_rt_variant(NSString *shader, int stage, const uint8_t *control, c
     }
     if (found || g_rt_pending[shader]) { pthread_mutex_unlock(&g_rt_lock); return found; }
     NSData *code_bytes = nil;   // written by the job when it is not translated here
-    NSMutableDictionary *rq = variant_request(shader, stage, control, code, answers, local, may_defer && !no_translator() ? &code_bytes : NULL);
+    NSMutableDictionary *rq = variant_request(shader, stage, control, code, answers, local, RT_NATIVE_PROVIDER || (may_defer && !no_translator()) ? &code_bytes : NULL);
+    if (!rq) { pthread_mutex_unlock(&g_rt_lock); return nil; }
     if (no_translator()) { record_miss(shader, rq, answers); pthread_mutex_unlock(&g_rt_lock); return nil; }
-    BOOL existed = [NSFileManager.defaultManager fileExistsAtPath:[totk_rt_dir() stringByAppendingFormat:@"/%@_b.metal", rq[@"variant"]]];   // a re-translation of a broken variant is not a new one
+    BOOL existed = [NSFileManager.defaultManager fileExistsAtPath:totk_rt_file([rq[@"variant"] stringByAppendingString:@"_b.metal"])];   // a re-translation of a broken variant is not a new one
     if (may_defer == 2) { urgent_translate(shader, rt_job_new(shader, stage, rq, existed, code_bytes)); pthread_mutex_unlock(&g_rt_lock); return nil; }
     if (may_defer) { bg_translate(shader, stage, rq, existed, code_bytes); pthread_mutex_unlock(&g_rt_lock); return nil; }
-    variant_record(shader, rq, translate(&g_svc, rq, started), existed, started, 0);
+    uint64_t epoch=0;
+    NSDictionary *reflection=translate(&g_svc, rq, code_bytes, started,&epoch);
+#if defined(CANOPY_HOST_RUNTIME)
+    if(g_provider && (!reflection || !g_provider->is_current(epoch) || !g_checked_ready_hook ||
+        !g_checked_ready_hook(rq[@"variant"],stage,epoch) || !g_provider->is_current(epoch))) reflection=nil;
+#endif
+    BOOL recorded=reflection && variant_record(shader, rq, reflection, existed, started, 0,epoch);
     pthread_mutex_unlock(&g_rt_lock);
-    return rq[@"variant"];
+    return recorded ? rq[@"variant"] : nil;
 }
 
 NSArray<NSString *> *totk_rt_known_variants(NSString *shader) {

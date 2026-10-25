@@ -80,6 +80,9 @@ const struct canopy_totk_host *totk_canopy_host_v1(void);
 /* Run before native graphics initialization. The cache identity uses safe math
  * and the pinned prepared translator outputs, never inherited experiment flags. */
 int canopy_host_pin_compile_environment(void);
+/* Compiled/link-present identity only. NULL means seed-only; never parity,
+ * hard compiler isolation, gameplay or signed-device acceptance evidence. */
+const char *canopy_host_shader_translator_recipe(void);
 /* Called only after actual loader runtime_game_patches returns successfully.
  * Signals checked patch execution, never a rendered frame or visual acceptance. */
 void canopy_host_game_patches_validated(void);

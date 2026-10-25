@@ -4833,7 +4833,7 @@ static int c1_reads_bounded(NSString *src, size_t len) {
     }
     return 1;
 }
-static void c1_store(NvShader *o, NSString *src) {
+static int c1_store(NvShader *o, NSString *src, int checked) {
     size_t len = o->rf.c1_len;
     NSString *guardKey = [NSString stringWithUTF8String:o->key];
     if ([guardKey hasSuffix:@"_b"]) guardKey = [guardKey substringToIndex:guardKey.length - 2];
@@ -4843,18 +4843,18 @@ static void c1_store(NvShader *o, NSString *src) {
     os_unfair_lock_lock(&g_c1_lock);   // 预热线程与提交线程都会载入着色器 | Both the warm-up thread and the submit thread load shaders
     if ((g_c1_full_valid && [g_c1_full containsObject:guardKey]) || !bounded) {   // 运行时下标未证有界：独占 64 KiB 全零（同原实现） | Runtime index not proven bounded: exclusive 64 KiB of all zeros (same as the original implementation)
         o->c1buf = [g_dev newBufferWithLength:C1_DECL_SIZE options:MTLResourceStorageModeShared]; o->c1_gpu = o->c1buf.gpuAddress;
-        if (!o->c1buf) { os_unfair_lock_unlock(&g_c1_lock); MDIE("c1 独占缓冲分配失败"); }
+        if (!o->c1buf) { os_unfair_lock_unlock(&g_c1_lock); if (checked) return 0; MDIE("c1 独占缓冲分配失败"); }
         res_add(o->c1buf);
         memset(o->c1buf.contents, 0, C1_DECL_SIZE); memcpy(o->c1buf.contents, o->rf.c1, len);
         g_c1_alloc_bytes += C1_DECL_SIZE; g_c1_data_bytes += len; g_c1_count++; g_c1_exclusive++;
         os_unfair_lock_unlock(&g_c1_lock);
-        return;
+        return 1;
     }
     size_t need = (len + 255u) & ~((size_t)255u);
     if (!g_c1_banks) g_c1_banks = [NSMutableArray array];
     if (!g_c1_banks.count || g_c1_bank_off + need + 256u + C1_DECL_SIZE > C1_BANK_SIZE) {
         id<MTLBuffer> b = [g_dev newBufferWithLength:C1_BANK_SIZE options:MTLResourceStorageModeShared];
-        if (!b) { os_unfair_lock_unlock(&g_c1_lock); MDIE("c1 缓冲块分配失败"); }
+        if (!b) { os_unfair_lock_unlock(&g_c1_lock); if (checked) return 0; MDIE("c1 缓冲块分配失败"); }
         res_add(b);
         memset(b.contents, 0, C1_BANK_SIZE);
         [g_c1_banks addObject:b];
@@ -4871,6 +4871,7 @@ static void c1_store(NvShader *o, NSString *src) {
     o->c1_gpu = b.gpuAddress;
     o->c1off = off;
     os_unfair_lock_unlock(&g_c1_lock);
+    return 1;
 }
 
 static NSMutableArray<WarmItem *> *g_warm_items;
@@ -5168,7 +5169,7 @@ static id<MTLLibrary> shader_lib_prebuilt(NSData *src) {
     return lib;
 }
 #endif
-static NvShader *shader_load(NSString *pc, int stage) {
+static NvShader *shader_load_inner(NSString *pc, int stage, int checked) {
     NSError *e = nil;
     // TOTK: runtime translations are MSL source compiled here (macOS allows runtime compilation); the OS caches compiled code.
     NSString *rt_src = totk_rt_file([pc stringByAppendingString:@".metal"]);
@@ -5193,7 +5194,7 @@ static NvShader *shader_load(NSString *pc, int stage) {
                     if (raw && (lib = shader_lib_prebuilt(raw))) atomic_fetch_add(&g_rt_prebuilt, 1);
 #endif
                     NSString *src = raw && !lib ? [[NSString alloc] initWithData:raw encoding:NSUTF8StringEncoding] : nil;
-                    if (src) { lib = totk_msl_library(src, &e); atomic_fetch_add(&g_rt_compiled, 1); } }
+                    if (src) { lib = totk_msl_library(src, &e); if (!checked || lib) atomic_fetch_add(&g_rt_compiled, 1); } }
     } else lib = lib_from_file(lp, &e);
     if (rt) { uint64_t pre = atomic_load(&g_rt_prebuilt), com = atomic_load(&g_rt_compiled);
               if ((pre + com) % 200 == 1) MLOG("着色器库：预编译加载 %llu 个，现编 %llu 个", (unsigned long long)pre, (unsigned long long)com); }
@@ -5206,6 +5207,7 @@ static NvShader *shader_load(NSString *pc, int stage) {
     if (nvn_refl_from_json(j, &o->rf, err, sizeof err)) { MLOG("【红】着色器 %s 反射转换失败：%s", pc.UTF8String, err); return nil; }
     if (rt_range_on()) o->range_ro=rt_range_bindings_ro(j);
     o->fn = [lib newFunctionWithName:j[@"entry"]]; o->stage = stage; strlcpy(o->key, pc.UTF8String, sizeof o->key);
+    if (checked && !o->fn) return nil;
     NSString *full = rt ? [NSString stringWithContentsOfFile:rt_src encoding:NSUTF8StringEncoding error:nil] : nil;
     o->writes_depth = full && [full rangeOfString:@"[[depth("].location != NSNotFound;
     if (full) { o->src_path = rt_src; drv_scan(o, full); refl_mark_stores(o, j[@"bindings"], full); }   // TOTK: scan before iOS drops the source (NPC-culling fix needs it there too); rw from the MSL's stores
@@ -5216,15 +5218,22 @@ static NvShader *shader_load(NSString *pc, int stage) {
     if (keep_src) o->src = full;
     if (o->rf.nb) {
         o->ae = [o->fn newArgumentEncoderWithBufferIndex:o->rf.abi];
+        if (checked && !o->ae) return nil;
         int max_aid = -1;
         for (int i = 0; i < o->rf.nb; i++) max_aid = MAX(max_aid, o->rf.b[i].aid);
         o->arg_len = o->ae.encodedLength;
         if (o->arg_len != (NSUInteger)(8 * (max_aid + 1)) || (o->arg_len & 7))
+        {
+            if (checked) return nil;
             MDIE("着色器 %s 参数块布局异常：encodedLength=%lu maxAid=%d", o->key, (unsigned long)o->arg_len, max_aid);
+        }
     }
-    if (o->rf.has_c1) c1_store(o, full);
+    if (o->rf.has_c1 && !c1_store(o, full, checked)) return nil;
     return o;
 }
+
+/* Preserve the original Mac/unlinked loader policy and fatal layout handling. */
+static NvShader *shader_load(NSString *pc, int stage) {return shader_load_inner(pc,stage,0);}
 
 static int stage_of(NSString *zh) {
     if ([zh isEqualToString:@"顶点"]) return 0; if ([zh isEqualToString:@"像素"]) return 1; if ([zh isEqualToString:@"计算"]) return 5;
@@ -5266,6 +5275,22 @@ static void async_ready(NSString *variant, int stage) {   // a translator worker
     g_async_libs[pc] = sh;
     os_unfair_lock_unlock(&g_async_lock);
 }
+#if defined(CANOPY_HOST_RUNTIME)
+/* Native translations acknowledge the actual Metal library before their
+ * variant index/readiness is published. Epoch changes discard old results. */
+static int canopy_async_ready(NSString *variant,int stage,uint64_t epoch) {
+    if(!totk_rt_native_epoch_current(epoch))return 0;
+    NSString *pc=[variant stringByAppendingString:@"_b"];
+    NvShader *sh=shader_load_inner(pc,stage,1);
+    if(!sh || !totk_rt_native_epoch_current(epoch))return 0;
+    os_unfair_lock_lock(&g_async_lock);
+    if(!g_async_libs)g_async_libs=[NSMutableDictionary dictionary];
+    g_async_libs[pc]=sh;
+    os_unfair_lock_unlock(&g_async_lock);
+    return totk_rt_native_epoch_current(epoch);
+}
+void nvn_canopy_install_shader_ready_hook(void) {totk_rt_set_checked_ready_hook(canopy_async_ready);}
+#endif
 static NvShader *async_take(NSString *pc) {
     os_unfair_lock_lock(&g_async_lock);
     NvShader *sh = g_async_libs[pc]; if (sh) [g_async_libs removeObjectForKey:pc];

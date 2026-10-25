@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <stdatomic.h>
 #if TARGET_OS_IPHONE
+#import "../../../launcher/apple/Sources/CanopyShaderTranslator.h"
+#include "totk_shader_rt.h"
 extern int runtime_canopy_audio_output_suspend(void);
 #endif
 static _Atomic int display_patches_validated;
@@ -20,6 +22,13 @@ int canopy_host_bind_metal_device(id<MTLDevice> device) {
     retained_renderer_device=device;return 0;
 }
 id<MTLDevice> runtime_canopy_metal_device(void) {return retained_renderer_device;}
+const char *canopy_host_shader_translator_recipe(void) {
+#if TARGET_OS_IPHONE
+    return CanopyShaderTranslatorRecipe();
+#else
+    return NULL;
+#endif
+}
 int canopy_host_pin_compile_environment(void) {
     const char *experiments[]={"TOTK_FAST_MATH","TOTK_SHADER_XLATE","TOTK_SHADER_SERVICE","TOTK_SHADER_DEBUGMODE",
         "TOTK_MFX","TOTK_MFX_UPSCALE","TOTK_MFX_OUTPUT","TOTK_ANISO","DM_NVN_NOFXAA",NULL};
@@ -66,6 +75,7 @@ static void main_worker_cleanup(void *unused) {
     pthread_cond_broadcast(&lifecycle_changed);
     pthread_mutex_unlock(&lifecycle_lock);
 #if TARGET_OS_IPHONE
+    CanopyShaderTranslatorTerminate();
     (void)runtime_canopy_audio_output_suspend(); /* Silence latch, not teardown proof. */
 #endif
 }
@@ -228,6 +238,10 @@ static int configure_display(const struct canopy_totk_start *s) {
     configured_display=s->display;atomic_store_explicit(&display_patches_validated,0,memory_order_release);display_configured=1;return 0;
 }
 static void clear_input(void) {runtime_input_clear();runtime_touch_pad_clear();runtime_mouse_release();}
+static void set_focus(int active) {
+    CanopyShaderTranslatorSetActive(active && atomic_load_explicit(&worker_running,memory_order_acquire));
+    runtime_ios_set_host_active(active);
+}
 static void input(uint64_t b,int32_t lx,int32_t ly,int32_t rx,int32_t ry,int connected) {
     if(!connected){runtime_touch_pad_clear();return;} /* Drop queued press edges too. */
     RuntimeGamepadState pad={b,lx,ly,rx,ry,connected};runtime_touch_pad_set(&pad);
@@ -287,7 +301,11 @@ static int start_host(const struct canopy_totk_start *s) {
     /* Only the trusted CanopyRuntime path calls start, after manifest/content
      * verification and while retaining the immutable seed's shared lease. */
     verified_seed_path=strdup(s->shader_seed);if(!verified_seed_path)return -1;
-    if(setenv("TOTK_SHADER_SEED","on",1) || chdir(s->shader_cache))return -1;
+    if(CanopyShaderTranslatorInstall(s->shader_cache,DMSH_CHAIN) ||
+       totk_rt_install_provider(CanopyShaderTranslatorProvider()))return -1;
+    if(CanopyShaderTranslatorProvider())nvn_canopy_install_shader_ready_hook();
+    const char *runtime_cache=getenv("TOTK_SHADER_CACHE");
+    if(setenv("TOTK_SHADER_SEED","on",1) || !runtime_cache || chdir(runtime_cache))return -1;
     NSError *audio_error=nil;
     AVAudioSession *audio=AVAudioSession.sharedInstance;
     if(![audio setCategory:AVAudioSessionCategoryPlayback mode:AVAudioSessionModeDefault options:0 error:&audio_error] ||
@@ -311,7 +329,7 @@ const struct canopy_totk_host *totk_canopy_host_v1(void) {
         CANOPY_HOST_ORIGINAL_MAIN_SHA256,ROMFS_IMAGE_SHA256,ROMFS_INDEX_SHA256,NULL,CANOPY_HOST_SHADER_SEED_MANIFEST_SHA256,DMSH_CHAIN,start_host,
         runtime_ios_fps_limit_supported,runtime_ios_set_fps_limit,runtime_ios_fps_limit,
         runtime_ios_taa_supported,runtime_ios_set_taa_enabled,runtime_ios_taa_enabled,
-        fps_overlay_hud_mode,fps_overlay_toggle_hints,clear_input,runtime_ios_set_host_active,input,
+        fps_overlay_hud_mode,fps_overlay_toggle_hints,clear_input,set_focus,input,
         {MNG_DISPLAY_ABI,sizeof(struct canopy_totk_display),{MNG_DISPLAY_ABI,sizeof(struct mng_display_profile),CANOPY_DISPLAY_FLAGS},
          CANOPY_DISPLAY_FLAGS&MNG_DISPLAY_SCENE_1080?CANOPY_HOST_DISPLAY_HEAP_SHA256:NULL,
          CANOPY_DISPLAY_FLAGS&MNG_DISPLAY_FOUR_THREE?CANOPY_HOST_DISPLAY_LAYOUT_SHA256:NULL,canopy_host_read_display_state},
