@@ -141,7 +141,14 @@ def main():
     # Carry the increased-memory-limit entitlement in the executable's ad-hoc signature so re-signing tools keep it;
     # the game's 3.2 GiB pool exceeds the default iOS footprint limit.
     run(['codesign','--force','--sign','-','--entitlements',ios/'Sources/TOTK.entitlements',app/'TOTK'],ios,logs/'ios-entitlements.log',env)
-    res=app/'GameData';res.mkdir(exist_ok=True)
+    # Keep the Xcode product small. Assemble GameData only in the final output,
+    # avoiding product -> Payload -> output copies of the complete private seed.
+    dest=out if out.suffix=='.app' else tree/'build/ios-payload/Payload/TOTK.app'
+    if dest==app or dest.is_relative_to(app): raise RuntimeError('output overlaps the Xcode product')
+    if (app/'GameData').exists(): shutil.rmtree(app/'GameData')  # old packaging left data in the product
+    if out.suffix!='.app': shutil.rmtree(tree/'build/ios-payload',ignore_errors=True)
+    copy_tree(app,dest)
+    res=dest/'GameData';res.mkdir(exist_ok=True)
     romfs=tree/f'extracted/{a.version}/romfs'
     copy_tree(romfs,res/'romfs')
     if a.image_outside:   # the index stays (it changes with the build); the 17 GB image is in Documents/GameData (main.m)
@@ -167,12 +174,11 @@ def main():
     if aliases.is_file():
         run([sys.executable,tree/'scripts/shader_list.py','rename',aliases,res/'shader-seed/pso_title.tsv',
              res/'shader-seed/pso_list.tsv'],tree,logs/'shader-list-rename.log',env)
-    # Keep the player's first install self-contained; the app stores saves and writable shader cache in Documents.
-    payload=tree/'build/ios-payload';shutil.rmtree(payload,ignore_errors=True);(payload/'Payload').mkdir(parents=True)
-    copy_tree(app,payload/'Payload/TOTK.app')
-    if out.suffix=='.app':   # the unsigned app as a folder (an APFS clone), for install_device.py: no 100,000-file zip
-        shutil.rmtree(out,ignore_errors=True); copy_tree(payload/'Payload/TOTK.app',out)
+    # Keep the first install self-contained; Documents shader transport is not
+    # enabled until producer/reader integrity and publication contracts exist.
+    if out.suffix=='.app':
         print(f'app ready: {out}; unsigned, install it with ios/tools/install_device.py'); return
+    payload=tree/'build/ios-payload'
     out.parent.mkdir(parents=True,exist_ok=True);out.unlink(missing_ok=True)
     run(['zip','-qry','-0',out,'Payload'],payload,logs/'ipa-zip.log',env)
     print(f'IPA ready: {out} ({out.stat().st_size/2**30:.1f} GiB); unsigned, sideload with your signing tool')

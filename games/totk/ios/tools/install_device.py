@@ -13,7 +13,7 @@ one file that size); a later install skips it while the device holds the same im
 Xcode needs your Apple ID (Xcode > Settings > Accounts). The provisioning profile comes from a throwaway Xcode project
 built with the same bundle identifier and entitlements (-allowProvisioningUpdates registers the device and the App ID).
 """
-import argparse, hashlib, json, os, plistlib, re, shutil, subprocess, sys, tempfile, zipfile
+import argparse, hashlib, json, os, plistlib, re, shutil, stat, subprocess, sys, tempfile, zipfile
 from datetime import timezone
 from pathlib import Path
 
@@ -86,38 +86,101 @@ def identity_of(signed_app):
     return hashlib.sha1(der).hexdigest().upper()
 
 PART = 1 << 30
+def file_sha256(path):
+    """Stable bounded content identity, never an mtime-only reuse checkpoint."""
+    path = Path(path)
+    if any(p.is_symlink() for p in (path, *path.parents)):
+        raise ValueError('linked input refused')
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= 64 << 30:
+            raise ValueError('input is not a bounded regular file')
+        sha = hashlib.sha256(); total = 0
+        while block := os.read(fd, 1 << 20):
+            total += len(block); sha.update(block)
+            if total > before.st_size: raise ValueError('input grew during read')
+        after = os.fstat(fd)
+        if total != before.st_size or any(getattr(before, key) != getattr(after, key) for key in
+                ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')):
+            raise ValueError('input changed during read')
+        return sha.hexdigest()
+    finally:
+        os.close(fd)
+
 def device_files(dev, bundle_id, sub):
-    """{name: size} of the app's Documents/<sub> on the device, {} when there is none."""
+    """Empty only when a successful parent listing proves the child absent."""
     with tempfile.NamedTemporaryFile(suffix='.json') as f:
         r = subprocess.run(['xcrun','devicectl','device','info','files','--device',dev,'--domain-type','appDataContainer',
                             '--domain-identifier',bundle_id,'--subdirectory',sub,'--json-output',f.name], capture_output=True)
-        if r.returncode: return {}
-        files = json.load(open(f.name)).get('result', {}).get('files', [])
+        if r.returncode:
+            if sub != 'Documents':
+                parent = str(Path(sub).parent)
+                if parent != '.' and Path(sub).name not in device_files(dev, bundle_id, parent):
+                    return {}
+                sys.exit('cannot inspect an existing app data directory; no upload was started')
+            sys.exit('cannot read app Documents on the device; connect and unlock it before retrying')
+        document = json.load(open(f.name))
+        result = document.get('result') if isinstance(document, dict) else None
+        files = result.get('files') if isinstance(result, dict) else None
+        if not isinstance(files, list) or any(not isinstance(item, dict) or
+                not isinstance(item.get('relativePath', item.get('name')), str) or
+                not Path(item.get('relativePath', item.get('name'))).name for item in files):
+            sys.exit('invalid device directory listing; no upload was started')
     return {Path(x.get('relativePath', x.get('name', ''))).name: x.get('metadata', {}).get('size', 0) for x in files}   # devicectl's JSON
 
 def push_game_data(dev, bundle_id, image):
     """The RomFS image into Documents/GameData as romfs.bin.000, .001, ... (ios/Sources/main.m reads it there), then
     romfs.sha256 naming it, so the next install skips it."""
     sha = json.loads((image.parent/'index.json').read_text())['romfs_sha256']
+    if not isinstance(sha, str) or not re.fullmatch('[0-9a-f]{64}', sha) or file_sha256(image) != sha:
+        raise ValueError('local RomFS does not match its extraction fingerprint')
     size = image.stat().st_size; parts = (size + PART - 1) // PART
     have = device_files(dev, bundle_id, 'Documents/GameData')
-    if have.get('romfs.sha256') == 64 + 1 and all(f'romfs.bin.{i:03d}' in have for i in range(parts)):
+    expected_parts = {f'romfs.bin.{i:03d}' for i in range(parts)}
+    existing_parts = {name for name in have if re.fullmatch(r'romfs\.bin\.[0-9]+', name)}
+    if 'romfs.bin' in have or existing_parts - expected_parts:
+        raise ValueError('existing device image layout needs explicit migration; no files were replaced')
+    if have.get('romfs.sha256') == 64 + 1 and all(
+            have.get(f'romfs.bin.{i:03d}') == min(PART, size - i * PART) for i in range(parts)):
         with tempfile.TemporaryDirectory() as d:
             got = Path(d)/'romfs.sha256'
             r = subprocess.run(['xcrun','devicectl','device','copy','from','--device',dev,'--domain-type','appDataContainer',
                                 '--domain-identifier',bundle_id,'--source','Documents/GameData/romfs.sha256','--destination',got], capture_output=True)
             if r.returncode == 0 and got.read_text().strip() == sha:
-                print('game data: the device already has this image'); return
+                # The marker binds the intended source, not the current bytes.
+                # Re-read every part before reuse; never repair a stale marker
+                # merely because old/new pieces happen to have equal lengths.
+                remote_sha = hashlib.sha256(); complete = True
+                for i in range(parts):
+                    piece = Path(d)/'verify-part'
+                    piece.unlink(missing_ok=True)
+                    r = subprocess.run(['xcrun','devicectl','device','copy','from','--device',dev,
+                        '--domain-type','appDataContainer','--domain-identifier',bundle_id,
+                        '--source',f'Documents/GameData/romfs.bin.{i:03d}','--destination',piece], capture_output=True)
+                    expected = min(PART, size - i * PART)
+                    if r.returncode or not piece.is_file() or piece.stat().st_size != expected:
+                        complete = False; break
+                    with piece.open('rb') as stream:
+                        while block := stream.read(1 << 20): remote_sha.update(block)
+                    piece.unlink()
+                if complete and remote_sha.hexdigest() == sha:
+                    print('game data: verified the device already has this image'); return
     print(f'game data: copying {size / 2**30:.1f} GiB in {parts} parts (once; later installs keep it)')
     with tempfile.TemporaryDirectory() as d, open(image, 'rb') as src:
+        sent_sha = hashlib.sha256()
         def copy(local, name):
             run(['xcrun','devicectl','device','copy','to','--device',dev,'--domain-type','appDataContainer','--domain-identifier',
                  bundle_id,'--source',local,'--destination',f'Documents/GameData/{name}'], capture_output=True)
         (Path(d)/'romfs.sha256').write_text('stale\n'); copy(Path(d)/'romfs.sha256', 'romfs.sha256')   # until every part is there
         for i in range(parts):
             part = Path(d)/f'romfs.bin.{i:03d}'
-            part.write_bytes(src.read(PART)); copy(part, part.name); part.unlink()
+            block = src.read(min(PART, size - i * PART))
+            if len(block) != min(PART, size - i * PART): raise ValueError('local RomFS changed during transfer')
+            sent_sha.update(block)
+            part.write_bytes(block); copy(part, part.name); part.unlink()
             print(f'  part {i + 1}/{parts}', flush=True)
+        if src.read(1) or sent_sha.hexdigest() != sha: raise ValueError('local RomFS changed during transfer')
         (Path(d)/'romfs.sha256').write_text(sha + '\n'); copy(Path(d)/'romfs.sha256', 'romfs.sha256')
 
 def main():
@@ -145,20 +208,18 @@ def main():
     print(f"provisioning profile valid until {expires:%Y-%m-%d %H:%M} local time (run this again before then)")
 
     # Unpack once per IPA; later runs only re-sign. 16 GiB of game data is signed in place.
-    work = a.ipa.with_suffix('.signed'); stamp = work/'.ipa-mtime'
+    work = a.ipa.with_suffix('.signed'); stamp = work/'.ipa-sha256'
     app = work/'Payload/TOTK.app'
-    if a.ipa.is_dir():   # an unsigned .app (build_app.py -o X.app): cloned, nothing to unpack
-        print(f'cloning {a.ipa.name}')
-        shutil.rmtree(work, ignore_errors=True); app.parent.mkdir(parents=True)
-        import ctypes   # one APFS clone of the whole folder (~100,000 files), as build_app.py copy_tree
-        libc = ctypes.CDLL(None); libc.clonefile.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
-        if libc.clonefile(os.fsencode(a.ipa), os.fsencode(app), 0) and subprocess.run(['/bin/cp', '-cR', a.ipa, app]).returncode:
-            sys.exit(f'cannot copy {a.ipa}')
-    elif not stamp.is_file() or stamp.read_text() != str(a.ipa.stat().st_mtime_ns):
-        print(f'unpacking {a.ipa.name}')
-        shutil.rmtree(work, ignore_errors=True); work.mkdir()
-        run(['ditto','-x','-k',a.ipa,work])
-        stamp.write_text(str(a.ipa.stat().st_mtime_ns))
+    if a.ipa.is_dir():   # explicit installer mutates/signs this user-selected build output in place
+        app = a.ipa.resolve(); work.mkdir(exist_ok=True)
+    else:
+        archive_sha = file_sha256(a.ipa)
+        if not stamp.is_file() or stamp.read_text() != archive_sha or not app.is_dir():
+            print(f'unpacking {a.ipa.name}')
+            shutil.rmtree(work, ignore_errors=True); work.mkdir()
+            run(['ditto','-x','-k',a.ipa,work])
+            if file_sha256(a.ipa) != archive_sha: raise ValueError('IPA changed during extraction')
+            stamp.write_text(archive_sha)
     plist = app/'Info.plist'
     infoplist = plistlib.loads(plist.read_bytes()); infoplist['CFBundleIdentifier'] = bundle_id
     plist.write_bytes(plistlib.dumps(infoplist, fmt=plistlib.FMT_BINARY))
