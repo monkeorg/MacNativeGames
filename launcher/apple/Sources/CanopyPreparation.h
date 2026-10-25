@@ -33,6 +33,14 @@ NS_ASSUME_NONNULL_BEGIN
     reuseTitleID:(nullable NSString *)title reuseGenerationID:(nullable NSString *)generation
     jobIdentifier:(nullable NSString *)identifier
     completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion;
+/// Explicit native metadata revision. latest=YES requires targetVersion=0;
+/// latest=NO selects the literal uint32 revision, including zero/MAX. An exact
+/// request requires an update input. Native CNMT/dependencies remain authority.
+- (BOOL)startSourceURL:(NSURL *)source updateURL:(nullable NSURL *)update keysURL:(NSURL *)keys
+    selectLatestUpdate:(BOOL)latest targetVersion:(uint32_t)targetVersion
+    reuseTitleID:(nullable NSString *)title reuseGenerationID:(nullable NSString *)generation
+    jobIdentifier:(nullable NSString *)identifier
+    completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion;
 /// Supported NCA folder (keys required) or exefs/ + romfs/romfs.bin layout
 /// (no keys). Identity is a canonical consumed-member inventory, not a file SHA.
 - (BOOL)startFolderURL:(NSURL *)folder keysURL:(nullable NSURL *)keys

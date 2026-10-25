@@ -19,7 +19,7 @@
 - (BOOL)cancellationRequested;
 - (void)reportPhase:(NSString *)phase done:(uint64_t)done total:(uint64_t)total epoch:(NSUInteger)epoch;
 - (BOOL)startInputURL:(NSURL *)source updateURL:(NSURL * _Nullable)updateURL keysURL:(NSURL * _Nullable)keysURL
-    folder:(BOOL)folder reuseTitleID:(NSString * _Nullable)reuseTitle reuseGenerationID:(NSString * _Nullable)reuseGeneration
+    folder:(BOOL)folder selectLatestUpdate:(BOOL)latest targetVersion:(uint32_t)targetVersion reuseTitleID:(NSString * _Nullable)reuseTitle reuseGenerationID:(NSString * _Nullable)reuseGeneration
     jobIdentifier:(NSString * _Nullable)identifier
     completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion;
 @end
@@ -308,17 +308,21 @@ static NSDictionary *CPIOMetrics(const struct mng_store_io_metrics *metrics) {
     return [self startSourceURL:source updateURL:nil keysURL:keysURL reuseTitleID:title reuseGenerationID:generation jobIdentifier:identifier completion:completion];
 }
 - (BOOL)startSourceURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL reuseTitleID:(NSString *)title reuseGenerationID:(NSString *)generation jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion {
-    return [self startInputURL:source updateURL:updateURL keysURL:keysURL folder:NO reuseTitleID:title reuseGenerationID:generation jobIdentifier:identifier completion:completion];
+    return [self startSourceURL:source updateURL:updateURL keysURL:keysURL selectLatestUpdate:YES targetVersion:0 reuseTitleID:title reuseGenerationID:generation jobIdentifier:identifier completion:completion];
+}
+- (BOOL)startSourceURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL selectLatestUpdate:(BOOL)latest targetVersion:(uint32_t)targetVersion reuseTitleID:(NSString *)title reuseGenerationID:(NSString *)generation jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion {
+    return [self startInputURL:source updateURL:updateURL keysURL:keysURL folder:NO selectLatestUpdate:latest targetVersion:targetVersion reuseTitleID:title reuseGenerationID:generation jobIdentifier:identifier completion:completion];
 }
 - (BOOL)startFolderURL:(NSURL *)folder keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
-    return [self startInputURL:folder updateURL:nil keysURL:keysURL folder:YES reuseTitleID:nil reuseGenerationID:nil jobIdentifier:identifier completion:completion];
+    return [self startInputURL:folder updateURL:nil keysURL:keysURL folder:YES selectLatestUpdate:YES targetVersion:0 reuseTitleID:nil reuseGenerationID:nil jobIdentifier:identifier completion:completion];
 }
-- (BOOL)startInputURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL folder:(BOOL)folder reuseTitleID:(NSString *)reuseTitle reuseGenerationID:(NSString *)reuseGeneration jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
+- (BOOL)startInputURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL folder:(BOOL)folder selectLatestUpdate:(BOOL)latest targetVersion:(uint32_t)targetVersion reuseTitleID:(NSString *)reuseTitle reuseGenerationID:(NSString *)reuseGeneration jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
     NSAssert(NSThread.isMainThread, @"Canopy preparation is owned by the main thread");
-    if (_busy || !source.isFileURL || (keysURL ? !keysURL.isFileURL : !folder) ||
+    if ((latest && targetVersion) || (!latest && !updateURL) || _busy || !source.isFileURL || (keysURL ? !keysURL.isFileURL : !folder) ||
         (updateURL && (folder || !updateURL.isFileURL)) || !completion || (identifier && !CPJobID(identifier)) ||
         (!!reuseTitle!=!!reuseGeneration) || (reuseTitle && (!CPIdentifier(reuseTitle,16)||[reuseTitle isEqual:@"0000000000000000"]||!CPIdentifier(reuseGeneration,64)))) return NO;
     NSString *selectedTitle=[reuseTitle copy],*selectedGeneration=[reuseGeneration copy];
+    const BOOL selectedLatest=latest;const uint32_t selectedVersion=targetVersion;
     _busy = YES; ++_epoch; NSUInteger epoch = _epoch;
     _jobIdentifier = identifier ?: [[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
     NSString *job = [_jobIdentifier copy];
@@ -370,7 +374,8 @@ static NSDictionary *CPIOMetrics(const struct mng_store_io_metrics *metrics) {
                             struct mng_folder_callbacks callbacks={NULL,CPFolderCanonical};
                             if(operation==MNG_PREPARE_OK) operation=kind==MNG_FOLDER_NCA && !keys ? MNG_PREPARE_KEY :
                                 mng_prepare_folder_fd(fd,kind,keys ? &provider : NULL,&callbacks,&sink,&prepared);
-                        } else operation = readUpdateURL ? mng_prepare_latest_update_fd(fd, updateFD, &provider, &sink, &prepared) :
+                        } else operation = readUpdateURL ? (selectedLatest ? mng_prepare_latest_update_fd(fd, updateFD, &provider, &sink, &prepared) :
+                            mng_prepare_update_fd(fd, updateFD, &provider, &sink, selectedVersion, &prepared)) :
                             mng_prepare_fd(fd, &provider, &sink, &prepared);
                         if (updateFD >= 0) close(updateFD);
                         close(fd);
