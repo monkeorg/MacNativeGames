@@ -169,11 +169,16 @@ static NSString *STAction(CanopyStorageAction action) {
             int titleFD=STChild(cache,title.UTF8String);if(titleFD<0){STIssue(issues,@"A linked or nonprivate cache title was preserved.");continue;}
             int shaderFD=STChild(titleFD,"shader-identities"),shaderError=errno;close(titleFD);
             if(shaderFD<0){if(shaderError!=ENOENT){complete=NO;STIssue(issues,@"A shader-cache directory could not be opened privately. Existing files were preserved.");}continue;}
-            NSArray *names=STNames(shaderFD,issues);if(!names)complete=NO;
             NSURL *shaderURL=[[_cache URLByAppendingPathComponent:title isDirectory:YES] URLByAppendingPathComponent:@"shader-identities" isDirectory:YES];
             CanopyShaderCache *shaderCache=[[CanopyShaderCache alloc] initWithRootURL:shaderURL];
+            NSError *recoveryError=nil;
+            BOOL removalReconciled=[shaderCache recoverPendingRemovalWithError:&recoveryError];
+            if(!removalReconciled) {
+                complete=NO;STIssue(issues,@"A recorded shader-cache removal could not be reconciled. Reload or retry is required; removal may have progressed.");
+            }
+            NSArray *names=STNames(shaderFD,issues);if(!names)complete=NO;
             for(NSString *name in names) {
-                if([name isEqual:@".shader.lock"])continue;
+                if([name isEqual:@".shader.lock"] || (removalReconciled && [name isEqual:@".shader-retirement"]))continue;
                 if(!STHex(name,64)){STIssue(issues,@"Unpublished or unknown shader-cache entries were preserved.");continue;}
                 int folder=STChild(shaderFD,name.UTF8String);
                 if(folder<0){STIssue(issues,@"A linked or nonprivate shader identity was preserved.");continue;}close(folder);
