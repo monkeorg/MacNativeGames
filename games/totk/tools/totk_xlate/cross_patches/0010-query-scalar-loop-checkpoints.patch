@@ -1,0 +1,124 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -12365,18 +12365,27 @@
+ 		return false;
+ 
+ 	for (uint32_t i = 0; i < num_args; i++)
++	{
++		canopy_cross_budget::step();
+ 		if (!should_forward(args[i]))
+ 			return false;
++	}
+ 
+ 	// We need to forward globals as well.
+ 	if (!pure)
+ 	{
+ 		for (auto global : global_variables)
++		{
++			canopy_cross_budget::step();
+ 			if (!should_forward(global))
+ 				return false;
++		}
+ 		for (auto aliased : aliased_variables)
++		{
++			canopy_cross_budget::step();
+ 			if (!should_forward(aliased))
+ 				return false;
++		}
+ 	}
+ 
+ 	return true;
+@@ -20669,8 +20678,11 @@
+ 
+ 	uint32_t input_attachment_index = get_decoration(id, DecorationInputAttachmentIndex);
+ 	for (auto &remap : subpass_to_framebuffer_fetch_attachment)
++	{
++		canopy_cross_budget::step();
+ 		if (remap.first == input_attachment_index)
+ 			return true;
++	}
+ 
+ 	return false;
+ }
+@@ -21112,8 +21124,11 @@
+ 		return false;
+ 
+ 	for (uint32_t i = 0, n = uint32_t(type.member_types.size()); i < n; i++)
++	{
++		canopy_cross_budget::step();
+ 		if (!has_member_decoration(type.self, i, DecorationPerPrimitiveEXT))
+ 			return false;
++	}
+ 
+ 	return true;
+ }
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -13894,8 +13894,11 @@
+ 
+ 	// If a buffer is part of an argument buffer translate this to a legal identifier.
+ 	for (auto &c : expr)
++	{
++		canopy_cross_budget::step();
+ 		if (c == '.')
+ 			c = '_';
++	}
+ 
+ 	if (index == string::npos)
+ 	{
+@@ -13917,8 +13920,11 @@
+ 		}
+ 
+ 		for (auto &c : buffer_expr)
++		{
++			canopy_cross_budget::step();
+ 			if (c == '.')
+ 				c = '_';
++		}
+ 
+ 		return buffer_expr + buffer_size_name_suffix + array_expr;
+ 	}
+@@ -14706,8 +14712,11 @@
+ 
+ 	const auto location_range_in_use = [this](uint32_t location, uint32_t location_count) -> bool {
+ 		for (uint32_t i = 0; i < location_count; i++)
++		{
++			canopy_cross_budget::step();
+ 			if (location_inputs_in_use.count(location + i) != 0)
+ 				return true;
++		}
+ 		return false;
+ 	};
+ 
+@@ -14753,8 +14762,11 @@
+ 
+ 	const auto location_range_in_use = [this](uint32_t location, uint32_t location_count) -> bool {
+ 		for (uint32_t i = 0; i < location_count; i++)
++		{
++			canopy_cross_budget::step();
+ 			if (location_outputs_in_use.count(location + i) != 0)
+ 				return true;
++		}
+ 		return false;
+ 	};
+ 
+@@ -21154,13 +21166,19 @@
+ 		fp_flags &= ~(FPFastMathModeAllowContractMask);
+ 
+ 	for (auto &fp_pair : ep.fp_fast_math_defaults)
++	{
++		canopy_cross_budget::step();
+ 		if (fp_pair.second)
+ 			fp_flags &= get<SPIRConstant>(fp_pair.second).scalar();
++	}
+ 
+ 	if (incl_ops)
+ 		for (auto &p_m : ir.meta)
++		{
++			canopy_cross_budget::step();
+ 			if (p_m.second.decoration.decoration_flags.get(DecorationFPFastMathMode))
+ 				fp_flags &= p_m.second.decoration.fp_fast_math_mode;
++		}
+ 
+ 	return fp_flags;
+ }
