@@ -21,6 +21,48 @@ def sha(data):
 
 
 class CanopyPrivateBuildTests(unittest.TestCase):
+    def test_private_icon_uses_public_recipe_without_traversing_game_data(self):
+        import plistlib
+        from test_canopy_build import CanopyBuildTests
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory).resolve()
+            app = work / 'private.app';app.mkdir()
+            data = app / 'GameData';data.mkdir()
+            (data / 'original-fixture').write_bytes(b'unchanged private staging fixture')
+            commands = []
+            def run(command):
+                commands.append(command)
+                if '--resampleHeightWidth' in command:
+                    Path(command[command.index('--out') + 1]).write_bytes(CanopyBuildTests.synthetic_png(1024, 1024))
+                elif '--compile' in command:
+                    output = Path(command[command.index('--compile') + 1])
+                    (output / 'Assets.car').write_bytes(b'original synthetic catalog')
+                    (output / 'AppIcon60x60@2x.png').write_bytes(CanopyBuildTests.synthetic_png(120, 120))
+                    primary = {'CFBundlePrimaryIcon': {'CFBundleIconName': 'AppIcon', 'CFBundleIconFiles': ['AppIcon60x60']}}
+                    Path(command[command.index('--output-partial-info-plist') + 1]).write_bytes(
+                        plistlib.dumps({'CFBundleIcons': primary, 'CFBundleIcons~ipad': primary}))
+                return 'synthetic tool version'
+            icons, report = BUILDER.package_app_icon(ROOT, work, app, run)
+            self.assertEqual(report['sourceSHA256'], BUILDER.PUBLIC.BRAND_SHA256)
+            self.assertEqual(report['generatedSHA256'], sha(CanopyBuildTests.synthetic_png(1024, 1024)))
+            self.assertEqual({p.name for p in app.iterdir()}, {'GameData', 'Assets.car', 'AppIcon60x60@2x.png'})
+            self.assertEqual((data / 'original-fixture').read_bytes(), b'unchanged private staging fixture')
+            self.assertEqual(icons['CFBundleIcons']['CFBundlePrimaryIcon']['CFBundleIconName'], 'AppIcon')
+            self.assertEqual(commands[-2:], BUILDER.PUBLIC.icon_commands(ROOT, work / 'app-icon'))
+
+    def test_private_icon_derivation_failure_keeps_existing_payloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory).resolve();app = work / 'private.app';app.mkdir()
+            original = app / 'original-fixture';original.write_bytes(b'preserve')
+            def run(command):
+                if '--resampleHeightWidth' in command:
+                    raise RuntimeError('synthetic tool failure')
+                return 'synthetic tool version'
+            with self.assertRaisesRegex(RuntimeError, 'synthetic tool failure'):
+                BUILDER.package_app_icon(ROOT, work, app, run)
+            self.assertEqual({p.name for p in app.iterdir()}, {'original-fixture'})
+            self.assertEqual(original.read_bytes(), b'preserve')
+
     def test_display_opt_in_is_v143_only_and_plan_does_not_invent_pins(self):
         stock = BUILDER.build_plan(version='v143')
         plan = BUILDER.build_plan(version='v143', display_settings=True)

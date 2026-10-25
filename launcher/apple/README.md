@@ -1,9 +1,11 @@
-# Canopy iPhoneOS inspection host
+# Canopy iPhoneOS public host
 
 This is a separate original host target for iPhone and iPad, with iOS 16.0 as its
 minimum deployment version. It links UIKit, Foundation, CoreFoundation and UniformTypeIdentifiers
-and the portable Canopy container/file inspection code. It does not link the TOTK
-runtime or package games, shaders, firmware fonts, keys, saves or private caches.
+and the portable Canopy inspection, preparation, storage and input code. It does
+not link a private title loader or package games, shaders, firmware fonts, keys,
+saves or private caches. The public native-runtime provider exposes no executable
+title profile.
 The working TOTK target and bundle identity are unchanged.
 
 From the repository root, inspect the recipe on any supported Python host:
@@ -33,10 +35,29 @@ The builder never signs, installs, overwrites an earlier output or modifies the
 existing game build. Default identity is `org.monkeorg.canopy`; optional
 `--bundle-id org.example.canopy` must retain the `.canopy` suffix.
 
-The approved `launcher/Resources/Branding/Canopy.png` is hash checked and copied
-byte-for-byte into the bundle. It remains a resource, not a compiled Apple icon
-catalog; correct SpringBoard icon presentation is a later Apple validation task.
-Do not resize it or claim it is a production app icon in this slice.
+The approved `launcher/Resources/Branding/Canopy.png` is SHA256 checked and
+copied byte-for-byte into the bundle for the app's own use. Its actual source
+geometry is 1254x1254. Packaging also runs Apple's `/usr/bin/sips` to derive a
+1024x1024 PNG inside build staging, then compiles a single-source universal iOS
+`AppIcon.appiconset` with `actool` for iPhone and iPad. The repository image is
+never edited, replaced or downloaded. No manual background, transparency or
+other visual change is applied.
+
+The generated icon metadata is merged into the fixed app plist through an
+icon-only key whitelist; it cannot replace the `.canopy` identity or deployment
+settings. The build inventories the actual `Assets.car` and emitted AppIcon PNGs
+alongside the executable, plist and unchanged branding resource. Its observation
+records the source dimensions/SHA, exact derivation commands, `sips` and `actool`
+versions, generated 1024px PNG dimensions/SHA and compiled output hashes. A portable
+`--plan` explicitly leaves the derived hash unavailable because Apple tools have
+not run. Generated catalog inputs and compiled outputs are checked for changes
+before publishing the new app directory.
+
+The icon pipeline has portable orchestration tests with invented command output;
+those are not Apple compilation evidence. Actual `sips`/`actool` acceptance of
+this recipe still needs the next Mac build. The source has transparency, and no
+App Store validation, signing, SpringBoard appearance or physical-device launch
+is claimed by compiling its assets.
 
 The build observation is not an approved public inventory and is not provenance
 certification. Independent review must trace each compiled input and the recipe,
@@ -58,8 +79,9 @@ The builder produces a `.app` directory, not an IPA, and performs no upload.
 Portable tests exercise planning and file-handling with a synthetic fake command
 runner. Those tests do not establish Apple compilation. The iPhoneOS host now compiles in the public macOS CI runner; see the
 [verified build record](../../docs/canopy-inspection.md). Signing review and
-physical-device acceptance remain separate and unperformed. This target is an inspection
-app and does not provide game execution, decryption or installation.
+physical-device acceptance remain separate and unperformed. The public host
+prepares private content using locally selected inputs and keys, but preparation
+does not grant game execution or compatibility.
 
 ## Local signing and physical launch
 

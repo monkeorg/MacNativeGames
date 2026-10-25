@@ -22,7 +22,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 TOTK = Path('games/totk')
 VERSIONS = {'v121': '1.2.1', 'v143': '1.4.3'}
-RECIPE = 'canopy-private-native-ios26-v1'
+RECIPE = 'canopy-private-native-ios26-icon-v2'
 MODULES = ('main', 'subsdk0', 'sdk')
 FRAMEWORKS = ('UIKit', 'Metal', 'MetalFX', 'Foundation', 'QuartzCore', 'ImageIO',
               'CoreGraphics', 'CoreText', 'UniformTypeIdentifiers', 'CoreFoundation',
@@ -430,6 +430,44 @@ def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, 
     return commands, objects
 
 
+def package_app_icon(stage, work, app, run):
+    """Reuse the public icon recipe in an isolated, payload-free asset directory."""
+    icon_work = work / 'app-icon'
+    icon_app = icon_work / 'Canopy.app'
+    catalog = icon_work / 'Assets.xcassets/AppIcon.appiconset'
+    catalog.mkdir(parents=True, mode=0o700)
+    icon_app.mkdir(mode=0o700)
+    (catalog.parent / 'Contents.json').write_bytes(PUBLIC.catalog_root())
+    (catalog / 'Contents.json').write_bytes(PUBLIC.icon_catalog())
+    source = stable_bytes(stage / PUBLIC.BRAND, PUBLIC.MAX_INPUT_BYTES)
+    require(hashlib.sha256(source).hexdigest() == PUBLIC.BRAND_SHA256 and
+            PUBLIC.png_dimensions(source) == [1254, 1254], 'invalid approved app icon source')
+    versions = {'sips': run(['/usr/bin/sips', '--version']),
+                'actool': run(['xcrun', '--sdk', 'iphoneos', 'actool', '--version'])}
+    commands = PUBLIC.icon_commands(stage, icon_work)
+    run(commands[0])
+    generated = stable_bytes(catalog / 'Canopy-1024.png', PUBLIC.MAX_INPUT_BYTES)
+    require(PUBLIC.png_dimensions(generated) == [1024, 1024], 'app icon derivative must be 1024x1024')
+    run(commands[1])
+    icons = PUBLIC.icon_metadata(icon_work / 'icon-info.plist')
+    outputs = PUBLIC.icon_outputs(icon_app)
+    require(stable_bytes(catalog / 'Canopy-1024.png', PUBLIC.MAX_INPUT_BYTES) == generated and
+            stable_bytes(catalog / 'Contents.json', 65536) == PUBLIC.icon_catalog() and
+            stable_bytes(catalog.parent / 'Contents.json', 65536) == PUBLIC.catalog_root(),
+            'app icon catalog changed during compilation')
+    for name, content in outputs.items():
+        target = app / name
+        with target.open('xb') as destination:
+            destination.write(content)
+        require(digest(target, expected=hashlib.sha256(content).hexdigest(), limit=64 << 20),
+                'packaged app icon changed')
+    return icons, {'sourceSHA256': PUBLIC.BRAND_SHA256,
+        'generatedSHA256': hashlib.sha256(generated).hexdigest(),
+        'sourceDimensions': [1254, 1254], 'generatedDimensions': [1024, 1024],
+        'catalogSHA256': hashlib.sha256(PUBLIC.icon_catalog()).hexdigest(),
+        'compiledFiles': PUBLIC.records(outputs), 'toolVersions': versions}
+
+
 def build(args):
     # Refuse unsupported opt-ins before inspecting private paths or Apple tools.
     display_settings = getattr(args, 'display_settings', False)
@@ -509,7 +547,8 @@ def build(args):
                 link += ['-framework', framework]
             run(link + ['-o', str(app / 'Canopy')])
             import plistlib
-            info = plistlib.loads(PUBLIC.plist(args.bundle_id));info['MinimumOSVersion'] = '26.0'
+            icons, observation['appIcon'] = package_app_icon(stage, work, app, run)
+            info = plistlib.loads(PUBLIC.plist(args.bundle_id, icons));info['MinimumOSVersion'] = '26.0'
             (app / 'Info.plist').write_bytes(plistlib.dumps(info))
             (app / 'Canopy.png').write_bytes(branding)
             observation['executableSHA256'] = digest(app / 'Canopy')
