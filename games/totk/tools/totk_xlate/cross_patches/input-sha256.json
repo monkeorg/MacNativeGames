@@ -364,6 +364,16 @@
       },
       "patch": "0032-member-decoration-depth.patch",
       "sha256": "a393bf2cf42f6aac49741f6a4a7fc7dd3e2f164ec678f309bc726ad6d5dd7bc1"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "4909ab68421c311835b5b8e0d79d04ecff2d86e043d2eaae389684b1db8f28d6"
+      },
+      "before": {
+        "spirv_glsl.cpp": "749222714a516b5843f5b3b6220ec8f0aaf30f65aed38bca2c1138165fd45091"
+      },
+      "patch": "0033-fixed-composite-fill-bounds.patch",
+      "sha256": "14f68c685befaa9f6c67c1c3ccf5a3f93082e6edf87367d5919b70f04b5d2c58"
     }
   ],
   "schemaVersion": 1
