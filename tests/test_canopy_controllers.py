@@ -41,7 +41,10 @@ class CanopyControllers(unittest.TestCase):
         result = subprocess.run([str(self.probe), name], capture_output=True,
                                 text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)['status'], 'pass')
+        report = json.loads(result.stdout)
+        if report['status'] == 'skip':
+            self.skipTest(report['reason'])
+        self.assertEqual(report['status'], 'pass')
 
     def test_real_notifications_and_independent_snapshot_routing(self):
         self.scenario('independent')
@@ -60,6 +63,9 @@ class CanopyControllers(unittest.TestCase):
 
     def test_teardown_releases_observers_and_handlers(self):
         self.scenario('teardown')
+
+    def test_home_commands_survive_capture_without_replaying_held_buttons(self):
+        self.scenario('commands')
 
 
 if __name__ == '__main__':

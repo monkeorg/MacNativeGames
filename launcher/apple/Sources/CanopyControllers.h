@@ -18,6 +18,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// The host must deactivate on focus loss, pause or overlay input capture, and
 /// reactivate when gameplay owns input again. Both transitions clear held state.
 - (enum mng_player_status)setFocused:(BOOL)focused;
+/// Drain host command edges (portable Home/Capture bits16/17). Physical held
+/// state survives guest focus changes so resuming cannot replay held Home.
+/// Commands are separate from guest snapshots; consume them before guest input.
+- (uint64_t)consumeUICommandEdges;
 - (enum mng_player_status)readPlayer:(unsigned)player deviceID:(uint64_t *)identifier
                              input:(struct mng_input *)input;
 @end

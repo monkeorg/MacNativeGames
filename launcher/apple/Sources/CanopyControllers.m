@@ -6,8 +6,10 @@
     NSMutableDictionary<NSNumber *, GCController *> *_controllers;
     NSMutableDictionary<NSNumber *, id> *_handlers;
     NSMutableDictionary<NSNumber *, NSNumber *> *_tokens;
+    NSMutableDictionary<NSNumber *, NSNumber *> *_commandHeld;
     NSMutableArray<id> *_observers;
     uint64_t _nextIdentifier;
+    uint64_t _commandEdges;
 }
 - (instancetype)init {
     NSAssert(NSThread.isMainThread, @"CanopyControllers belongs on the main thread");
@@ -16,6 +18,7 @@
         _controllers = [NSMutableDictionary dictionary];
         _handlers = [NSMutableDictionary dictionary];
         _tokens = [NSMutableDictionary dictionary];
+        _commandHeld = [NSMutableDictionary dictionary];
         _observers = [NSMutableArray array];
         __weak CanopyControllers *weakSelf = self;
         NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
@@ -65,6 +68,7 @@
     [self clearHandler:key];
     (void)mng_players_disconnect(&_players, key.unsignedLongLongValue);
     [_controllers removeObjectForKey:key];
+    [_commandHeld removeObjectForKey:key];
     [self changed];
     // Previously ignored devices can become eligible after a slot is freed.
     for (GCController *controller in GCController.controllers) [self connected:controller];
@@ -85,6 +89,13 @@
         (void)element;
         CanopyControllers *owner = weakSelf;
         if (!owner || !NSThread.isMainThread || sequence == UINT64_MAX) return;
+        uint64_t currentToken = 0;
+        if (mng_players_token(&owner->_players, identifier, &currentToken) != MNG_PLAYER_OK || currentToken != token) return;
+        uint64_t command = gamepad.buttonHome.isPressed ? UINT64_C(1) << 16 : 0;
+        uint64_t previousCommand = [owner->_commandHeld[key] unsignedLongLongValue];
+        uint64_t edges = command & ~previousCommand;
+        owner->_commandHeld[key] = @(command);
+        owner->_commandEdges |= edges;
         struct mng_input input = {0};
         GCControllerButtonInput *buttons[] = {gamepad.buttonA, gamepad.buttonB, gamepad.buttonX, gamepad.buttonY,
             gamepad.leftShoulder, gamepad.rightShoulder, gamepad.leftTrigger, gamepad.rightTrigger,
@@ -98,7 +109,7 @@
         input.sticks[3]=gamepad.rightThumbstick.yAxis.value;
         input.triggers[0]=gamepad.leftTrigger.value;
         input.triggers[1]=gamepad.rightTrigger.value;
-        if (mng_players_update(&owner->_players, identifier, token, ++sequence, &input) == MNG_PLAYER_OK) [owner changed];
+        if (mng_players_update(&owner->_players, identifier, token, ++sequence, &input) == MNG_PLAYER_OK || edges) [owner changed];
     };
     _handlers[key] = [handler copy];
     _tokens[key] = @(token);
@@ -149,5 +160,9 @@
 - (enum mng_player_status)readPlayer:(unsigned)player deviceID:(uint64_t *)identifier input:(struct mng_input *)input {
     if (!NSThread.isMainThread) return MNG_PLAYER_INVALID;
     return mng_players_read(&_players, player, identifier, input);
+}
+- (uint64_t)consumeUICommandEdges {
+    NSAssert(NSThread.isMainThread, @"CanopyControllers belongs on the main thread");
+    uint64_t edges = _commandEdges; _commandEdges = 0; return edges;
 }
 @end

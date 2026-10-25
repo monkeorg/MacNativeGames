@@ -90,6 +90,26 @@ int main(int argc,const char *argv[]) {
             Check(Neutral(Read(bridge,2,a)),"old assignment input survived");
             Check((id)other==(id)second.extendedGamepad.valueChangedHandler,"unaffected handler sequence was restarted");
             Emit(second); Check(Read(bridge,1,b).buttons==2,"unaffected player input lost");
+        } else if ([scenario isEqual:@"commands"]) {
+            if (!first.extendedGamepad.buttonHome) {
+                puts("{\"status\":\"skip\",\"reason\":\"The public snapshot controller does not expose Home\"}"); return 0;
+            }
+            Check([bridge consumeUICommandEdges]==0,"ordinary buttons became host commands");
+            [first.extendedGamepad.buttonHome setValue:1]; Emit(first);
+            Check([bridge consumeUICommandEdges]==(UINT64_C(1)<<16),"Home rising edge was lost");
+            Check([bridge consumeUICommandEdges]==0,"command was not drained");
+            GCExtendedGamepadValueChangedHandler old=[first.extendedGamepad.valueChangedHandler copy];
+            Check([bridge setFocused:NO]==MNG_PLAYER_OK,"command capture failed");
+            Emit(first); Check([bridge consumeUICommandEdges]==0,"focus clearing replayed held Home");
+            [first.extendedGamepad.buttonHome setValue:0]; Emit(first);
+            [first.extendedGamepad.buttonHome setValue:1]; Emit(first);
+            Check([bridge consumeUICommandEdges]==(UINT64_C(1)<<16),"unfocused command edge was lost");
+            Check([bridge setFocused:YES]==MNG_PLAYER_OK,"command resume failed");
+            Emit(first); Check([bridge consumeUICommandEdges]==0,"resume replayed held Home");
+            [first.extendedGamepad.buttonHome setValue:0]; Emit(first);
+            [first.extendedGamepad.buttonHome setValue:1]; old(first.extendedGamepad,first.extendedGamepad.buttonHome);
+            Check([bridge consumeUICommandEdges]==0,"stale handler emitted a command");
+            Emit(first); Check([bridge consumeUICommandEdges]==(UINT64_C(1)<<16),"fresh Home edge was discarded");
         } else if ([scenario isEqual:@"teardown"]) {
             __weak CanopyControllers *weakBridge=bridge;
             GCExtendedGamepadValueChangedHandler old=[first.extendedGamepad.valueChangedHandler copy];

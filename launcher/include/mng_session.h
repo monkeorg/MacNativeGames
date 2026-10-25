@@ -21,6 +21,9 @@ struct mng_session_settings {
     float volume;
 };
 struct mng_player_input {
+    /* Portable button layout from mng_players.h: A,B,X,Y,L,R,ZL,ZR,
+     * plus,minus,left-stick,right-stick,up,down,left,right,home,capture.
+     * A title adapter must explicitly convert to its native guest bit layout. */
     uint64_t device_id, buttons;
     float left_x, left_y, right_x, right_y;
     uint32_t connected;
