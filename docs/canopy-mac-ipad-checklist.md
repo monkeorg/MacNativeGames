@@ -54,6 +54,14 @@ the documented retained local exporter/codec/shader inputs; no public upload is
 part of this handoff. Record exact revisions, unavailable checks and reproducible
 failures. Source review and compilation never replace physical acceptance.
 
-Bounded compiler source assessment continues over 113 remaining loop-inventory
-entries, raw recursion and noexcept boundaries. No new broken app flow has been
+Bounded compiler source assessment continues after the app snapshot: through
+#111 / `c6f1502`, Cross has 436 loop checkpoints and 83 raw sites (10 fixed,
+73 input-dependent or unproven). These later source-only drafts have independent
+source reviews and still need actual build/execution validation; the runtime translator stays off. Other recursion,
+allocation and noexcept boundaries remain open. No new broken app flow has been
 demonstrated by that assessment, and it does not establish all cloud work complete.
+
+For #110 / `73bb8db`, check a fresh friendly title before and after changing one
+setting and reloading the library. Other custom names must survive. An exact
+title-ID name intentionally takes the default label fallback; no metadata is
+rewritten by this correction. This source change has not been built or run.

@@ -1,5 +1,62 @@
 # Canopy cloud development — active recovery entrypoint
 
+## Live source cursor after the published #101 handoff
+
+Current branch `feat/canopy-shader-traversal-work`, HEAD
+`c6f15028d73a8e0ca1e1ef287ab4b58f64264704` (#111). Inspect actual log/status.
+The visual Mac/iPad handoff is published in #101, branch
+`feat/canopy-cloud-handoff`, head `3cec301a6dc32da136e7c86f3038d92fb2a54607`.
+That snapshot covers app source through #100 and remains a valid local starting
+point. The authorized cloud source goal continues; no hardware/format gate closed.
+
+Reviewed dependent compiler source drafts after #101:
+
+- #102 `a079f9f35d88a1bfed47c478a89d4d007b43cc01`: checked patch0005,
+  function purity/control-dependence query depth guards.
+- #103 `897bd588644107bcb4eec9080e6f2d75233a1bcf`: patch0006, five PHI scans;
+  401 checkpoints,118 raw sites=10 fixed+108 pending.
+- #104 `a5bfbc40f07a832c760e8323b0476e03da5e3aa3`: patch0007, five normal IR
+  queries;406 checkpoints,113 raw=10 fixed+103 pending.
+- #105 `ef9fe3a0fffb23877c8732c3c65e7a4d970fb676`: patch0008, ten ordinary
+  statement loops;416 checkpoints,103 raw=10 fixed+93 pending.
+- #106 `98c01ffd9b08aa761ce8b79e4d8290e1d3b83aac`: patch0009, actual Parser
+  structural-type comparison and Compiler alias-name depth guards; counts unchanged.
+- #107 `3ec62ae23411998f3bf1585c0008676d9c24399c`: patch0010, eleven normal
+  query/local-scalar scans;427 checkpoints,70 formerly unbraced,raw92=10 fixed+82 pending.
+- #108 `f053c9641a822cecb8b0a54c79d606c64f61546a`: patch0011, implied-read,
+  invariant-expression and global-read function-dependency depth guards; counts unchanged.
+- #109 `2408740f8546a7f8a0ccd8a3d284db10e3f619c4`: patch0012, type-location
+  depth/shape/narrowing/checked local arithmetic and two scans;429/72/raw90=10+80.
+- #110 `73bb8dbfc9692334d1061e337baa2d406fb0d989`: library friendly-name
+  fallback after settings-first placeholder creation. Other custom names retained;
+  literal title-ID legacy ambiguity documented; metadata untouched. Product author,
+  independent root source review; unbuilt/untested.
+
+- #111 `c6f15028d73a8e0ca1e1ef287ab4b58f64264704`: patch0013, seven already
+  depth-controlled wrapper loops;436/79/raw83=10 fixed+73 pending.
+
+Compiler drafts #102–#109 and #111 have two independent source reviews (root plus non-author reviewer), checked
+patch/before/after SHA provenance, vendor untouched, source generation only.
+NO new tests/probes/compiler runs or new tests; `[skip ci]`. Runtime translator
+stays off; no malformed-SPIRV, heap-isolation, parity, FPS or hardware proof.
+
+Active ownership: native exclusively authors patch0014 and input-sha256/
+coverage/shader-doc changes for three MSL location-span/search methods;
+execution/root review next; no loop-count changes. Execution assesses further
+normal per-request loops read-only. Other caller location offsets and specialization evaluation
+and other recursion/ownership remain separate gates. Product's supported app
+flow reassessment found the name defect now committed110; no other new source
+defect demonstrated in that pass. App acceptance still remains open.
+No concurrent metadata edits. Root owns this live cursor, visual-doc addenda,
+integration, PRs/issues and attachments. Other workers use followup_task.
+
+Attachment attempts88–107 and109–110 returned connection closed. Attempt108
+is in772 (may need wait);111 still needs attempt. No attachment success is
+established. Source/source-review milestones do not replace exact CI:
+#77 green524/517/7 and940/931/9; later#85 red971/961/9/1, #99 fix UNRUN.
+
+## App-source snapshot through #100 (historical below this cursor)
+
 Reconciliation date: 2026-10-25. Current source branch is
 `feat/canopy-shader-removal-recovery`, HEAD
 `62dd868c5e66d830ca1f5973462c4725a56aa759` (#100).
