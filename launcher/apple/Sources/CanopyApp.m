@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "CanopyLibrary.h"
+#import "CanopyGames.h"
 #include "mng_file.h"
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -21,7 +22,7 @@
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Canopy";
+    self.title = @"Inspection history";
     self.navigationController.navigationBar.prefersLargeTitles = YES;
     self.tableView.backgroundColor = UIColor.systemGroupedBackgroundColor;
     self.tableView.rowHeight = UITableViewAutomaticDimension;
@@ -241,6 +242,10 @@
 }
 @end
 
+UIViewController *CanopyMakeInspectionHistoryController(void) {
+    return [[CanopyViewController alloc] initWithStyle:UITableViewStyleInsetGrouped];
+}
+
 @interface CanopySceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic, strong) UIWindow *window;
 @end
@@ -249,7 +254,7 @@
     (void)session; (void)options;
     if (![scene isKindOfClass:UIWindowScene.class]) return;
     self.window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
-    self.window.rootViewController = [[UINavigationController alloc] initWithRootViewController:[[CanopyViewController alloc] initWithStyle:UITableViewStyleInsetGrouped]];
+    self.window.rootViewController = [[UINavigationController alloc] initWithRootViewController:CanopyMakeGamesController()];
     [self.window makeKeyAndVisible];
 }
 @end
