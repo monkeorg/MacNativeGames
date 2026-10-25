@@ -1,0 +1,22 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -6173,6 +6173,19 @@
+                                            const SmallVector<ConstantID> &initializers)
+ {
+ 	auto &type = get<SPIRType>(type_id);
++	if (!is_array(type) && type.basetype != SPIRType::Struct)
++	{
++		if (is_matrix(type))
++		{
++			if (type.columns > 4 || type.vecsize > 4 || initializers.size() < type.columns)
++				SPIRV_CROSS_THROW("Composite matrix exceeds fixed storage or lacks initializers.");
++		}
++		else if (is_vector(type))
++		{
++			if (type.vecsize > 4 || initializers.size() < type.vecsize)
++				SPIRV_CROSS_THROW("Composite vector exceeds fixed storage or lacks initializers.");
++		}
++	}
+ 	constant.specialization = true;
+ 	if (is_array(type) || type.basetype == SPIRType::Struct)
+ 	{
