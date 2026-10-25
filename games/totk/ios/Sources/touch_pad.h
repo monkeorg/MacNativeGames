@@ -4,3 +4,5 @@
    runtime_touch_pad_set (runtime/gamepad.m), which merges it with any physical controller. */
 @interface TOTKTouchPad : UIView
 @end
+// Main thread only. Removal releases held touches before the view leaves its host.
+TOTKTouchPad *TOTKSetTouchControlsVisible(UIView *host, BOOL visible);

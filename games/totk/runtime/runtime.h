@@ -100,6 +100,13 @@ void runtime_warm_done(void);
 void runtime_game_slot_acquire(const char *mode);   /* runtime/game_slot.c: one game at a time */
 void *runtime_front_override(const char *name);
 int runtime_front_focus(void);
+/* iOS main-thread controls. Limits are requested native-frame ceilings, not measured frame rates. */
+void runtime_ios_set_fps_limit(unsigned fps);
+unsigned runtime_ios_fps_limit(void);
+int runtime_ios_fps_limit_supported(unsigned fps);
+int runtime_ios_taa_supported(void);
+void runtime_ios_set_taa_enabled(int enabled);
+int runtime_ios_taa_enabled(void);
 void runtime_shortcut_help_toggle(void);
 int fps_overlay_toggle_hints(void);   /* key 1: all -> minimal (FPS only) -> off; returns the new mode, 0 = off */
 int fps_overlay_hud_mode(void);
@@ -138,6 +145,7 @@ void runtime_mouse_move(double dx, double dy);      /* points, AppKit's deltaX /
 void runtime_mouse_button(int button, int down);    /* main thread; 0 left, 1 right, 2 middle, 3 and 4 the side buttons */
 void runtime_mouse_release(void);                   /* main thread: buttons up, stick centred */
 void runtime_touch_pad_set(const RuntimeGamepadState *state);   /* on-screen touch controls (iOS) */
+void runtime_touch_pad_clear(void);   /* Drop held and queued touch input, preserving controller/mouse input. */
 /* Controller rumble and motion (opt-in TOTK_RUMBLE=1 / TOTK_GYRO=1): the game's hid side in runtime/hid_feedback.c, the
    Mac controller's haptics and motion sensors in runtime/gamepad_feedback.m. */
 #define RUNTIME_MOTION_MAX 32

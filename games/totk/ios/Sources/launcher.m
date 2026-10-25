@@ -6,6 +6,7 @@
 #import <GameController/GameController.h>
 #include <math.h>
 #include <stdlib.h>
+#include "../../runtime/runtime.h"
 
 static NSString *control_button_title(NSString *button) {
     return @{@"south":@"South face button",@"east":@"East face button",@"west":@"West face button",@"north":@"North face button",
@@ -20,21 +21,12 @@ static NSDictionary *startup_preferences(NSUserDefaults *defaults) {
     NSMutableDictionary *bindings = [NSMutableDictionary dictionary];
     for (NSString *button in TOTKLauncherControlButtons()) bindings[button] = TOTKLauncherControlBinding(defaults,button);
     return @{@"render":@(TOTKLauncherRenderHeight(defaults)), @"aspect":TOTKLauncherAspect(defaults),
-        @"touch":@(TOTKLauncherTouch(defaults)), @"controller":TOTKLauncherControllerType(defaults),
+        @"controller":TOTKLauncherControllerType(defaults),
         @"sensitivity":@(TOTKLauncherMouseSensitivity(defaults)), @"invert":@(TOTKLauncherMouseInvertY(defaults)),
         @"bindings":[bindings copy], @"language":TOTKLauncherLanguage(defaults)};
 }
 
-static void setting_badge(UITableViewCell *cell, BOOL live, BOOL pending) {
-    UILabel *badge = [UILabel new];
-    badge.text = live ? @"Live" : pending ? @"Restart required" : @"Restart";
-    badge.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1];
-    badge.textColor = pending ? UIColor.systemOrangeColor : UIColor.secondaryLabelColor;
-    badge.isAccessibilityElement = YES;
-    badge.accessibilityIdentifier = [@"TOTKSettingTiming." stringByAppendingString:cell.textLabel.text];
-    badge.accessibilityLabel = badge.text;
-    [badge sizeToFit];
-    cell.accessoryView = badge;
+static void setting_timing_hint(UITableViewCell *cell, BOOL live, BOOL pending) {
     cell.accessibilityHint = live ? @"Applies immediately to the active game." : pending
         ? @"Restart required. This saved value differs from the current session."
         : @"Changes require an app restart. The current session keeps its settings.";
@@ -88,7 +80,7 @@ static void show_restart_required(UIViewController *controller) {
     cell.accessibilityLabel = cell.textLabel.text;
     cell.accessibilityValue = cell.detailTextLabel.text;
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-    if (self.editingNextLaunch) setting_badge(cell,NO,![TOTKLauncherControlBinding(NSUserDefaults.standardUserDefaults,button) isEqual:self.runningBindings[button]]);
+    if (self.editingNextLaunch) setting_timing_hint(cell,NO,![TOTKLauncherControlBinding(NSUserDefaults.standardUserDefaults,button) isEqual:self.runningBindings[button]]);
     else cell.accessibilityHint = @"Applies when you press Play.";
     return cell;
 }
@@ -138,7 +130,7 @@ static void show_restart_required(UIViewController *controller) {
     cell.detailTextLabel.text = TOTKKeyboardKeyTitle(TOTKKeyboardBinding(NSUserDefaults.standardUserDefaults,path.row));
     cell.accessibilityLabel = cell.textLabel.text;
     cell.accessibilityValue = cell.detailTextLabel.text;
-    setting_badge(cell,YES,NO);
+    setting_timing_hint(cell,YES,NO);
     return cell;
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
@@ -180,7 +172,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     TOTKSaveStore *_store;
     NSString *_unavailable;
     void (^_play)(void);
-    BOOL _busy, _started, _inGame;
+    BOOL _busy, _started, _inGame, _touchOffConfirmed;
     void (^_HUDChanged)(void);
     NSURL *_exportDirectory;
     NSDictionary *_runningPreferences;
@@ -206,6 +198,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self.tableView reloadData];
+    [self refreshRestartFooter];
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -245,10 +238,11 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     self.tableView.remembersLastFocusedIndexPath = YES;
     self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
     self.navigationController.navigationBar.prefersLargeTitles = NO;
+    [self refreshRestartFooter];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return (NSInteger[]){1,4,6,5,1}[section];
+    (void)tableView; return (NSInteger[]){1,6,6,5,1}[section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return @[@"",@"Graphics",@"Controls",@"Saves",@"Language"][section];
@@ -263,15 +257,15 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
-    if (section == 0) return _inGame ? @"Performance overlay, Apple Metal HUD and keyboard mappings apply live. Other settings require an app restart. Save game progress before you restart." : (_unavailable ?: @"Choose settings and manage saves before Play. Use the game menu to return to settings during play.");
-    if (_inGame && section == 1) return @"Performance overlay and Apple Metal HUD apply live. Resolution and aspect require an app restart.";
-    if (_inGame && section == 2) return @"Keyboard mappings apply live. Other control changes require an app restart. Developer overrides take precedence.";
+    if (section == 0) return _inGame ? @"Adjust graphics and controls. The game stays active while this menu is open." : (_unavailable ?: @"Choose settings and manage saves before Play. Use the game menu to return to settings during play.");
+    if (_inGame && section == 1) return @"Frame rate and overlays apply live. TAA On requests temporal anti-aliasing; device support does not confirm frame application. Resolution and aspect require restart. 40 FPS requires a compatible display.";
+    if (_inGame && section == 2) return @"Touch visibility and keyboard mappings apply live. Other control changes apply after an app restart.";
     if (_inGame && section == 3) return @"Save transfers, backups and restores are available before Play only. Reopen the app to manage saves safely.";
     if (_inGame && section == 4) return @"Language changes require an app restart.";
     if (section == 1) return TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary)
         ? ([self fullDisplayAvailable] ? @"Changes apply at Play. Full display uses your screen’s aspect ratio." : @"Changes apply at Play. This display uses 16:9.")
         : @"This build supports 1280 × 720 at 16:9.";
-    if (section == 2) return @"Controls apply at Play. Reopen the app to change them during a later session. Automatic hides touch buttons with a controller; Off requires one. Developer overrides take precedence.";
+    if (section == 2) return @"Automatic hides touch buttons with a controller. Off keeps the bottom-left menu button available for keyboard or controller use.";
     if (section == 3) return @"Select a folder containing complete slot_00–slot_05 saves. Imports and restores create a backup first.";
     return @"Language follows the existing Settings app preference. Changes apply when you press Play.";
 }
@@ -280,7 +274,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.backgroundColor = [UIColor.secondarySystemGroupedBackgroundColor colorWithAlphaComponent:0.65];
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    NSArray *titles = @[@[@"Play"],@[@"Render resolution",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
+    NSArray *titles = @[@[@"Play"],@[@"Render resolution",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD",@"Target frame rate",@"Anti-aliasing (TAA)"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
         @[@"Import save folder",@"Export save folder",@"Back up save",@"Restore backup",@"Edit this save"],@[@"Game language"]];
     cell.textLabel.text = _inGame && path.section == 0 ? @"Resume game" : titles[path.section][path.row];
     BOOL displaySettings = TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary);
@@ -289,7 +283,12 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             ? [NSString stringWithFormat:@"%ld high",(long)TOTKLauncherRenderHeight(d)] : @"1280 × 720";
         else if (path.row == 1) cell.detailTextLabel.text = displaySettings && [self fullDisplayAvailable] && [TOTKLauncherAspect(d) isEqual:@"display"] ? @"Full display" : @"16:9";
         else if (path.row == 2) cell.detailTextLabel.text = @{@0:@"Off",@1:@"Full",@2:@"FPS only"}[@(TOTKLauncherHUD(d))];
-        else cell.detailTextLabel.text = TOTKLauncherMetalHUD(d) ? @"On" : @"Off";
+        else if (path.row == 3) cell.detailTextLabel.text = TOTKLauncherMetalHUD(d) ? @"On" : @"Off";
+        else if (path.row == 4) {
+            unsigned rate = _inGame ? runtime_ios_fps_limit() : (unsigned)TOTKLauncherFPSLimit(d);
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%u FPS%@",rate,runtime_ios_fps_limit_supported(rate) ? @"" : @" · unavailable"];
+        }
+        else cell.detailTextLabel.text = runtime_ios_taa_supported() ? ((_inGame ? runtime_ios_taa_enabled() : TOTKLauncherTAA(d)) ? @"On (requested)" : @"Off") : @"Unavailable";
     }
     BOOL controlsOverride = NO;
     if (path.section == 2) {
@@ -302,15 +301,18 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
         if (controlsOverride) cell.detailTextLabel.text = @"Developer override";
     }
     if (path.section == 4) cell.detailTextLabel.text = [self languageTitle:TOTKLauncherLanguage(d)];
-    BOOL disabled = _busy || _started || controlsOverride || (_inGame && path.section == 3) || (path.section == 0 && _unavailable) || (path.section == 1 && path.row < 2 && !displaySettings);
+    BOOL disabled = _busy || _started || controlsOverride || (_inGame && path.section == 3) || (path.section == 0 && _unavailable) || (path.section == 1 && path.row < 2 && !displaySettings) ||
+        (path.section == 1 && path.row == 4 && !runtime_ios_fps_limit_supported(60)) ||
+        (path.section == 1 && path.row == 5 && !runtime_ios_taa_supported());
     cell.userInteractionEnabled = !disabled;
     cell.textLabel.enabled = !disabled;
     cell.accessibilityLabel = cell.textLabel.text;
     cell.accessibilityValue = cell.detailTextLabel.text;
+    cell.accessibilityIdentifier = [@"TOTKSetting." stringByAppendingString:cell.textLabel.text];
     if (_inGame && (path.section == 1 || path.section == 2 || path.section == 4)) {
         NSString *key = [self startupKeyForPath:path];
         BOOL pending = key && ![startup_preferences(d)[key] isEqual:_runningPreferences[key]];
-        setting_badge(cell,(path.section == 1 && path.row >= 2) || (path.section == 2 && path.row == 5),pending);
+        setting_timing_hint(cell,(path.section == 1 && path.row >= 2) || (path.section == 2 && (path.row == 0 || path.row == 5)),pending);
     } else if (path.section == 1 || path.section == 2 || path.section == 4) cell.accessibilityHint = @"Applies when you press Play.";
     else if (_inGame && path.section == 3) cell.accessibilityHint = @"Available before Play. Save your progress, close the app, and reopen it.";
     else if (path.section == 0) cell.accessibilityHint = _inGame ? @"Close settings and return to the active game." : @"Start the game with these settings.";
@@ -320,6 +322,46 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 - (NSString *)languageTitle:(NSString *)language {
     NSUInteger index = [TOTKLanguages() indexOfObject:language];
     return @[@"System",@"繁體中文",@"简体中文",@"English",@"日本語",@"Deutsch",@"Español",@"Français",@"Italiano",@"Nederlands",@"Русский",@"한국어"][index == NSNotFound ? 0 : index];
+}
+- (void)refreshRestartFooter {
+    if (!_inGame || !self.tableView) return;
+    BOOL pending = ![startup_preferences(NSUserDefaults.standardUserDefaults) isEqual:_runningPreferences];
+    CGFloat width = MAX(self.tableView.bounds.size.width,320);
+    UILabel *label = [UILabel new];
+    label.text = pending ? @"Restart required\nSave game progress before you close this app from the App Switcher and reopen it."
+        : @"Live changes apply immediately. Resolution, aspect, controller settings and language apply after an app restart.";
+    label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+    label.textColor = pending ? UIColor.systemOrangeColor : UIColor.secondaryLabelColor;
+    label.numberOfLines = 0;
+    label.accessibilityIdentifier = @"TOTKRestartFooter";
+    CGSize size = [label sizeThatFits:CGSizeMake(width-40,CGFLOAT_MAX)];
+    UIView *footer = [[UIView alloc] initWithFrame:CGRectMake(0,0,width,size.height+32)];
+    label.frame = CGRectMake(20,16,width-40,size.height);
+    label.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+    [footer addSubview:label];
+    self.tableView.tableFooterView = footer;
+}
+- (void)setTouchChoice:(NSUInteger)choice {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if (!choice) {
+        [defaults setBool:YES forKey:@"TOTK_LAUNCHER_TOUCH"];
+        if (_HUDChanged) _HUDChanged();
+        [self.tableView reloadData];
+        return;
+    }
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Hide touch controls?"
+        message:@"Use your keyboard or controller. The bottom-left game menu button stays visible, so you can turn touch controls on again."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Hide controls" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action;
+        self->_touchOffConfirmed = YES;
+        [defaults setBool:NO forKey:@"TOTK_LAUNCHER_TOUCH"];
+        if (self->_HUDChanged) self->_HUDChanged();
+        [self.tableView reloadData];
+    }]];
+    if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:^{ [self presentViewController:alert animated:YES completion:nil]; }];
+    else [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)message:(NSString *)message {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"TOTK" message:message preferredStyle:UIAlertControllerStyleAlert];
@@ -332,7 +374,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (NSString *)startupKeyForPath:(NSIndexPath *)path {
     if (path.section == 1 && path.row < 2) return @[@"render",@"aspect"][path.row];
-    if (path.section == 2 && path.row < 5) return @[@"touch",@"controller",@"sensitivity",@"invert",@"bindings"][path.row];
+    if (path.section == 2 && path.row > 0 && path.row < 5) return @[@"controller",@"sensitivity",@"invert",@"bindings"][path.row-1];
     return path.section == 4 ? @"language" : nil;
 }
 - (void)startupSettingChangedAtPath:(NSIndexPath *)path previousValue:(id)previous {
@@ -349,7 +391,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             (void)a;
             NSString *key = [self startupKeyForPath:path];
             id previous = key ? startup_preferences(NSUserDefaults.standardUserDefaults)[key] : nil;
-            selected(index); [self.tableView reloadData];
+            selected(index); [self.tableView reloadData]; [self refreshRestartFooter];
             if (key) [self startupSettingChangedAtPath:path previousValue:previous];
         }]];
     }];
@@ -366,7 +408,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
         if (_unavailable) return;
         BOOL controller = NO;
         for (GCController *pad in GCController.controllers) if (pad.extendedGamepad) controller = YES;
-        if (!TOTKLauncherTouch(d) && !controller && !GCKeyboard.coalescedKeyboard) { [self message:@"Enable touch controls or connect a compatible controller or keyboard before Play. Keep touch controls on for Universal Control."]; return; }
+        if (!TOTKLauncherTouch(d) && !controller && !GCKeyboard.coalescedKeyboard && !_touchOffConfirmed) { [self message:@"Enable touch controls, connect a controller or keyboard, or select Off again and confirm keyboard-only input before Play."]; return; }
         NSError *controlsError = nil;
         if (!TOTKLauncherPrepareControls(d,&controlsError)) { [self message:controlsError.localizedDescription ?: @"Cannot prepare controls. Play has not started."]; return; }
         if (![_store sealForPlay]) return;
@@ -392,9 +434,26 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             [d setBool:i == 0 forKey:@"TOTK_LAUNCHER_METAL_HUD"];
             if (self->_HUDChanged) self->_HUDChanged();
         }];
+    } else if (path.section == 1 && path.row == 4) {
+        NSMutableArray<NSNumber *> *rates = [NSMutableArray array];
+        NSMutableArray<NSString *> *titles = [NSMutableArray array];
+        for (NSNumber *rate in @[@30,@40,@60]) if (runtime_ios_fps_limit_supported(rate.unsignedIntValue)) {
+            [rates addObject:rate]; [titles addObject:[NSString stringWithFormat:@"%@ FPS",rate]];
+        }
+        if (!rates.count) return;
+        [self choose:titles path:path selected:^(NSUInteger i) {
+            [d setInteger:rates[i].integerValue forKey:@"TOTK_LAUNCHER_FPS_LIMIT"];
+            if (self->_HUDChanged) self->_HUDChanged();
+        }];
+    } else if (path.section == 1 && path.row == 5) {
+        if (!runtime_ios_taa_supported()) return;
+        [self choose:@[@"Off",@"On"] path:path selected:^(NSUInteger i) {
+            [d setBool:i == 1 forKey:@"TOTK_LAUNCHER_TAA"];
+            if (self->_HUDChanged) self->_HUDChanged();
+        }];
     } else if (path.section == 2) {
         if (path.row == 0) {
-            [self choose:@[@"Automatic",@"Off"] path:path selected:^(NSUInteger i) { [d setBool:i == 0 forKey:@"TOTK_LAUNCHER_TOUCH"]; }];
+            [self choose:@[@"Automatic",@"Off"] path:path selected:^(NSUInteger i) { [self setTouchChoice:i]; }];
         } else if (path.row == 1 && (_inGame || !getenv("TOTK_CONTROLS"))) {
             [self choose:@[@"Automatic",@"Xbox",@"PlayStation",@"Switch"] path:path selected:^(NSUInteger i) {
                 [d setObject:(@[@"auto",@"xbox",@"playstation",@"switch"])[i] forKey:@"TOTK_LAUNCHER_CONTROLLER_TYPE"];
@@ -407,7 +466,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             mappings.editingNextLaunch = _inGame;
             mappings.runningBindings = _runningPreferences[@"bindings"];
             __weak TOTKLauncher *weakSelf = self;
-            mappings.changed = ^{ [weakSelf.tableView reloadData]; };
+            mappings.changed = ^{ [weakSelf.tableView reloadData]; [weakSelf refreshRestartFooter]; };
             [self.navigationController pushViewController:mappings animated:YES];
         } else if (path.row == 5) {
             [self.navigationController pushViewController:[TOTKKeyboardMappings new] animated:YES];
@@ -444,7 +503,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
         if (!valid_mouse_sensitivity(text)) return;
         NSNumber *previous = @(TOTKLauncherMouseSensitivity(NSUserDefaults.standardUserDefaults));
         [NSUserDefaults.standardUserDefaults setInteger:text.integerValue forKey:@"TOTK_LAUNCHER_MOUSE_SENSITIVITY"];
-        [self.tableView reloadData];
+        [self.tableView reloadData]; [self refreshRestartFooter];
         [self startupSettingChangedAtPath:[NSIndexPath indexPathForRow:2 inSection:2] previousValue:previous];
     }];
     __weak UIAlertAction *weakSave = save;

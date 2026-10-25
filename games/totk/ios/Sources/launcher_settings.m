@@ -26,6 +26,17 @@ BOOL TOTKLauncherMetalHUD(NSUserDefaults *defaults) {
     if ([value isKindOfClass:NSNumber.class] && [@[@0,@1] containsObject:value]) return [value boolValue];
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_METAL_HUD"]; return NO;
 }
+NSInteger TOTKLauncherFPSLimit(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_FPS_LIMIT"];
+    if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        [@[@30,@40,@60] containsObject:value]) return [value integerValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_FPS_LIMIT"]; return 60;
+}
+BOOL TOTKLauncherTAA(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_TAA"];
+    if ([value isKindOfClass:NSNumber.class] && [@[@0,@1] containsObject:value]) return [value boolValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_TAA"]; return NO;
+}
 NSInteger TOTKLauncherRenderHeight(NSUserDefaults *defaults) {
     id value = [defaults objectForKey:@"TOTK_LAUNCHER_RENDER_HEIGHT"];
     if ([value isKindOfClass:NSNumber.class] && [@[@720,@1080] containsObject:value]) return [value integerValue];

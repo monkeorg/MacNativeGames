@@ -43,11 +43,7 @@ void runtime_shortcut_help_toggle(void) {}
     runtime_ios_attach_layer((CAMetalLayer *)self.gameView.layer, self.gameView);
     BOOL metalHUD = TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults);
     ((CAMetalLayer *)self.gameView.layer).developerHUDProperties = @{ @"mode":metalHUD ? @"default" : @"disabled" };
-    if (TOTKLauncherTouch(NSUserDefaults.standardUserDefaults)) {
-        TOTKTouchPad *pad=[[TOTKTouchPad alloc] initWithFrame:self.view.bounds];pad.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-        pad.accessibilityIdentifier = @"TOTKTouchControls";
-        [self.view addSubview:pad];
-    }
+    TOTKSetTouchControlsVisible(self.view,TOTKLauncherTouch(NSUserDefaults.standardUserDefaults));
     TOTKStartMouseInput(self);
     TOTKAttachGameMenu(self);
 }
@@ -116,6 +112,8 @@ void runtime_shortcut_help_toggle(void) {}
         backupsURL:[root URLByAppendingPathComponent:@"SaveBackups"]];
     TOTKLauncher *launcher = [[TOTKLauncher alloc] initWithStore:store unavailable:g_no_game_data play:^{
         TOTKLauncherApplyControls(NSUserDefaults.standardUserDefaults);
+        runtime_ios_set_fps_limit((unsigned)TOTKLauncherFPSLimit(NSUserDefaults.standardUserDefaults));
+        runtime_ios_set_taa_enabled(TOTKLauncherTAA(NSUserDefaults.standardUserDefaults));
         [NSUserDefaults.standardUserDefaults setBool:TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults) forKey:@"MetalHUDForceEnabled"];
         NSString *lang = TOTKLauncherLanguage(NSUserDefaults.standardUserDefaults);
         if (!getenv("TOTK_LANG") && lang.length) setenv("TOTK_LANG",lang.UTF8String,0);

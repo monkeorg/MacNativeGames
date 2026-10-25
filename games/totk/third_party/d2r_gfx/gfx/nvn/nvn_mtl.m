@@ -13529,9 +13529,17 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
 static CAMetalDisplayLink *g_link; static CFRunLoopRef g_link_rl; static int g_link_started;
 static int g_link_owns_layer, g_classic_busy;   // 持 g_pq_mu：图层挂着节拍对象期间 nextDrawable 会抛异常，自取 drawable 的出图线程与节拍对象互斥 | Under g_pq_mu: nextDrawable throws while the layer has the display link object attached, so the present thread that takes its own drawable and the display link object are mutually exclusive
 static int link_on(void) { return g_dm_present_link && g_link != nil; }
+#if TARGET_OS_IPHONE
+extern uint64_t runtime_ios_fps_period(void) __attribute__((weak_import));
+static uint64_t ios_link_period(void) { return runtime_ios_fps_period ? runtime_ios_fps_period() : 0; }
+#endif
 static CAFrameRateRange link_range(int mode) {
     if (mode == 3) return CAFrameRateRangeMake(30, 30, 30);
     if (mode == 2) return CAFrameRateRangeMake(60, 120, 120);
+#if TARGET_OS_IPHONE
+    uint64_t cap = ios_link_period();
+    if (cap) { float fps = (float)(1000000000ull / cap); return CAFrameRateRangeMake(fps, fps, fps); }
+#endif
     const char *explicit_hz = getenv("DM_PRESENT_HZ"), *rt = getenv("TOTK_REALTIME");
     int hz = explicit_hz ? atoi(explicit_hz) : (rt && !strcmp(rt, "0")) ? 60 : mtl_display_hz();
     if (hz < 30 || hz > 120) hz = 60;
@@ -13557,13 +13565,18 @@ static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式
 }
 static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象的状态对齐到 g_dm_present_link 与省电模式（运行中可改） | Called every frame by the game's present thread: aligns the display link object's state to g_dm_present_link and the power-saving mode (can change at run time)
     static int applied;
+    static uint64_t applied_cap;
+    uint64_t cap = 0;
+#if TARGET_OS_IPHONE
+    cap = ios_link_period();
+#endif
     if (g_rescue_mode && now_ns() >= g_rescue_back_at) {   // rescue period over: back to the display link (stall timing starts afresh)
         pthread_mutex_lock(&g_pq_mu); g_dm_present_link = g_rescue_mode; g_rescue_mode = 0; g_stall_t0 = 0; g_link_tick_ns = now_ns(); pthread_mutex_unlock(&g_pq_mu);
         MLOG("显示节拍：抢救期满，换回节拍模式 %d 再试（帧 %llu）", g_dm_present_link, (unsigned long long)atomic_load(&g_cur_frame)); }
     int want = g_dm_present_link;
     if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
     if (want && mtl_fps_target() == 30) want = 3;   // 省电模式：显示节拍 30 Hz | Power-saving mode: display link at 30 Hz
-    if (want == applied) return;
+    if (want == applied && cap == applied_cap) return;
     g_link_mode = want;
     if (!g_link_started) {
         if (!want) { applied = 0; return; }
@@ -13576,6 +13589,7 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
     else { CFRunLoopRef rl = g_link_rl; g_link = nil; CFRunLoopPerformBlock(rl, kCFRunLoopDefaultMode, ^{ [link invalidate]; pthread_mutex_lock(&g_pq_mu); g_link_owns_layer = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); CFRunLoopStop(rl); }); CFRunLoopWakeUp(rl); }
     MLOG("出图节拍模式 %d → %d（帧 %llu）", applied, want, (unsigned long long)atomic_load(&g_cur_frame));
     applied = want;
+    applied_cap = cap;
     pthread_mutex_lock(&g_pq_mu); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
 }
 // 进后台前（mtl_drain）：显示节拍驱动出图时，排着队还没上屏的帧只能由节拍回调取走，而后台里系统不再回调——

@@ -4,8 +4,11 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
+#import <MetalFX/MetalFX.h>
 #include <stdatomic.h>
 #include "runtime.h"
+#include "ios_fps_policy.h"
+#include "totk_taa.h"
 #include "totk_ui_lang.h"
 static CAMetalLayer *metalLayer;
 static UIView *bootOverlay;
@@ -17,6 +20,50 @@ static CADisplayLink *displayLink;
 static pthread_mutex_t vsyncLock=PTHREAD_MUTEX_INITIALIZER;
 static void *vsyncEvents[16];
 static unsigned vsyncCount;
+static __weak UIView *rateHost;
+static _Atomic unsigned fpsLimit = 60, maximumFps = 60;
+extern int mfx_enabled(void);
+static int realtime_profile(void) {
+#if defined(TOTK_GAME_V143) && defined(TOTK_IOS_DISPLAY_SETTINGS)
+ const char *rt=getenv("TOTK_REALTIME");return !(rt&&!strcmp(rt,"0"));
+#else
+ return 0;
+#endif
+}
+static UIScreen *active_screen(void) {
+ UIScreen *screen=rateHost.window.screen;
+ if(!screen)for(UIScene *scene in UIApplication.sharedApplication.connectedScenes){
+  if([scene isKindOfClass:UIWindowScene.class]&&scene.activationState==UISceneActivationStateForegroundActive){screen=((UIWindowScene *)scene).screen;break;}
+ }
+ return screen;
+}
+static unsigned screen_maximum(void) {
+ UIScreen *screen=active_screen();
+ if(screen)atomic_store(&maximumFps,(unsigned)screen.maximumFramesPerSecond);
+ return atomic_load(&maximumFps);
+}
+unsigned runtime_ios_fps_limit(void){return ios_fps_effective(atomic_load(&fpsLimit),atomic_load(&maximumFps));}
+int runtime_ios_fps_limit_supported(unsigned fps){return ios_fps_supported(fps,screen_maximum(),realtime_profile(),mfx_enabled());}
+/* Render threads read only atomics and the existing interpolation state. */
+uint64_t runtime_ios_fps_period(void){
+ unsigned fps=runtime_ios_fps_limit();
+ return ios_fps_supported(fps,atomic_load(&maximumFps),realtime_profile(),mfx_enabled())?1000000000ull/fps:0;
+}
+void runtime_ios_set_fps_limit(unsigned fps){
+ NSCAssert(NSThread.isMainThread,@"Frame cap must change on the main thread");
+ if(!runtime_ios_fps_limit_supported(fps))return;
+ atomic_store(&fpsLimit,fps);
+ fprintf(stderr,"[totk] requested native frame cap %u FPS (system display rate may differ)\n",fps);
+}
+int runtime_ios_taa_supported(void){
+ id<MTLDevice> device=metalLayer.device ?: MTLCreateSystemDefaultDevice();
+ return device && [MTLFXTemporalScalerDescriptor supportsMetal4FX:device];
+}
+void runtime_ios_set_taa_enabled(int enabled){
+ if((enabled!=0&&enabled!=1)||(enabled&&!runtime_ios_taa_supported()))return;
+ taa_set_enabled(enabled);
+}
+int runtime_ios_taa_enabled(void){return taa_enabled();}
 void hle_bind_system_event(void *,int);
 void hle_signal_system_event(void *);
 void *front_metal_layer(void){return (__bridge void *)metalLayer;}
@@ -96,9 +143,12 @@ static TOTKVsync *vsyncTarget;
 
 /* Called on the main thread by the app before the game thread starts. */
 void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
+ rateHost=host;screen_maximum();
  bootStartNS=runtime_now_ns();
  metalLayer=layer;metalLayer.device=MTLCreateSystemDefaultDevice();metalLayer.pixelFormat=MTLPixelFormatBGRA8Unorm;metalLayer.framebufferOnly=NO;
- CGFloat s=host.window.screen.nativeScale>0?host.window.screen.nativeScale:UIScreen.mainScreen.nativeScale;
+ UIScreen *screen=active_screen();
+ CGFloat s=screen.nativeScale>0?screen.nativeScale:host.traitCollection.displayScale;
+ if(s<=0)s=1;
  metalLayer.contentsScale=s;
  /* TOTK_IOS_DRAWABLE_H (default 720; 0 = native pixels): build the drawable this many pixels tall at the view's aspect, so the
     game picture (1280x720 canvas) lands about 1:1 and the system compositor scales it to the screen instead of our GPU. */
@@ -135,6 +185,7 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  [nc addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;app_active_changed(0);}];
  [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;app_active_changed(1);}];
  vsyncTarget=[TOTKVsync new];displayLink=[CADisplayLink displayLinkWithTarget:vsyncTarget selector:@selector(tick:)];
+ /* VI remains the display-service clock. Native-frame caps use the existing NVN pacer and Metal display link. */
  displayLink.preferredFrameRateRange=CAFrameRateRangeMake(60,60,60);[displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
 /* The app already runs the loader on a game thread with a large stack; the event loop belongs to UIKit. */

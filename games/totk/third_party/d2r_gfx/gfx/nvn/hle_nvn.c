@@ -37,6 +37,10 @@
 #include <sys/mman.h>
 #include <mach/mach.h>
 #include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#include "../../../../runtime/ios_fps_policy.h"
+__attribute__((weak)) uint64_t runtime_ios_fps_period(void) { return 0; }
+#endif
 #include <unistd.h>
 #if TARGET_OS_OSX
 #define DM_MEM_CAP_DEFAULT_GB 24
@@ -2384,7 +2388,13 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
         static uint64_t rt_period; uint64_t period = present_period(o);
         if (period && rt_period != period) { rt_period = period; set_time_constraint(period); }
         rt_comp_tick(period);
-        if (mtl_link_active() && !uncapped_now() && !mfx_own_clock()) { if (!mtl_link_wait_tick(period ? 2 * period : 33333333ull, present_ticks(o)) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
+        int capped_ios = 0;
+#if TARGET_OS_IPHONE
+        capped_ios = runtime_ios_fps_period() != 0;
+#endif
+        /* A capped iOS frame uses the existing texture-availability deadline. Counting guest intervals again against
+           the slower display-link hint would turn a 30 FPS cap plus interval=2 into an unintended 15 FPS cap. */
+        if (mtl_link_active() && !uncapped_now() && !mfx_own_clock() && !capped_ios) { if (!mtl_link_wait_tick(period ? 2 * period : 33333333ull, present_ticks(o)) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
         else if (wait) sleep_until_ns(at);
     } else {   // DM_DETCLOCK_PACE=1（画面闸门用）：客体时钟按帧走的同时，每帧墙钟不短于一个步长——帧数与游戏内时间确定，后台加载线程每帧至少有一个步长的墙钟可用； | DM_DETCLOCK_PACE=1 (used by the screenshot gate): while the guest clock advances per frame, each frame's wall clock is no shorter than one step -- frame count and in-game time are deterministic, and the background loading thread has at least one step of wall clock available per frame;
                // 机器满载时帧只会更慢、后台得到的墙钟只会更多，所以「消息后第 N 帧」截到的画面与负载无关
@@ -2738,7 +2748,11 @@ static uint64_t present_period(const win_t *o) {
                                     m == MFX_MAX ? (g_uncapped ? "补帧 不限帧：不限帧率，每帧补一帧" : "补帧 不限帧：按游戏的出图间隔，每帧补一帧") :
                                     g_uncapped ? "补帧关：不限帧率" : "补帧关：按游戏的出图间隔"); was = m; }
     if (m == MFX_30 || game_holds_30()) return 1000000000ull / 30;   /* exactly 30 fps, by display ticks or by our own clock */
-    return hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
+    uint64_t period = hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
+#if TARGET_OS_IPHONE
+    period = ios_fps_cap_period(period, runtime_ios_fps_period());
+#endif
+    return period;
 }
 /* Exercise production policy, including the shrine's interval=2 and the
    legacy 30 FPS path. No sleep, present or GPU allocation is involved. */

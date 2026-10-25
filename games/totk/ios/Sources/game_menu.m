@@ -3,6 +3,8 @@
 #import "launcher.h"
 #import "mouse_input.h"
 #import "keyboard_input.h"
+#import "touch_pad.h"
+#include "../../runtime/runtime.h"
 #import <QuartzCore/CAMetalLayer.h>
 #include "fps_overlay.h"
 
@@ -80,9 +82,9 @@
     height.priority = UILayoutPriorityDefaultHigh;
     [NSLayoutConstraint activateConstraints:@[
         [self.gear.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],
-        [self.gear.topAnchor constraintEqualToAnchor:safe.topAnchor constant:12],
-        [self.gear.widthAnchor constraintEqualToConstant:48],
-        [self.gear.heightAnchor constraintEqualToConstant:48],
+        [self.gear.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-8],
+        [self.gear.widthAnchor constraintEqualToConstant:44],
+        [self.gear.heightAnchor constraintEqualToConstant:44],
         [self.card.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
         [self.card.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor], width, height,
         [self.card.widthAnchor constraintLessThanOrEqualToConstant:1008],
@@ -125,6 +127,7 @@
         return;
     }
     for (UIView *control in self.controlStates.keyEnumerator) {
+        if (control.superview != self.view.superview) continue;
         control.userInteractionEnabled = [[self.controlStates objectForKey:control] boolValue];
     }
     [self.controlStates removeAllObjects];
@@ -177,6 +180,13 @@
     BOOL enabled = TOTKLauncherMetalHUD(defaults);
     [defaults setBool:enabled forKey:@"MetalHUDForceEnabled"];
     [self applyMetalHUD:enabled toView:self.parentViewController.view];
+    runtime_ios_set_fps_limit((unsigned)TOTKLauncherFPSLimit(defaults));
+    runtime_ios_set_taa_enabled(TOTKLauncherTAA(defaults));
+    TOTKTouchPad *pad = TOTKSetTouchControlsVisible(self.parentViewController.view,TOTKLauncherTouch(defaults));
+    if (pad && ((TOTKMenuView *)self.view).expanded) {
+        if (![self.controlStates objectForKey:pad]) [self.controlStates setObject:@YES forKey:pad];
+        pad.userInteractionEnabled = NO;
+    }
 }
 - (void)applyMetalHUD:(BOOL)enabled toView:(UIView *)view {
     if ([view.layer isKindOfClass:CAMetalLayer.class]) {

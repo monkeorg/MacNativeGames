@@ -5,6 +5,8 @@ NSString *TOTKLauncherLanguage(NSUserDefaults *defaults);
 NSInteger TOTKLauncherHUD(NSUserDefaults *defaults);
 BOOL TOTKLauncherTouch(NSUserDefaults *defaults);
 BOOL TOTKLauncherMetalHUD(NSUserDefaults *defaults);
+NSInteger TOTKLauncherFPSLimit(NSUserDefaults *defaults);
+BOOL TOTKLauncherTAA(NSUserDefaults *defaults);
 NSInteger TOTKLauncherRenderHeight(NSUserDefaults *defaults);
 NSString *TOTKLauncherAspect(NSUserDefaults *defaults);
 BOOL TOTKLauncherDisplaySettingsAvailable(NSDictionary *info);

@@ -52,6 +52,7 @@ static const NSTimeInterval kHideAfter = 3;   // seconds after the last finger l
     [points removeAllObjects]; [leftOrigins removeAllObjects]; [rightOrigins removeAllObjects];
     if (gamepad) concealed = YES;
     [self updateState];
+    runtime_touch_pad_clear();
 }
 - (void)setUserInteractionEnabled:(BOOL)enabled {
     if (!enabled) [self cancelInput];
@@ -212,3 +213,20 @@ static void draw_stick(CGContextRef c, CGPoint o, CGPoint p, CGFloat r) {
     }
 }
 @end
+
+TOTKTouchPad *TOTKSetTouchControlsVisible(UIView *host, BOOL visible) {
+    TOTKTouchPad *pad = nil;
+    for (UIView *child in host.subviews) if ([child isKindOfClass:TOTKTouchPad.class]) { pad = (TOTKTouchPad *)child; break; }
+    if (!visible) {
+        pad.userInteractionEnabled = NO;
+        [pad removeFromSuperview];
+        return nil;
+    }
+    if (!pad) {
+        pad = [[TOTKTouchPad alloc] initWithFrame:host.bounds];
+        pad.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+        pad.accessibilityIdentifier = @"TOTKTouchControls";
+        [host insertSubview:pad atIndex:MIN((NSUInteger)1,host.subviews.count)];
+    }
+    return pad;
+}

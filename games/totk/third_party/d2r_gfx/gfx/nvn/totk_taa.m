@@ -55,7 +55,8 @@ int taa_enabled(void) {
     int on = atomic_load_explicit(&g_on, memory_order_relaxed);
     if (on < 0) {
         const char *e = getenv("TOTK_TAA"); on = e && strcmp(e, "0");
-        atomic_store(&g_on, on);
+        int expected = -1;
+        if (!atomic_compare_exchange_strong(&g_on, &expected, on)) on = expected;
         TLOG("MetalFX temporal anti-aliasing (TOTK_TAA, key 5): %s", on ? "on" : "off");
     }
     return on;
@@ -66,6 +67,11 @@ void taa_toggle(void) {
     int on = !taa_enabled();
     atomic_store(&g_on, on);
     TLOG("key 5: temporal anti-aliasing %s", on ? "on" : "off");
+}
+void taa_set_enabled(int enabled) {
+    if (enabled != 0 && enabled != 1) return;
+    atomic_store(&g_on, enabled);
+    TLOG("temporal anti-aliasing %s (next frame)", enabled ? "on" : "off");
 }
 int taa_active(void) { return g.active; }
 int taa_ready(void) { return g.active && !g.failed && g.frame >= g.retry_at && g.depth && g.cam_ok; }
