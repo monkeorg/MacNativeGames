@@ -728,7 +728,8 @@
     "get_metal_resource_index only: dimension narrowing/product, remapped texture-plus-plane and four numeric cursor additions (exact UINT32_MAX and zero strides preserved; not full resource validity)",
     "Parser type-copy precharges: four default-N8 SmallVector copied payload capacities, copied-element work and immediate array append growth; checked per-copy256MiB and cumulative existing budget before Variant/ObjectPool transitions, no allocator/noexcept changes",
     "fill_composite_constant non-array/non-Struct matrix/vector fixed[4] bounds and minimum initializer availability before target mutation (caller CompositeInsert indices/IDs excluded)",
-    "Three ParsedIR member metadata writers: uint64 index-plus-one, size_t/reserve/count/256MiB checks before meta[]; actual N0 capacity replacement payload, old-row moves/new-row work and delta nodes precharged before resize; local combined-decoration type member index guard after metadata bounds, annotations may precede types"
+    "Three ParsedIR member metadata writers: uint64 index-plus-one, size_t/reserve/count/256MiB checks before meta[]; actual N0 capacity replacement payload, old-row moves/new-row work and delta nodes precharged before resize; local combined-decoration type member index guard after metadata bounds, annotations may precede types",
+    "Six metadata writers share ordinary ParsedIR::prepare_member_metadata exactly once: existing0035 planner then map insertion/resize; three Compiler qualified/extended set/unset paths now use same bounds while preserving row-creating unset and variable-ID/pre-type metadata"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
