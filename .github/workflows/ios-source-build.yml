@@ -1,0 +1,30 @@
+name: iPhoneOS source objects
+
+# Build only: never run the test workflow, simulator, generated game, or app.
+# Manual dispatch becomes available after registration on the default branch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Compile public iPad sources with an installed iPhoneOS SDK
+        run: env -u DEVELOPER_DIR python3 games/totk/ios/tools/build_sources.py --jobs 4 --output "$RUNNER_TEMP/ios-source-build"
+      - name: Preserve objects and compiler evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: iphoneos-source-objects-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/ios-source-build/report.json
+            ${{ runner.temp }}/ios-source-build/v143-default/
+            ${{ runner.temp }}/ios-source-build/v143-display-settings/
