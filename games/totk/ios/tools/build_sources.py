@@ -29,6 +29,7 @@ SOURCES = tuple(sorted((TOTK / "ios/Sources").glob("*.m"))) + (
     TOTK / "runtime/fs_host.c",
     TOTK / "runtime/threads.c",
     TOTK / "runtime/input.c",
+    ROOT / "launcher/src/mng_totk_save.c",
     TOTK / "tests/ios_mouse_release/probe.m",
 )
 ISOLATED_FIXTURES = frozenset({TOTK / "tests/ios_mouse_release/probe.m"})
@@ -182,6 +183,7 @@ def compile_command(defines, source, output, toolchain, object_file, depfile):
         "-I", str(TOTK / "third_party/d2r_gfx/gfx/nvn"),
         "-I", str(TOTK / "third_party/d2r_gfx/gfx/nvn/include"),
         "-I", str(TOTK / "ios/Sources"),
+        "-I", str(ROOT / "launcher/include"),
         *defines, "-MMD", "-MF", str(depfile), "-MT", "unit",
         "-c", str(source), "-o", str(object_file),
     ]
