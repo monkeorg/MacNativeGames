@@ -13,6 +13,8 @@
 #import "CanopyAddonsController.h"
 #import "CanopyGameProfiles.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <CoreFoundation/CoreFoundation.h>
+#include <math.h>
 #include "mng_preparation_selection.h"
 #include "mng_prepare.h"
 
@@ -876,9 +878,21 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     if(![self profileAvailable] || self.presentedViewController || _profileNeedsReload || !_profileID)return;
     NSError *profileError=nil;NSDictionary *current=[_profiles snapshotForTitleID:_entry[@"titleID"] error:&profileError];
     if(!current || ![current[@"selectedID"] isEqual:_profileID]){_profileNeedsReload=YES;_saveError=profileError.localizedDescription ?: @"The persisted profile changed. Reload the actual selected profile before Play.";[self.tableView reloadData];return;}
-    if (![CanopyRuntime trustedProfileForTitleID:_entry[@"titleID"]] || !_saves || _saves.sealed || _saves.recoveryRequired || !self.controllers) return;
-    for (NSDictionary *device in self.controllers.devices) if ([device[@"player"] integerValue] > 0) {
-        GamesAlert(self,@"This host supports Player 1 only",@"Unassign other player seats before starting this native host. Independent assignment infrastructure does not establish multiplayer support."); return;
+    NSDictionary *hostProfile=[CanopyRuntime trustedProfileForTitleID:_entry[@"titleID"]];
+    if (!hostProfile || !_saves || _saves.sealed || _saves.recoveryRequired || !self.controllers) return;
+    // Only the actual compiled provider supplies this ceiling. Prepared/imported
+    // metadata and registry rows cannot authorize additional native players.
+    id supplied=hostProfile[@"maxPlayers"];
+    double count=[supplied isKindOfClass:NSNumber.class]?[supplied doubleValue]:0;
+    if(![supplied isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)supplied)==CFBooleanGetTypeID() ||
+        !isfinite(count) || floor(count)!=count || count<1 || count>MNG_PLAYER_COUNT) {
+        GamesAlert(self,@"Native player capability unavailable",@"The compiled host did not provide a valid player ceiling. No native session was started.");return;
+    }
+    unsigned maxPlayers=(unsigned)count;
+    for (NSDictionary *device in self.controllers.devices) if ([device[@"player"] integerValue] >= (NSInteger)maxPlayers) {
+        if(maxPlayers==1)GamesAlert(self,@"This host supports Player 1 only",@"Unassign other player seats before starting this native host. Independent assignment infrastructure does not establish multiplayer support.");
+        else GamesAlert(self,@"Player assignment exceeds the native profile",[NSString stringWithFormat:@"This compiled host permits %u player seats. Unassign seats beyond Player %u before starting. This ceiling does not establish multiplayer gameplay acceptance.",maxPlayers,maxPlayers]);
+        return;
     }
     NSURL *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
     NSURL *base = [support URLByAppendingPathComponent:@"Canopy" isDirectory:YES];
