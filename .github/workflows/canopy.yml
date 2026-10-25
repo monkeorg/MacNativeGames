@@ -82,6 +82,20 @@ jobs:
         # failed. Subsequent archive/upload still require the job to be green.
         if: always() && runner.os == 'macOS'
         run: python3 tools/launcher/build_canopy.py --out "$RUNNER_TEMP/canopy-unsigned"
+      - name: Compile original iPad sources and isolated mouse fixture
+        # Public objects only. No linking, signing, simulator or fixture execution.
+        if: always() && runner.os == 'macOS'
+        run: python3 games/totk/ios/tools/build_sources.py --jobs 4 --output "$RUNNER_TEMP/ipad-source-objects"
+      - name: Upload original iPad compiler evidence
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ipad-source-compiler-evidence
+          path: |
+            ${{ runner.temp }}/ipad-source-objects/report.json
+            ${{ runner.temp }}/ipad-source-objects/**/*.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Archive unsigned public host
         if: runner.os == 'macOS'
         run: ditto -c -k --keepParent "$RUNNER_TEMP/canopy-unsigned/Canopy.app" "$RUNNER_TEMP/Canopy-unsigned.zip"
