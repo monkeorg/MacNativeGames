@@ -144,6 +144,56 @@
       "file": "spirv_msl.cpp",
       "originalInventoryAnchor": "spirv_msl.cpp:17410",
       "originalSourceLine": 17410
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:564",
+      "originalSourceLine": 564
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:574",
+      "originalSourceLine": 574
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:581",
+      "originalSourceLine": 581
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:587",
+      "originalSourceLine": 587
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:589",
+      "originalSourceLine": 589
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:597",
+      "originalSourceLine": 597
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:604",
+      "originalSourceLine": 606
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:608",
+      "originalSourceLine": 608
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:610",
+      "originalSourceLine": 610
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:612",
+      "originalSourceLine": 612
     }
   ],
   "explicitDepth": [
@@ -157,8 +207,8 @@
     "StringStream append/allocation/final copy"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 384,
-  "instrumentedOriginallyUnbracedLoops": 27,
+  "instrumentedLoopCheckpoints": 394,
+  "instrumentedOriginallyUnbracedLoops": 37,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -181,22 +231,33 @@
     {
       "originalInventoryAnchor": "spirv_glsl.cpp:9263",
       "reason": "Literal loop bounds execute at most three iterations; retained without a new throwing checkpoint."
+    },
+    {
+      "originalInventoryAnchor": "spirv_glsl.cpp:4953",
+      "reason": "The source-defined workaround_types array contains exactly 16 literal type strings."
+    },
+    {
+      "originalInventoryAnchor": "spirv_glsl.cpp:20782",
+      "reason": "The source-defined Result::weights array has CandidateCount=10 elements."
+    },
+    {
+      "originalInventoryAnchor": "spirv_msl.cpp:1728",
+      "reason": "The next_metal_resource_ids array has kMaxArgumentBuffers=16 elements."
+    },
+    {
+      "originalInventoryAnchor": "spirv_msl.cpp:1856",
+      "reason": "The next_metal_resource_ids array has kMaxArgumentBuffers=16 elements."
+    },
+    {
+      "originalInventoryAnchor": "spirv_msl.cpp:6099",
+      "reason": "The source-defined contiguous implementation enum interval contains exactly 14 values."
     }
   ],
+  "unbracedLoopsInputDependentOrUnprovenCount": 115,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:356",
     "spirv_cross.cpp:365",
     "spirv_cross.cpp:414",
-    "spirv_cross.cpp:564",
-    "spirv_cross.cpp:574",
-    "spirv_cross.cpp:581",
-    "spirv_cross.cpp:587",
-    "spirv_cross.cpp:589",
-    "spirv_cross.cpp:597",
-    "spirv_cross.cpp:604",
-    "spirv_cross.cpp:608",
-    "spirv_cross.cpp:610",
-    "spirv_cross.cpp:612",
     "spirv_cross.cpp:743",
     "spirv_cross.cpp:1266",
     "spirv_cross.cpp:1709",
@@ -320,6 +381,7 @@
     "spirv_msl.cpp:20989",
     "spirv_msl.cpp:20995"
   ],
+  "unbracedLoopsNotInstrumentedCount": 125,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",

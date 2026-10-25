@@ -40,6 +40,16 @@
       },
       "patch": "0002-input-driven-unbraced-loops.patch",
       "sha256": "f7ce2ea3bcb0fbca648eeebc57449a9810b5a6aaf81d30da5d2676354d7e7b68"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "c54d849ce0b7b26e3b3569846bfce6629e3cb083e9d8aa7b3cf635789a1c7036"
+      },
+      "before": {
+        "spirv_cross.cpp": "0e870affa3a715b284a31d246e2ab5529ddde1566aa4949df6fdaf8d5f94d25c"
+      },
+      "patch": "0003-ir-invalidation-loop-checkpoints.patch",
+      "sha256": "e79cccfef32909e4e0793d2677b2eb0a1b2dc1af0e820250d3f03d2537ef0e3a"
     }
   ],
   "schemaVersion": 1
