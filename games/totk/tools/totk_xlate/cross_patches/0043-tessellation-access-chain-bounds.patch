@@ -1,0 +1,150 @@
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -9258,6 +9258,10 @@
+ 
+ bool CompilerMSL::emit_tessellation_access_chain(const uint32_t *ops, uint32_t length)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
++	if (length < 3)
++		SPIRV_CROSS_THROW("Tessellation access chain lacks type, result or base operands.");
++
+ 	// If this is a per-vertex output, remap it to the I/O array buffer.
+ 
+ 	// Any object which did not go through IO flattening shenanigans will go there instead.
+@@ -9326,6 +9330,8 @@
+ 				rematerialize_ops.push_back(ops[i]);
+ 			}
+ 
++			if (rematerialize_ops.size() > (std::numeric_limits<uint32_t>::max)())
++				SPIRV_CROSS_THROW("Rematerialized tessellation access chain exceeds the operand range.");
+ 			return emit_tessellation_access_chain(rematerialize_ops.data(), uint32_t(rematerialize_ops.size()));
+ 		}
+ 
+@@ -9343,6 +9349,8 @@
+ 				if (length > relevant_member_index)
+ 				{
+ 					uint32_t mbr_idx = get<SPIRConstant>(ops[relevant_member_index]).scalar();
++					if (mbr_idx >= get_variable_element_type(*var).member_types.size())
++						SPIRV_CROSS_THROW("Masked tessellation member exceeds the type member list.");
+ 					masked = is_stage_output_block_member_masked(*var, mbr_idx, true);
+ 				}
+ 			}
+@@ -9372,6 +9380,8 @@
+ 		if (!patch)
+ 		{
+ 			// Index into gl_in/gl_out with first array index.
++			if (length < 4)
++				SPIRV_CROSS_THROW("Per-vertex tessellation access chain lacks an array index.");
+ 			indices.push_back(ops[first_non_array_index - 1]);
+ 		}
+ 
+@@ -9389,9 +9399,12 @@
+ 				// Maybe this is a struct type in the input class, in which case
+ 				// we put it as a decoration on the corresponding member.
+ 				uint32_t mbr_idx = get_constant(ops[first_non_array_index]).scalar();
++				if (mbr_idx >= type->member_types.size())
++					SPIRV_CROSS_THROW("Tessellation member exceeds the type member list.");
+ 				index = get_extended_member_decoration(var->self, mbr_idx,
+ 				                                       SPIRVCrossDecorationInterfaceMemberIndex);
+-				assert(index != uint32_t(-1));
++				if (index == uint32_t(-1))
++					SPIRV_CROSS_THROW("Tessellation member has no resolved interface index.");
+ 				i++;
+ 				type = &get<SPIRType>(type->member_types[mbr_idx]);
+ 			}
+@@ -9409,6 +9422,8 @@
+ 				if (!c || c->specialization)
+ 					SPIRV_CROSS_THROW("Trying to dynamically index into an array interface variable in tessellation. "
+ 					                  "This is currently unsupported.");
++
++				uint32_t scalar_index = c->scalar();
+ 
+ 				// We're in flattened space, so just increment the member index into IO block.
+ 				// We can only do this once in the current implementation, so either:
+@@ -9416,18 +9431,36 @@
+ 				if (type->basetype == SPIRType::Struct && var->storage == StorageClassOutput)
+ 				{
+ 					// Need to consider holes, since individual block members might be masked away.
+-					uint32_t mbr_idx = c->scalar();
++					uint32_t mbr_idx = scalar_index;
++					if (mbr_idx > get_variable_element_type(*var).member_types.size())
++						SPIRV_CROSS_THROW("Tessellation masked prefix exceeds the type member list.");
+ 					for (uint32_t j = 0; j < mbr_idx; j++)
++					{
++						canopy_cross_budget::step();
+ 						if (!is_stage_output_block_member_masked(*var, j, true))
++						{
++							if (index >= uint32_t(-1) - 1)
++								SPIRV_CROSS_THROW("Tessellation interface index reaches the unresolved sentinel.");
+ 							index++;
++						}
++					}
+ 				}
+ 				else
+-					index += c->scalar();
++				{
++					if (scalar_index != 0 &&
++					    (index == uint32_t(-1) || scalar_index >= uint32_t(-1) - index))
++						SPIRV_CROSS_THROW("Tessellation interface index reaches the unresolved sentinel.");
++					index += scalar_index;
++				}
+ 
+ 				if (type->parent_type)
+ 					type = &get<SPIRType>(type->parent_type);
+ 				else if (type->basetype == SPIRType::Struct)
+-					type = &get<SPIRType>(type->member_types[c->scalar()]);
++				{
++					if (scalar_index >= type->member_types.size())
++						SPIRV_CROSS_THROW("Tessellation child member exceeds the type member list.");
++					type = &get<SPIRType>(type->member_types[scalar_index]);
++				}
+ 			}
+ 
+ 			// We're not going to emit the actual member name, we let any further OpLoad take care of that.
+@@ -9439,6 +9472,8 @@
+ 			if (!defer_access_chain)
+ 			{
+ 				// Access the appropriate member of gl_in/gl_out.
++				if (index == uint32_t(-1))
++					SPIRV_CROSS_THROW("Cannot materialize an unresolved tessellation interface index.");
+ 				set<SPIRConstant>(const_mbr_id, get_uint_type_id(), index, false);
+ 				indices.push_back(const_mbr_id);
+ 
+@@ -9478,6 +9513,8 @@
+ 		// We use the pointer to the base of the input/output array here,
+ 		// so this is always a pointer chain.
+ 		// This is the start of an access chain, use ptr_chain to index into control point array.
++		if (indices.size() > (std::numeric_limits<uint32_t>::max)())
++			SPIRV_CROSS_THROW("Tessellation access chain exceeds the index range.");
+ 		auto e = access_chain(ptr, indices.data(), uint32_t(indices.size()), result_ptr_type, &meta, !patch);
+ 
+ 		// Get the actual type of the object that was accessed. If it's a vector type and we changed it,
+@@ -9491,9 +9528,18 @@
+ 		{
+ 		canopy_cross_budget::step();
+ 			if (!is_array(*expr_type) && expr_type->basetype == SPIRType::Struct)
+-				expr_type = &get<SPIRType>(expr_type->member_types[get<SPIRConstant>(ops[i]).scalar()]);
++			{
++				uint32_t mbr_idx = get<SPIRConstant>(ops[i]).scalar();
++				if (mbr_idx >= expr_type->member_types.size())
++					SPIRV_CROSS_THROW("Tessellation expression member exceeds the type member list.");
++				expr_type = &get<SPIRType>(expr_type->member_types[mbr_idx]);
++			}
+ 			else
++			{
++				if (!expr_type->parent_type)
++					SPIRV_CROSS_THROW("Tessellation expression type has no indexed parent.");
+ 				expr_type = &get<SPIRType>(expr_type->parent_type);
++			}
+ 		}
+ 		if (!is_array(*expr_type) && !is_matrix(*expr_type) && expr_type->basetype != SPIRType::Struct &&
+ 		    expr_type->vecsize > result_ptr_type.vecsize)
+@@ -9546,6 +9592,8 @@
+ 	if (is_tesc_shader() && var && m && m->decoration.builtin_type == BuiltInTessLevelInner &&
+ 	    is_tessellating_triangles())
+ 	{
++		if (length < 4)
++			SPIRV_CROSS_THROW("Inner tessellation-level access chain lacks an index.");
+ 		auto *c = maybe_get<SPIRConstant>(ops[3]);
+ 		if (c && c->scalar() == 1)
+ 			return false;
