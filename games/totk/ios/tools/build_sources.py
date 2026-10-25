@@ -27,7 +27,7 @@ SOURCES = tuple(sorted((TOTK / "ios/Sources").glob("*.m"))) + (
 )
 PROFILES = {
     "v143-default": ["-DTOTK_GAME_V143=1"],
-    "v143-display-settings": ["-DTOTK_GAME_V143=1", "-DTOTK_IOS_DISPLAY_SETTINGS=1"],
+    "v143-display-settings": ["-DTOTK_GAME_V143=1", "-DTOTK_IOS_DISPLAY_SETTINGS=1", "-DTOTK_IOS_ASPECT_VERT=1"],
 }
 
 

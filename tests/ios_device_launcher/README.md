@@ -32,7 +32,10 @@ xcodebuild test-without-building \
 Coordinate device ownership before installation or execution. These tests launch and may terminate the installed app.
 Select individual tests. Run prelaunch tests before Play; transfer tests need their separate hash checks.
 The preference test restores the original language and leaves Apple Metal HUD on and the custom overlay off.
-The backup test preserves the active save. The Files export test publishes a uniquely named folder in TOTK Documents.
+The backup test preserves the active save. The Files export test selects On My iPad and the app folder before it publishes a uniquely named folder.
+It requires the browsing-root identifier to show the LocalStorage provider and the current navigation button to name the exact app folder before Save.
+The browsing-root title can remain On My iPad after folder navigation; it does not identify the current folder.
+If these selectors change, the test stops before Save; inspect the picker instead of dropping the local-destination guard.
 The Files import test selects that same folder through On My iPad, then confirms import.
 Run export separately. Compare every exported file against a private pre-transfer snapshot before you run import.
 Compare the full profile after import, including account identity. Do not substitute a picker screenshot for byte equality.
@@ -41,6 +44,10 @@ The Play test runs last and captures the screen after 30 seconds with native HUD
 Screenshots and accessibility trees remain in the result bundle. Treat them as private device evidence.
 
 The Files tests assume English system labels and the visible folder name `TOTK` or `Tears of the Kingdom`.
+`test03dCancelImportPicker` cancels the import picker before confirmation and checks that Play remains available.
+`test03eRejectIncompleteLocalSave` selects the externally prepared local folder `TOTKInvalidSave710b23d`.
+That fixture must contain only `slot_00/progress.sav`. The test never creates fixture files.
+It requires the specific missing-required-files error. Compare the active profile, backup count, and staging folders independently afterward.
 Save transfer verification is separate from successful game loading and native HUD visual verification.
 
 If XCTest reports `Timed out while enabling automation mode`, no test action has executed.
@@ -64,20 +71,27 @@ No New Game or save-overwrite command was selected.
 The native HUD preference was on, but no native HUD appeared in the captured title or gameplay screenshots.
 A later launch with `MTL_HUD_ENABLED=1` displayed the native HUD. The user then enabled the device Developer setting and confirmed the in-app switch works.
 
-The Play test enables the existing timing-only `DM_NVN_TSV` diagnostic in the launched app's environment.
+The Play test enables the existing timing-only `DM_NVN_TSV` diagnostic and `TOTK_AUTOLOAD=1` in the launched app's environment.
+Autoload attempts to open the newest existing save; a passed Play test alone does not establish successful save loading.
+Inspect the game log for actual save reads and the screenshot for gameplay before making that claim.
 The optional existing-process touch test skips unless explicit normalized coordinates are supplied.
+It sends one reviewed 0.15-second coordinate press in landscape. A transparent touch view need not report itself hittable.
+It first requires the game touch view to exist and the prelaunch navigation bar to be absent. A stale game screenshot cannot authorize a settings tap.
 Review a current screenshot before each such touch. Use it only for a known control; never select New Game.
 
-## Compact menu regression tests
+## Shared settings overlay regression tests
 
 These tests require the updated app. Build and sign the small runner locally, then wait for device ownership before installation.
 
 | Test | Checks | App lifecycle |
 |---|---|---|
-| `test00CompactPrelaunchGlass` | Centered card, maximum 500-point width and 760-point height, landscape, screenshot | Launch |
+| `test00CompactPrelaunchGlass` | Centered card, maximum 960-point width and 760-point height, landscape, screenshot | Launch |
 | `test01bDisplayPreferencesPersistWhenSupported` | Capability gate, 720/1080 choice, 16:9/full-display choice, persisted 1080/full display | Relaunch |
-| `test06aExistingGameMenuOpenCloseRestoresHitTesting` | Gear, compact 340-point card, input shield, restored touch hit testing after close | Activate existing game |
-| `test06bExistingGameMenuLiveHUDPersistence` | Full/FPS/Off runtime selection, native HUD switch, retained state after menu reopen | Activate existing game |
+| `test06aExistingGameMenuOpenCloseRestoresHitTesting` | Full settings rows, mapping navigation, disabled save transfers, input shield, Resume restores touch hit testing | Activate existing game |
+| `test06bExistingGameMenuLiveHUDPersistence` | Full/FPS-only/Off action sheets, native HUD action sheet, retained values and screenshots after menu reopen | Activate existing game |
+| `test06cExistingGameNextLaunchControlPreference` | Single restart footer/prompt, same-value/popover-cancel behavior, pending state across menu reopen, revert clears pending state | Activate existing game |
+| `test06dExistingGameOutsideDismissalProtectsModal` | Outside tap closes settings, active modal keeps input shield, dismissal restores hit testing | Activate existing game |
+| `test07ExistingGameSnapshot` | Screenshot and accessibility tree without input or game relaunch | Activate existing app |
 
 The display preference test skips when the signed capability is absent or the screen is wider than supported.
 It leaves 1080/full-display selected when supported. It does not prove projection correctness or actual render dimensions.
@@ -85,13 +99,38 @@ It leaves 1080/full-display selected when supported. It does not prove projectio
 The live tests require an existing game process. They call `activate()`, never `launch()` or `terminate()`.
 The hit-testing test requires touch controls enabled. It verifies routing without a game-input tap.
 The HUD test leaves the custom overlay off, native HUD on, and the menu closed.
-Menu reopen checks use runtime state for the custom overlay and persisted defaults for the native switch.
+Menu reopen checks verify persisted row values. Screenshots require visual inspection to establish live HUD behavior.
+The next-launch control test changes only a preference; it cannot prove runtime input remained unchanged.
 Screenshots provide separate evidence of native HUD visibility and the glass appearance.
 
 Stable accessibility identifiers required by the tests:
 
 - `TOTKPrelaunchCard` on the prelaunch glass card.
-- `TOTKGameMenuCard` on the live glass card.
+- `TOTKGameMenuCard` on the live navigation container.
+- `Close game menu` as the live settings close button accessibility label.
 - `TOTKTouchControls` on the touch-control view.
+- `TOTKRestartFooter` on the single live-settings summary or pending-restart footer.
 
-The new regression tests are prepared for the updated build. They have not run on a device yet.
+The live-menu tests do not import, export, back up, or restore saves.
+
+Candidate fa4e94b: tests 06a and 06b passed physically, including screenshots with the native HUD off and on.
+Test 06c stopped because its old script expected a Cancel button that UIKit omits in iPad popovers.
+No changed preference had executed at that failure. Tests 06d and 06e did not run.
+The revised script dismisses that popover with an outside tap and requires settings to retain the input shield.
+The current candidate uses one restart footer rather than repeated row badges. These revised checks need fresh physical acceptance.
+
+`test03fImportPostGSIFixture` skips unless the runner environment explicitly supplies `TOTK_TEST_POST_GSI_FOLDER`.
+For the reviewed public fixture, stage `PostGSI-ParagliderGear` in the app's local Documents folder and supply that exact name.
+The test requires local storage, the current folder title, and `slot_00` before normal import confirmation.
+It uses the production import backup. It does not create a full profile backup or synthesize save files.
+Verify the staged fixture against its private provenance manifest before this test. Do not run it as part of an unfiltered suite.
+
+`test03gOpenEditorAndCancelBeforePlay` opens original slot_00 in the web editor and waits up to 45 seconds for readable Rupees content.
+It closes without Apply and requires Play to remain enabled. Visible web content alone does not prove correct save prefill.
+Compare the original active save hashes independently after this test. Run it before post-GSI import when the original 1.4.3 save is required.
+`test06eKeyboardMappingsApplyLive` checks default WASD/arrow mappings, no pending restart, conflicting A disabled, and reserved keys absent.
+It changes Move forward to the unbound R key and restores W without a restart alert. It sends no game key input.
+The Play runner accepts `TOTK_TEST_TIMINGS_FILE` for a candidate-specific diagnostic filename; the default remains milestone-1-timings.tsv.
+
+Set `TOTK_TEST_RESTORE_BACKUP_NAME` to restore one exact backup captured before fixture import.
+When omitted, the restore regression still selects the newest backup. Never infer that newest means the original after later imports or editor applies.

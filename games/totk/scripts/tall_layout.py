@@ -62,6 +62,8 @@ def edits(k):
         ('AppMenuOverlay_00', 'N_Icon_00', 'sy', 1.0, k),
         ('AppOpenDemoWindow_00', 'P_BG_00', 'sy', 1.0, wide),
         ('AutoBuilder_00', 'N_BG_00', 'sy', 1.0, wide),
+        # The scope mask must grow uniformly after the root squeeze, or its aperture becomes an ellipse.
+        ('CameraPointer_00', 'N_InOutScope_00', 'sx', 1.0, wide),
         ('CameraPointer_00', 'N_InOutScope_00', 'sy', 1.0, wide),
         ('CameraPointer_00', 'S_Scissor_00', 'sy', 1.0, wide),
         ('CameraPointer_00', 'N_Type_01', 'sy', 1.0, k),

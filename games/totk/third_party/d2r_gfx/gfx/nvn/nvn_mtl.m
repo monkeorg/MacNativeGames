@@ -4956,7 +4956,10 @@ static id<MTLLibrary> lib_from_file(NSString *path, NSError **err) {
     if (len < 4 || memcmp(m, "MTLB", 4)) { NSString *src = [[NSString alloc] initWithBytes:m length:len encoding:NSUTF8StringEncoding]; munmap(m, len);
         if (!src) { if (err) *err = [NSError errorWithDomain:NSPOSIXErrorDomain code:EILSEQ userInfo:@{NSLocalizedDescriptionKey: [NSString stringWithFormat:@"既不是编好的库也不是源码 %@", path]}]; return nil; }
         static _Atomic int n; static _Atomic long long us; CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
-        id<MTLLibrary> l = [g_dev newLibraryWithSource:src options:totk_precise_opts() error:err]; long long dt = (long long)((CFAbsoluteTimeGetCurrent() - t0) * 1e6);
+        int activity = shader_compile_begin();
+        id<MTLLibrary> l = [g_dev newLibraryWithSource:src options:totk_precise_opts() error:err];
+        shader_compile_end(activity, l != nil);
+        long long dt = (long long)((CFAbsoluteTimeGetCurrent() - t0) * 1e6);
         int k = atomic_fetch_add(&n, 1) + 1; long long tot = atomic_fetch_add(&us, dt) + dt;
         if (k == 1 || k % 100 == 0 || dt >= 300000) MLOG("着色器现编：第 %d 个 %.0f ms，累计 %.1f 秒", k, dt / 1e3, tot / 1e6);
         return l; }
@@ -4996,7 +4999,9 @@ static MTLCompileOptions *totk_precise_opts(void) {
 static id<MTLLibrary> totk_msl_library(NSString *src, NSError **err) {
     NSError *e = nil;
     for (int attempt = 1;; attempt++) {
+        int activity = shader_compile_begin();
         id<MTLLibrary> lib = [g_dev newLibraryWithSource:src options:totk_precise_opts() error:&e];
+        shader_compile_end(activity, lib != nil);
         BOOL interrupted = !lib && [e.localizedDescription containsString:@"XPC_ERROR_CONNECTION_INTERRUPTED"];
         if (lib || !interrupted || attempt == 4) { if (err) *err = e; return lib; }
         MLOG("【红】着色器编译服务连接中断（第 %d 次），%d ms 后重试", attempt, attempt * 100);
@@ -6740,7 +6745,9 @@ static id<MTLRenderPipelineState> pso_new(MTLRenderPipelineDescriptor *d, NSStri
         if (ps) { par_count(1); return ps; }
     }
     if (key && g_par_on) par_count(0);
+    int activity = shader_compile_begin();
     ps = [g_dev newRenderPipelineStateWithDescriptor:d error:e];
+    shader_compile_end(activity, ps != nil);
     atomic_store(&g_par_last_compile_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
     if (ps) par_add(g_dev, key, d);
     return ps;
@@ -6757,7 +6764,9 @@ static id<MTLComputePipelineState> cs_new(NvShader *cs, NSError **e) {
         if (ps) { par_count(1); return ps; }
     }
     if (g_par_on) par_count(0);
+    int activity = shader_compile_begin();
     ps = [g_dev newComputePipelineStateWithDescriptor:d options:MTLPipelineOptionNone reflection:nil error:e];
+    shader_compile_end(activity, ps != nil);
     atomic_store(&g_par_last_compile_ns, clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
     if (ps) par_add(g_dev, key, d);
     return ps;
@@ -12765,7 +12774,12 @@ static NSUInteger g_outup_size[4];            // in and out size of the last ups
 static id<MTLTexture> output_upscale(id<MTL4CommandBuffer> cb, id<MTLTexture> src, NSUInteger cx, NSUInteger cy, NSUInteger cw, NSUInteger ch, MTLViewport vp, int slot) {
     static NSUInteger sw, sh; static int same;
     if (slot >= 0 && slot < 3) g_outup_timed[slot] = 0;
+    // iPad settings select the final stage independently of scene replacement.
+#if TARGET_OS_IPHONE
+    if (!mfxup_output_enabled()) { g_outup_skip[0]++; return nil; }
+#else
     if (!mfxup_enabled() || !mfxup_output_enabled()) { g_outup_skip[0]++; return nil; }
+#endif
     NSUInteger ow = (NSUInteger)vp.width, oh = (NSUInteger)vp.height;
     if (cx || cy || ow < cw + 16 || oh < ch + 9) { g_outup_skip[1]++; return nil; }
     if (ow != sw || oh != sh) { sw = ow; sh = oh; same = 0; }
@@ -13529,9 +13543,17 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
 static CAMetalDisplayLink *g_link; static CFRunLoopRef g_link_rl; static int g_link_started;
 static int g_link_owns_layer, g_classic_busy;   // 持 g_pq_mu：图层挂着节拍对象期间 nextDrawable 会抛异常，自取 drawable 的出图线程与节拍对象互斥 | Under g_pq_mu: nextDrawable throws while the layer has the display link object attached, so the present thread that takes its own drawable and the display link object are mutually exclusive
 static int link_on(void) { return g_dm_present_link && g_link != nil; }
+#if TARGET_OS_IPHONE
+extern uint64_t runtime_ios_fps_period(void) __attribute__((weak_import));
+static uint64_t ios_link_period(void) { return runtime_ios_fps_period ? runtime_ios_fps_period() : 0; }
+#endif
 static CAFrameRateRange link_range(int mode) {
     if (mode == 3) return CAFrameRateRangeMake(30, 30, 30);
     if (mode == 2) return CAFrameRateRangeMake(60, 120, 120);
+#if TARGET_OS_IPHONE
+    uint64_t cap = ios_link_period();
+    if (cap) { float fps = (float)(1000000000ull / cap); return CAFrameRateRangeMake(fps, fps, fps); }
+#endif
     const char *explicit_hz = getenv("DM_PRESENT_HZ"), *rt = getenv("TOTK_REALTIME");
     int hz = explicit_hz ? atoi(explicit_hz) : (rt && !strcmp(rt, "0")) ? 60 : mtl_display_hz();
     if (hz < 30 || hz > 120) hz = 60;
@@ -13557,13 +13579,18 @@ static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式
 }
 static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象的状态对齐到 g_dm_present_link 与省电模式（运行中可改） | Called every frame by the game's present thread: aligns the display link object's state to g_dm_present_link and the power-saving mode (can change at run time)
     static int applied;
+    static uint64_t applied_cap;
+    uint64_t cap = 0;
+#if TARGET_OS_IPHONE
+    cap = ios_link_period();
+#endif
     if (g_rescue_mode && now_ns() >= g_rescue_back_at) {   // rescue period over: back to the display link (stall timing starts afresh)
         pthread_mutex_lock(&g_pq_mu); g_dm_present_link = g_rescue_mode; g_rescue_mode = 0; g_stall_t0 = 0; g_link_tick_ns = now_ns(); pthread_mutex_unlock(&g_pq_mu);
         MLOG("显示节拍：抢救期满，换回节拍模式 %d 再试（帧 %llu）", g_dm_present_link, (unsigned long long)atomic_load(&g_cur_frame)); }
     int want = g_dm_present_link;
     if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
     if (want && mtl_fps_target() == 30) want = 3;   // 省电模式：显示节拍 30 Hz | Power-saving mode: display link at 30 Hz
-    if (want == applied) return;
+    if (want == applied && cap == applied_cap) return;
     g_link_mode = want;
     if (!g_link_started) {
         if (!want) { applied = 0; return; }
@@ -13576,6 +13603,7 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
     else { CFRunLoopRef rl = g_link_rl; g_link = nil; CFRunLoopPerformBlock(rl, kCFRunLoopDefaultMode, ^{ [link invalidate]; pthread_mutex_lock(&g_pq_mu); g_link_owns_layer = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); CFRunLoopStop(rl); }); CFRunLoopWakeUp(rl); }
     MLOG("出图节拍模式 %d → %d（帧 %llu）", applied, want, (unsigned long long)atomic_load(&g_cur_frame));
     applied = want;
+    applied_cap = cap;
     pthread_mutex_lock(&g_pq_mu); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
 }
 // 进后台前（mtl_drain）：显示节拍驱动出图时，排着队还没上屏的帧只能由节拍回调取走，而后台里系统不再回调——

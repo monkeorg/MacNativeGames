@@ -55,6 +55,28 @@ class IOSSaveStoreTests(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         self.assertEqual(json.loads(run.stdout.strip().splitlines()[-1])['status'], 'pass')
 
+    def test_editor_changes_only_selected_progress_and_backs_up(self):
+        self.run_probe('editor_success')
+
+    def test_editor_accepts_content_equal_snapshot_with_different_timestamps(self):
+        self.run_probe('editor_timestamp_only')
+
+    def test_editor_refuses_stale_complete_snapshot(self):
+        for scenario in ('editor_stale_file', 'editor_stale_directory', 'editor_stale_deleted'):
+            with self.subTest(scenario=scenario):
+                self.run_probe(scenario)
+
+    def test_editor_refuses_malformed_output_and_slots(self):
+        for scenario in ('editor_bad_size', 'editor_bad_header', 'editor_wrong_header_offset', 'editor_bad_slot', 'editor_missing_slot'):
+            with self.subTest(scenario=scenario):
+                self.run_probe(scenario)
+
+    def test_editor_refuses_after_play(self):
+        self.run_probe('editor_sealed')
+
+    def test_editor_backup_failure_preserves_both_trees(self):
+        self.run_probe('editor_backup_refused')
+
     def test_complete_transfer_and_restore(self):
         self.run_probe('roundtrip')
 

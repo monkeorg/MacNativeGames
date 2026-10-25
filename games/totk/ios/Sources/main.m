@@ -13,6 +13,7 @@
 #import "touch_pad.h"
 #import "launcher.h"
 #import "launcher_settings.h"
+#import "settings_navigation.h"
 #import "game_menu.h"
 #import "mouse_input.h"
 
@@ -40,14 +41,10 @@ void runtime_shortcut_help_toggle(void) {}
     self.gameView = [[TOTKMetalView alloc] initWithFrame:self.view.bounds];
     self.gameView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.gameView];
+    runtime_ios_set_drawable_count((unsigned)TOTKLauncherDrawableCount(NSUserDefaults.standardUserDefaults));
     runtime_ios_attach_layer((CAMetalLayer *)self.gameView.layer, self.gameView);
-    BOOL metalHUD = TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults);
-    ((CAMetalLayer *)self.gameView.layer).developerHUDProperties = @{ @"mode":metalHUD ? @"default" : @"disabled" };
-    if (TOTKLauncherTouch(NSUserDefaults.standardUserDefaults)) {
-        TOTKTouchPad *pad=[[TOTKTouchPad alloc] initWithFrame:self.view.bounds];pad.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
-        pad.accessibilityIdentifier = @"TOTKTouchControls";
-        [self.view addSubview:pad];
-    }
+    ((CAMetalLayer *)self.gameView.layer).developerHUDProperties = TOTKLauncherMetalHUDProperties(NSUserDefaults.standardUserDefaults);
+    TOTKSetTouchControlsVisible(self.view,TOTKLauncherTouch(NSUserDefaults.standardUserDefaults));
     TOTKStartMouseInput(self);
     TOTKAttachGameMenu(self);
 }
@@ -116,6 +113,9 @@ void runtime_shortcut_help_toggle(void) {}
         backupsURL:[root URLByAppendingPathComponent:@"SaveBackups"]];
     TOTKLauncher *launcher = [[TOTKLauncher alloc] initWithStore:store unavailable:g_no_game_data play:^{
         TOTKLauncherApplyControls(NSUserDefaults.standardUserDefaults);
+        runtime_ios_set_fps_limit((unsigned)TOTKLauncherFPSLimit(NSUserDefaults.standardUserDefaults));
+        runtime_ios_set_taa_enabled(TOTKLauncherTAA(NSUserDefaults.standardUserDefaults));
+        runtime_ios_set_shader_hud_visible([NSUserDefaults.standardUserDefaults boolForKey:@"TOTK_LAUNCHER_SHADER_HUD"]);
         [NSUserDefaults.standardUserDefaults setBool:TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults) forKey:@"MetalHUDForceEnabled"];
         NSString *lang = TOTKLauncherLanguage(NSUserDefaults.standardUserDefaults);
         if (!getenv("TOTK_LANG") && lang.length) setenv("TOTK_LANG",lang.UTF8String,0);
@@ -123,20 +123,52 @@ void runtime_shortcut_help_toggle(void) {}
         for (unsigned i=0;i<3 && fps_overlay_hud_mode()!=hud;i++) fps_overlay_toggle_hints();
         unsigned width, height; BOOL fullDisplay;
         CGSize viewSize = g_active_window.bounds.size;
-        if (TOTKLauncherDisplaySize(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.infoDictionary,
-                                   viewSize.width, viewSize.height, &width, &height, &fullDisplay)) {
-            char size[32], drawableHeight[16];
+        UIScreen *screen = g_active_window.windowScene.screen;
+        TOTKGraphicsPlan graphics;
+        if (TOTKLauncherGraphicsPlan(NSUserDefaults.standardUserDefaults, NSBundle.mainBundle.infoDictionary,
+                                   viewSize.width, viewSize.height,screen.nativeScale,&graphics)) {
+            width=graphics.canvasWidth; height=graphics.canvasHeight; fullDisplay=graphics.fullDisplay;
+            NSString *layout = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"GameData/romfs-patches-4x3"];
+            id layoutVersion = [NSBundle.mainBundle objectForInfoDictionaryKey:@"TOTKIOSFourThreeLayoutVersion"];
+            BOOL tallLayout = fullDisplay && width * 3 == height * 4 &&
+                [layoutVersion isKindOfClass:NSNumber.class] &&
+                CFGetTypeID((__bridge CFTypeRef)layoutVersion) != CFBooleanGetTypeID() && [layoutVersion isEqual:@1] &&
+                [NSFileManager.defaultManager fileExistsAtPath:[layout stringByAppendingPathComponent:@"manifest.tsv"]];
+            if (fullDisplay && !tallLayout) {
+                fprintf(stderr,"[totk] Full display requires the signed 4:3 layout profile; using 16:9\n");
+                fullDisplay = NO; width = height * 16 / 9;
+            }
+            if (tallLayout) {
+                setenv("TOTK_ROMFS_PATCHES",layout.fileSystemRepresentation,1);
+                setenv("TOTK_UI_SQUEEZE","0",1);   // Layout roots already correct the 4:3 UI proportions.
+            }
+            unsigned sceneWidth=graphics.inputWidth, sceneHeight=graphics.inputHeight;
+            if (!fullDisplay && graphics.fullDisplay) sceneWidth=(unsigned)(2*round(sceneHeight*16.0/9.0/2));
+            char size[32], sceneSize[32], drawableHeight[16];
             snprintf(size,sizeof size,"%ux%u",width,height);
+            snprintf(sceneSize,sizeof sceneSize,"%ux%u",sceneWidth,sceneHeight);
             snprintf(drawableHeight,sizeof drawableHeight,"%u",height);
-            setenv("TOTK_RENDER_RES",size,0);
+            setenv("TOTK_RENDER_RES",sceneSize,0);
             setenv("TOTK_OUTPUT_RES",size,0);
+            BOOL spatial = TOTKLauncherSpatialUpscaling(NSUserDefaults.standardUserDefaults) && runtime_ios_spatial_upscaling_supported();
+            setenv("TOTK_MFX_UPSCALE",spatial ? "1" : "0",0);
+            NSString *presentation = TOTKLauncherPresentationMode(NSUserDefaults.standardUserDefaults);
+            BOOL defaultOutput=[TOTKLauncherResolutionMode(NSUserDefaults.standardUserDefaults) isEqual:@"input-output"] && [presentation isEqual:@"game"];
+            unsigned displayW=defaultOutput ? 0 : graphics.displayWidth,displayH=defaultOutput ? 0 : graphics.displayHeight;
+            runtime_ios_set_display_output_size(displayW,displayH);
+            setenv("TOTK_MFX_OUTPUT",TOTKLauncherOutputUpscaling(NSUserDefaults.standardUserDefaults) &&
+                runtime_ios_spatial_upscaling_supported() && displayW && displayH ? "1" : "0",0);
+            fprintf(stderr,"[totk] display output mode %s; requested drawable %ux%u (0 = game canvas); MetalFX output %s\n",
+                presentation.UTF8String,displayW,displayH,getenv("TOTK_MFX_OUTPUT"));
+            fprintf(stderr,"[totk] requested scene %s -> output %s; MetalFX spatial %s (application requires renderer confirmation)\n",
+                getenv("TOTK_RENDER_RES"),getenv("TOTK_OUTPUT_RES"),getenv("TOTK_MFX_UPSCALE"));
             setenv("TOTK_ASPECT",fullDisplay ? "display" : "0",0);
             setenv("TOTK_IOS_DRAWABLE_H",drawableHeight,0);
         }
         g_root_controller = [TOTKGameController new];
         g_active_window.rootViewController = g_root_controller;
     }];
-    g_root_controller = [[UINavigationController alloc] initWithRootViewController:launcher];
+    g_root_controller = [[TOTKSettingsPanel alloc] initWithRoot:launcher];
     self.window.rootViewController = g_root_controller;
     [self.window makeKeyAndVisible];
 }

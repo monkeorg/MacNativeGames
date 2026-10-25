@@ -9,3 +9,6 @@ BOOL TOTKMouseInputEnabled(void);
 
 // Current capture eligibility; the saved request above survives focus and text entry.
 BOOL TOTKMouseInputWantsPointerLock(void);
+
+// Main thread only. Aggregate session counts and current capture state; no input coordinates or device identifiers.
+NSDictionary<NSString *, NSNumber *> *TOTKMouseInputDiagnostics(void);

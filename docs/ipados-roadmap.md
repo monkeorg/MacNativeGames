@@ -4,7 +4,7 @@ Target: TOTK 1.4.3 on an M4 iPad Pro, with a persistent pre-launch menu, save tr
 
 Roadmap: https://github.com/monkeorg/MacNativeGames/issues/9
 
-Current source delivery, requirement-to-code evidence and external blockers are recorded in [the full-roadmap status](ipados-roadmap-status.md). The latest continuation prohibits running tests or simulators; its new Controls source is unbuilt and untested. Follow the [ordered local verification checklist](ipados-acceptance.md) only in a later authorized validation session. Hardware acceptance remains open.
+Cloud delivery and requirement-to-code evidence are recorded in [the full-roadmap status](ipados-roadmap-status.md). Local validation has resumed. The installed full-settings candidate has passed physical save import, post-tutorial save load, menu open/close, and live HUD checks. The next graphics candidate adds native frame ceilings, TAA requests, and live touch visibility. Its physical acceptance remains open. Use the [ordered local verification checklist](ipados-acceptance.md); do not use a simulator for this workflow.
 
 ## Delivery sequence
 
@@ -27,6 +27,10 @@ Current source delivery, requirement-to-code evidence and external blockers are 
 - Preserve Mac behavior. Build and test affected platforms and game versions as CONTRIBUTING.md requires.
 - Save import/export is distinct from save-value editing. A validated backup and atomic replacement come before field editing.
 - A 60 FPS target is not a result. Measure rendered frames separately from presentation and interpolation.
+- Native frame ceilings reuse the existing presentation deadline. Keep guest VI events at 60 Hz; do not slow the game clock or add another pacing loop.
+- TAA reuses the existing MetalFX frame-boundary latch. Keep it off by default until image quality and GPU cost are measured. A request is distinct from successful scaler activity.
+- Keep restart honest. The runtime lacks complete module finalizers and teardown; closing and reopening the app remains necessary.
+- A mod manager must stage bounded, validated, version-matched RomFS packs before Play. Current signed code cannot accept arbitrary executable patches or live pack replacement. Do not duplicate the required 4:3 layout as a one-item mod manager.
 - Keep BOTW outside the TOTK delivery milestone.
 
 ## Acceptance

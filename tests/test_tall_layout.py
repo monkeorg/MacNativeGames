@@ -92,6 +92,44 @@ class Apply(unittest.TestCase):
         self.assertAlmostEqual(field(self.blob, self.members, 'Up', 'N_A', 'y'), 10.0)
         self.assertAlmostEqual(field(self.blob, self.members, 'Mid', 'N_B', 'sy'), 1 / K, places=5)
 
+    def test_four_three_preserves_widget_proportions_at_both_heights(self):
+        for width, height in ((960, 720), (1440, 1080)):
+            with self.subTest(width=width, height=height):
+                blob = bytearray(self.blob)
+                tall.apply(blob, self.members, width, height)
+                root_scale = field(blob, self.members, 'Mid', 'RootPane', 'sy')
+                inverse_scale = field(blob, self.members, 'Mid', 'N_B', 'sy')
+                self.assertAlmostEqual(root_scale, 0.75)
+                self.assertAlmostEqual(root_scale * inverse_scale, 1.0, places=5)
+                self.assertAlmostEqual(field(blob, self.members, 'Up', 'RootPane', 'y'), 135.0)
+                self.assertAlmostEqual(field(blob, self.members, 'Keep', 'RootPane', 'sy'), 1.0)
+
+    def scope_fixture(self):
+        tall.KEEP_ROOT, tall.ROOT_UP, tall.ROOT_DOWN, tall.CENTERED, tall.LIST_EXTENSION = set(), [], [], (), []
+        tall.edits = lambda k: [row for row in self.saved['edits'](k)
+                                if row[:2] == ('CameraPointer_00', 'N_InOutScope_00')]
+        return archive({'CameraPointer_00': [pane('RootPane'), pane('N_InOutScope_00')]})
+
+    def test_scope_mask_preserves_circular_aperture_on_taller_canvases(self):
+        for width, height in ((960, 720), (1440, 1080), (2560, 1600)):
+            with self.subTest(width=width, height=height):
+                blob, members = self.scope_fixture()
+                tall.apply(blob, members, width, height)
+                root_y = field(blob, members, 'CameraPointer_00', 'RootPane', 'sy')
+                mask_x = field(blob, members, 'CameraPointer_00', 'N_InOutScope_00', 'sx')
+                mask_y = field(blob, members, 'CameraPointer_00', 'N_InOutScope_00', 'sy')
+                # Equal source distances must span equal pixels after the 1920x1080 canvas mapping.
+                self.assertAlmostEqual(width / 1920 * mask_x, height / 1080 * root_y * mask_y, places=5)
+                self.assertGreaterEqual(1920 * width / 1920 * mask_x, width)
+                self.assertAlmostEqual(1080 * height / 1080 * root_y * mask_y, height, places=4)
+
+    def test_scope_mask_rejects_an_unexpected_original_horizontal_scale(self):
+        blob, members = self.scope_fixture()
+        at = tall.panes(blob, *members['blyt/CameraPointer_00.bflyt'])['N_InOutScope_00']
+        struct.pack_into('<f', blob, at + tall.FIELD['sx'], 1.1)
+        with self.assertRaisesRegex(SystemExit, 'N_InOutScope_00 sx'):
+            tall.apply(blob, members, 1440, 1080)
+
     def test_a_pane_that_is_not_as_shipped_stops_the_script(self):
         blob, members = archive({name: [pane('RootPane'), pane('N_A', y=11.0), pane('N_B')] for name in ('Up', 'Down', 'Mid', 'Keep')})
         with self.assertRaises(SystemExit): tall.apply(blob, members, 2560, 1600)

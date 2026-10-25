@@ -5,7 +5,45 @@ NSString *TOTKLauncherLanguage(NSUserDefaults *defaults);
 NSInteger TOTKLauncherHUD(NSUserDefaults *defaults);
 BOOL TOTKLauncherTouch(NSUserDefaults *defaults);
 BOOL TOTKLauncherMetalHUD(NSUserDefaults *defaults);
+NSArray<NSString *> *TOTKLauncherMetalHUDMetricOptions(void);
+NSArray<NSString *> *TOTKLauncherMetalHUDMetrics(NSUserDefaults *defaults);
+NSArray<NSString *> *TOTKLauncherMetalHUDAlignments(void);
+NSString *TOTKLauncherMetalHUDAlignment(NSUserDefaults *defaults);
+double TOTKLauncherMetalHUDScale(NSUserDefaults *defaults);
+double TOTKLauncherMetalHUDOpacity(NSUserDefaults *defaults);
+BOOL TOTKLauncherMetalHUDEncoderTiming(NSUserDefaults *defaults);
+BOOL TOTKLauncherMetalHUDInsights(NSUserDefaults *defaults);
+BOOL TOTKLauncherMetalHUDRange(NSUserDefaults *defaults);
+NSDictionary<NSString *, id> *TOTKLauncherMetalHUDProperties(NSUserDefaults *defaults);
+NSArray<NSNumber *> *TOTKLauncherFPSLimits(void);
+NSInteger TOTKLauncherDrawableCount(NSUserDefaults *defaults);
+NSInteger TOTKLauncherFPSLimit(NSUserDefaults *defaults);
+BOOL TOTKLauncherTAA(NSUserDefaults *defaults);
 NSInteger TOTKLauncherRenderHeight(NSUserDefaults *defaults);
+NSInteger TOTKLauncherSceneScale(NSUserDefaults *defaults);
+NSInteger TOTKLauncherCustomSceneHeight(NSUserDefaults *defaults);
+BOOL TOTKLauncherSpatialUpscaling(NSUserDefaults *defaults);
+NSArray<NSString *> *TOTKLauncherScalerStages(void);
+NSString *TOTKLauncherScalerStage(NSUserDefaults *defaults);
+BOOL TOTKLauncherOutputUpscaling(NSUserDefaults *defaults);
+NSInteger TOTKLauncherCustomOutputHeight(NSUserDefaults *defaults);
+NSInteger TOTKLauncherGameCanvasHeight(NSUserDefaults *defaults);
+NSArray<NSString *> *TOTKLauncherPresentationModes(void);
+NSString *TOTKLauncherPresentationMode(NSUserDefaults *defaults);
+typedef struct {
+    unsigned inputWidth, inputHeight, canvasWidth, canvasHeight, displayWidth, displayHeight;
+    BOOL fullDisplay;
+} TOTKGraphicsPlan;
+NSArray<NSString *> *TOTKLauncherResolutionModes(void);
+NSString *TOTKLauncherResolutionMode(NSUserDefaults *defaults);
+double TOTKLauncherUpscaleFactor(NSUserDefaults *defaults);
+NSDictionary *TOTKLauncherGraphicsPreferences(NSUserDefaults *defaults);
+BOOL TOTKLauncherGraphicsPlan(NSUserDefaults *defaults, NSDictionary *info, double viewWidth, double viewHeight,
+                              double nativeScale, TOTKGraphicsPlan *plan);
+BOOL TOTKLauncherPresentationSize(NSUserDefaults *defaults, double viewWidth, double viewHeight, double nativeScale,
+                                  unsigned canvasWidth, unsigned canvasHeight, unsigned *width, unsigned *height);
+BOOL TOTKLauncherSceneSize(NSUserDefaults *defaults, unsigned outputWidth, unsigned outputHeight,
+                           unsigned *width, unsigned *height);
 NSString *TOTKLauncherAspect(NSUserDefaults *defaults);
 BOOL TOTKLauncherDisplaySettingsAvailable(NSDictionary *info);
 /* Width and height are required; fullDisplay is optional. NO leaves outputs unchanged. */

@@ -61,11 +61,11 @@ def main():
     rewritten=tree/f'rewritten/{a.version}'; modules=gen/'modules';modules.mkdir(exist_ok=True)
     e=dict(env,TOTK_EXPORT_IOS=str(modules))
     e.pop('TOTK_IOS_DISPLAY_SETTINGS',None)   # This signed-code capability belongs to the explicit build flag.
+    e.pop('TOTK_IOS_ASPECT_VERT',None)
     if a.display_settings:
         # Patch only the verified host image before gen_embed seals its executable-section hashes.
         e.update(TOTK_IOS_DISPLAY_SETTINGS='1',TOTK_RENDER_RES='1280x720',TOTK_OUTPUT_RES='1280x720',
-                 TOTK_FIXED_RES='1',TOTK_ASPECT='0')
-        e.pop('TOTK_ASPECT_VERT',None)
+                 TOTK_FIXED_RES='1',TOTK_ASPECT='0',TOTK_ASPECT_VERT='1',TOTK_IOS_ASPECT_VERT='1')
     run([host,rewritten,'export-ios'],tree,logs/'export-ios.log',e)
     flags=subprocess.check_output([sys.executable,ios/'tools/gen_embed.py',rewritten,gen/'embed.S','--text-dir',modules,'main','subsdk0','sdk'],text=True,env=env).strip()
     # The app's sources use version-specific patch and generated runtime tables.
@@ -76,9 +76,9 @@ def main():
     if a.display_settings:
         if project.count('-DTOTK_GAME_V143=1\n')!=1 or project.count('        MetalHudEnabled: true\n')!=1:
             raise RuntimeError('cannot bind the signed display profile to this iOS project')
-        project=project.replace('-DTOTK_GAME_V143=1\n','-DTOTK_GAME_V143=1 -DTOTK_IOS_DISPLAY_SETTINGS=1\n')
+        project=project.replace('-DTOTK_GAME_V143=1\n','-DTOTK_GAME_V143=1 -DTOTK_IOS_DISPLAY_SETTINGS=1 -DTOTK_IOS_ASPECT_VERT=1\n')
         project=project.replace('        MetalHudEnabled: true\n',
-                                '        MetalHudEnabled: true\n        TOTKIOSDisplaySettingsVersion: 1\n')
+                                '        MetalHudEnabled: true\n        TOTKIOSDisplaySettingsVersion: 1\n        TOTKIOSFourThreeLayoutVersion: 1\n')
     # The home screen icon: the game's own, which the build took from its control data for the Mac app
     # (build/AppIcon.icns, scripts/extract_app_icon.py), as a single-size asset catalog. Without it the app had none.
     icon=tree/'build/AppIcon.icns'; catalog=gen/'Assets.xcassets'; shutil.rmtree(catalog,ignore_errors=True)
@@ -130,7 +130,7 @@ def main():
     # Generate the app project with resolved identity and the embedded-segment linker flags.
     env.update(TOTK_APP_NAME=a.app_name,TOTK_BUNDLE_ID=a.bundle_id)
     xcconfig=gen/'totk.xcconfig'
-    frameworks=' '.join('-framework '+x for x in ['UIKit','Metal','MetalFX','Foundation','QuartzCore','ImageIO','CoreGraphics','CoreText','UniformTypeIdentifiers','CoreFoundation','AudioToolbox','GameController','AVFAudio','Security'])
+    frameworks=' '.join('-framework '+x for x in ['UIKit','Metal','MetalFX','Foundation','QuartzCore','ImageIO','CoreGraphics','CoreText','UniformTypeIdentifiers','CoreFoundation','AudioToolbox','GameController','AVFAudio','Security','WebKit'])
     xcconfig.write_text(f'OTHER_LDFLAGS = $(inherited) {frameworks} Gen/deps/lib/libopus.a Gen/deps/lib/libvpx.a {flags}\n')
     run(['xcodegen','generate','--spec','project.generated.yml'],ios,logs/'xcodegen.log',env)
     derived=tree/'build/ios-derived';run(['xcodebuild','-project','TOTKIOS.xcodeproj','-scheme','TOTKIOS','-configuration','Release',
@@ -149,6 +149,12 @@ def main():
     for src,dst in [(tree/f'extracted/{a.version}/romfs-patches',res/'romfs-patches'),
                     (tree/f'extracted/{a.version}/romfs-patches-out',res/'romfs-patches-out'),
                     (tree/'extracted/firmware/shared-fonts',res/'shared-fonts')]: copy_tree(src,dst)
+    tall = res/'romfs-patches-4x3'
+    if tall.exists(): shutil.rmtree(tall)
+    if a.display_settings:
+        # Regenerate from the verified original image. The existing generator checks panes and emits the integrity manifest.
+        run([sys.executable,tree/'scripts/make_romfs_patches.py','--version','v143','--aspect','1440x1080',
+             '--output-dir',tall],tree,logs/'ios-layout-4x3.log',env)
     copy_tree(seed,res/'shader-seed')
     # The first frame waits only for the title screen's shaders (pso_title.tsv); the runtime looks for the list next to
     # DM_NVN_SHMAP, which is in shader-seed on iOS. Without it the first frame waits for the whole warm-up.

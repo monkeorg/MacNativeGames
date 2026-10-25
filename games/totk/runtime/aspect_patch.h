@@ -116,13 +116,25 @@ static inline void aspect_install(Module *m, const char *version, const uint64_t
          stale value was never found; anything else that reads the camera's field of view (other cameras, a copy of
          fovy) has not been checked. */
 #if TARGET_OS_IPHONE
-    (void)ncam;
-    int vert = 0;   /* The signed iOS display profile contains plain projection stubs only. */
+    /* The dedicated profile embeds both camera stubs even at 16:9; only their writable factor changes at Play. */
+#ifdef TOTK_IOS_ASPECT_VERT
+    int vert = vert_off != 0;
+#else
+    int vert = 0;
+#endif
 #else
     int vert = vert_off && aspect_vert_wanted(getenv("TOTK_ASPECT_VERT"));
 #endif
     void *tanf_at = vert ? runtime_symbol("tanf") : NULL, *atanf_at = vert ? runtime_symbol("atanf") : NULL;
-    if (vert && (!tanf_at || !atanf_at)) { fprintf(stderr, "[totk] aspect patch: the game's tanf / atanf not found, no Vert+\n"); vert = 0; }
+    int signed_vert = 0;
+#ifdef TOTK_IOS_ASPECT_VERT
+    signed_vert = 1;
+#endif
+    if (!TARGET_OS_IPHONE && getenv("TOTK_EXPORT_IOS") && getenv("TOTK_IOS_ASPECT_VERT")) signed_vert = 1;
+    if (vert && (!tanf_at || !atanf_at)) {
+        if (signed_vert) runtime_fail("signed Vert+ profile requires game tanf / atanf");
+        fprintf(stderr, "[totk] aspect patch: the game's tanf / atanf not found, no Vert+\n"); vert = 0;
+    }
     uint64_t page_end = (m->text_end + 0x3fff) & ~0x3fffULL;
     if (stub_off < m->text_end || stub_off + ASPECT_STUB * nsite > page_end) runtime_fail("aspect patch: no room in main's text padding");
     if (vert && (vert_off < m->text_end || vert_off + ASPECT_VSTUB * ncam > page_end)) runtime_fail("aspect patch: no room for the Vert+ stubs");
@@ -140,21 +152,38 @@ static inline void aspect_install(Module *m, const char *version, const uint64_t
         const char *err = aspect_stub(ins, s, sites[i], data_off, code);
         uint32_t jump = aspect_b(sites[i], s);
         if (err || !jump) runtime_fail(err ? err : "aspect patch: branch out of range");
-#if !TARGET_OS_IPHONE
         if (vert && i < ncam) {   /* Vert+: the fovy load before it, found from the projection register */
             uint32_t around[8], before[16]; memcpy(around, m->base + sites[i] - 16, sizeof around); memcpy(before, m->base + sites[i] - 64, sizeof before);
+            uint64_t vs = vert_off + ASPECT_VSTUB * i;
+#if TARGET_OS_IPHONE
+            /* Recover the two displaced loads from their signed veneers, then check the original surrounding pattern. */
+            around[4] = ins;
+            for (unsigned b = 0; b < 16; b++) {
+                uint64_t fs = sites[i] - 64 + 4 * b;
+                if (before[b] == aspect_b(fs, vs)) memcpy(&before[b], m->base + vs, 4);
+            }
+#endif
             int p = aspect_vert_reg(around), j = p >= 0 ? aspect_fovy_at(before, (unsigned)p) : -1;
-            if (j < 0) fprintf(stderr, "[totk] aspect patch: camera site +%#llx is not the expected setFovy, no Vert+ there\n", (unsigned long long)sites[i]);
+            if (j < 0) {
+                if (signed_vert) runtime_fail("signed Vert+ camera does not match setFovy");
+                fprintf(stderr, "[totk] aspect patch: camera site +%#llx is not the expected setFovy, no Vert+ there\n", (unsigned long long)sites[i]);
+            }
             else {
-                uint64_t fs = sites[i] - 64 + 4 * (uint64_t)j, vs = vert_off + ASPECT_VSTUB * i;
+                uint64_t fs = sites[i] - 64 + 4 * (uint64_t)j;
                 uint32_t vcode[74], vjump = aspect_b(fs, vs);
                 const char *verr = aspect_vstub(before[j], vs, fs, data_off, vcode);
                 if (verr || !vjump) runtime_fail(verr ? verr : "aspect patch: branch out of range");
+#if TARGET_OS_IPHONE
+                uint32_t embedded; memcpy(&embedded, m->base + fs, 4);
+                if (embedded != vjump || memcmp(m->base + vs, vcode, sizeof vcode)) runtime_fail("embedded Vert+ patch mismatch");
+#else
                 memcpy(m->base + vs, vcode, sizeof vcode);
                 memcpy(m->base + fs, &vjump, 4);
+#endif
                 nvert++;
             }
         }
+#if !TARGET_OS_IPHONE
         memcpy(m->base + s, code, ASPECT_STUB);
         memcpy(m->base + sites[i], &jump, 4);
 #else
@@ -163,6 +192,7 @@ static inline void aspect_install(Module *m, const char *version, const uint64_t
             runtime_fail("embedded aspect patch mismatch");
 #endif
     }
+    if (signed_vert && nvert != ncam) runtime_fail("signed Vert+ profile lacks a camera");
     if (nvert) {
         uint64_t fa = (uint64_t)(uintptr_t)tanf_at, fb = (uint64_t)(uintptr_t)atanf_at;
         memcpy(m->base + data_off + ASPECT_TANF_SLOT, &fa, 8); memcpy(m->base + data_off + ASPECT_ATANF_SLOT, &fb, 8);

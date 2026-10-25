@@ -6,6 +6,9 @@
 static __weak UIViewController *mouseHost;
 static BOOL mouseStarted;
 static TOTKMouseCapture mouseCapture;
+static uint64_t mouseReports, mouseAccepted, mouseIgnoredReports, mouseBlockedReports, mouseLockChanges;
+
+static void count_report(uint64_t *counter) { if (*counter < UINT64_MAX) (*counter)++; }
 
 BOOL TOTKMouseInputWantsPointerLock(void) {
     return totk_mouse_wants_capture(&mouseCapture);
@@ -15,6 +18,15 @@ static BOOL mouse_ready(void) {
     UIWindow *window = mouseHost.view.window;
     return totk_mouse_accepts_input(&mouseCapture,
         runtime_front_focus(), window.windowScene.pointerLockState.locked);
+}
+
+NSDictionary<NSString *, NSNumber *> *TOTKMouseInputDiagnostics(void) {
+    NSCAssert(NSThread.isMainThread, @"Mouse diagnostics must be read on the main thread");
+    return @{@"devices":@(GCMouse.mice.count), @"requested":@(mouseCapture.requested),
+        @"eligible":@(TOTKMouseInputWantsPointerLock()),
+        @"locked":@(mouseHost.view.window.windowScene.pointerLockState.locked),
+        @"runtimeFocus":@(runtime_front_focus()), @"reports":@(mouseReports), @"accepted":@(mouseAccepted),
+        @"ignoredReports":@(mouseIgnoredReports), @"blockedReports":@(mouseBlockedReports), @"lockChanges":@(mouseLockChanges)};
 }
 
 static BOOL mouse_prepare(void) {
@@ -41,7 +53,11 @@ static void attach_mouse(GCMouse *mouse) {
     GCMouseInput *input = mouse.mouseInput;
     input.mouseMovedHandler = ^(GCMouseInput *device, float dx, float dy) {
         (void)device;
-        if (mouse_prepare()) runtime_mouse_move(dx, -dy);
+        count_report(&mouseReports);
+        if (!mouse_prepare()) { count_report(&mouseBlockedReports); return; }
+        if (!totk_mouse_has_motion(dx, dy)) { count_report(&mouseIgnoredReports); return; }
+        count_report(&mouseAccepted);
+        runtime_mouse_move(dx, -dy);
     };
     NSArray *buttons = mouse_buttons(input);
     for (NSUInteger i=0; i<buttons.count; i++) {
@@ -128,7 +144,9 @@ void TOTKStartMouseInput(UIViewController *gameController) {
         [mouseHost setNeedsUpdateOfPrefersPointerLocked];
     }];
     [center addObserverForName:UIPointerLockStateDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-        if (note.userInfo[UIPointerLockStateSceneUserInfoKey] == mouseHost.view.window.windowScene && !mouse_ready()) runtime_mouse_release();
+        if (note.userInfo[UIPointerLockStateSceneUserInfoKey] != mouseHost.view.window.windowScene) return;
+        count_report(&mouseLockChanges);
+        if (!mouse_ready()) runtime_mouse_release();
     }];
     for (GCMouse *mouse in GCMouse.mice) attach_mouse(mouse);
     TOTKSetMouseInputEnabled(YES);

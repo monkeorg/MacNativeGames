@@ -4,8 +4,14 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
+#import <MetalFX/MetalFX.h>
 #include <stdatomic.h>
 #include "runtime.h"
+#include "ios_fps_policy.h"
+#include "fps_overlay.h"
+#include <time.h>
+#include "totk_taa.h"
+#include "totk_mfx_up.h"
 #include "totk_ui_lang.h"
 static CAMetalLayer *metalLayer;
 static UIView *bootOverlay;
@@ -17,6 +23,97 @@ static CADisplayLink *displayLink;
 static pthread_mutex_t vsyncLock=PTHREAD_MUTEX_INITIALIZER;
 static void *vsyncEvents[16];
 static unsigned vsyncCount;
+static __weak UIView *rateHost;
+static _Atomic unsigned fpsLimit = 60, maximumFps = 60;
+static unsigned drawableCount = 3;
+static _Atomic int thermalState = -1;
+static UILabel *shaderCompileLabel;
+static NSTimer *shaderCompileTimer;
+static BOOL shaderHUDVisible;
+static void refresh_shader_activity(void) {
+ shader_compile_activity value=shader_compile_snapshot();
+ uint64_t now=clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+ BOOL recent=value.last_end_ns&&now-value.last_end_ns<2000000000ull;
+ shaderCompileLabel.hidden=!shaderHUDVisible||(!value.active&&!recent);
+ if(shaderCompileLabel.hidden)return;
+ shaderCompileLabel.text=[NSString stringWithFormat:@"Preparing shaders\n%llu active · %llu complete · %llu failed",
+  (unsigned long long)value.active,(unsigned long long)value.completed,(unsigned long long)value.failed];
+ shaderCompileLabel.textColor=value.active?UIColor.systemYellowColor:UIColor.whiteColor;
+}
+void runtime_ios_set_shader_hud_visible(int visible) {
+ NSCAssert(NSThread.isMainThread,@"Shader HUD must change on the main thread");
+ shaderHUDVisible=visible!=0;shader_compile_set_enabled(shaderHUDVisible);
+ [shaderCompileTimer invalidate];shaderCompileTimer=nil;
+ if(shaderHUDVisible&&shaderCompileLabel){
+  shaderCompileTimer=[NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *timer){(void)timer;refresh_shader_activity();}];
+  [NSRunLoop.mainRunLoop addTimer:shaderCompileTimer forMode:NSRunLoopCommonModes];
+ }
+ refresh_shader_activity();
+}
+static unsigned displayOutputWidth, displayOutputHeight;
+void runtime_ios_set_display_output_size(unsigned width,unsigned height){
+ NSCAssert(NSThread.isMainThread,@"Display output must change on the main thread");
+ if((width==0&&height==0)||(width>=64&&height>=64&&width<=8192&&height<=8192)){
+  displayOutputWidth=width;displayOutputHeight=height;
+ }
+}
+int dm_thermal_now(void) { return atomic_load(&thermalState); }
+static void refresh_thermal_state(void) {
+ atomic_store(&thermalState,(int)NSProcessInfo.processInfo.thermalState);
+}
+/* Configure the drawable queue before attachment; never resize an active presentation queue. */
+void runtime_ios_set_drawable_count(unsigned count){
+ NSCAssert(NSThread.isMainThread,@"Drawable count must change on the main thread");
+ if(!metalLayer&&(count==2||count==3))drawableCount=count;
+}
+unsigned runtime_ios_drawable_count(void){return metalLayer?(unsigned)metalLayer.maximumDrawableCount:drawableCount;}
+extern int mfx_enabled(void);
+static int realtime_profile(void) {
+#if defined(TOTK_GAME_V143) && defined(TOTK_IOS_DISPLAY_SETTINGS)
+ const char *rt=getenv("TOTK_REALTIME");return !(rt&&!strcmp(rt,"0"));
+#else
+ return 0;
+#endif
+}
+static UIScreen *active_screen(void) {
+ UIScreen *screen=rateHost.window.screen;
+ if(!screen)for(UIScene *scene in UIApplication.sharedApplication.connectedScenes){
+  if([scene isKindOfClass:UIWindowScene.class]&&scene.activationState==UISceneActivationStateForegroundActive){screen=((UIWindowScene *)scene).screen;break;}
+ }
+ return screen;
+}
+static unsigned screen_maximum(void) {
+ UIScreen *screen=active_screen();
+ if(screen)atomic_store(&maximumFps,(unsigned)screen.maximumFramesPerSecond);
+ return atomic_load(&maximumFps);
+}
+unsigned runtime_ios_fps_limit(void){return ios_fps_effective(atomic_load(&fpsLimit),atomic_load(&maximumFps));}
+int runtime_ios_fps_limit_supported(unsigned fps){return ios_fps_supported(fps,screen_maximum(),realtime_profile(),mfx_enabled());}
+/* Render threads read only atomics and the existing interpolation state. */
+uint64_t runtime_ios_fps_period(void){
+ unsigned fps=runtime_ios_fps_limit();
+ return ios_fps_supported(fps,atomic_load(&maximumFps),realtime_profile(),mfx_enabled())?1000000000ull/fps:0;
+}
+void runtime_ios_set_fps_limit(unsigned fps){
+ NSCAssert(NSThread.isMainThread,@"Frame cap must change on the main thread");
+ if(!runtime_ios_fps_limit_supported(fps))return;
+ atomic_store(&fpsLimit,fps);
+ fprintf(stderr,"[totk] requested native frame cap %u FPS (system display rate may differ)\n",fps);
+}
+int runtime_ios_taa_supported(void){
+ id<MTLDevice> device=metalLayer.device ?: MTLCreateSystemDefaultDevice();
+ return device && [MTLFXTemporalScalerDescriptor supportsMetal4FX:device];
+}
+int runtime_ios_spatial_upscaling_supported(void){
+ id<MTLDevice> device=metalLayer.device ?: MTLCreateSystemDefaultDevice();
+ return device && [MTLFXSpatialScalerDescriptor supportsMetal4FX:device];
+}
+int runtime_ios_upscaling_activity(void){return mfxup_recent_activity();}
+void runtime_ios_set_taa_enabled(int enabled){
+ if((enabled!=0&&enabled!=1)||(enabled&&!runtime_ios_taa_supported()))return;
+ taa_set_enabled(enabled);
+}
+int runtime_ios_taa_enabled(void){return taa_enabled();}
 void hle_bind_system_event(void *,int);
 void hle_signal_system_event(void *);
 void *front_metal_layer(void){return (__bridge void *)metalLayer;}
@@ -96,9 +193,12 @@ static TOTKVsync *vsyncTarget;
 
 /* Called on the main thread by the app before the game thread starts. */
 void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
+ rateHost=host;screen_maximum();
  bootStartNS=runtime_now_ns();
- metalLayer=layer;metalLayer.device=MTLCreateSystemDefaultDevice();metalLayer.pixelFormat=MTLPixelFormatBGRA8Unorm;metalLayer.framebufferOnly=NO;
- CGFloat s=host.window.screen.nativeScale>0?host.window.screen.nativeScale:UIScreen.mainScreen.nativeScale;
+ metalLayer=layer;metalLayer.maximumDrawableCount=drawableCount;metalLayer.device=MTLCreateSystemDefaultDevice();metalLayer.pixelFormat=MTLPixelFormatBGRA8Unorm;metalLayer.framebufferOnly=NO;
+ UIScreen *screen=active_screen();
+ CGFloat s=screen.nativeScale>0?screen.nativeScale:host.traitCollection.displayScale;
+ if(s<=0)s=1;
  metalLayer.contentsScale=s;
  /* TOTK_IOS_DRAWABLE_H (default 720; 0 = native pixels): build the drawable this many pixels tall at the view's aspect, so the
     game picture (1280x720 canvas) lands about 1:1 and the system compositor scales it to the screen instead of our GPU. */
@@ -118,6 +218,7 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
   // Retain the full view's aspect for letterboxing while the game canvas stays 16:9.
   vh=round(outputW*host.bounds.size.height/host.bounds.size.width);vw=outputW;
  }
+ if(displayOutputWidth&&displayOutputHeight){vw=displayOutputWidth;vh=displayOutputHeight;}
  runtime_aspect_view(vw,vh);
 #endif
  metalLayer.drawableSize=CGSizeMake(vw,vh);
@@ -131,10 +232,33 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  bootDetail.font=[UIFont systemFontOfSize:14];bootDetail.textAlignment=NSTextAlignmentCenter;
  bootProgress=[[UIProgressView alloc] initWithFrame:CGRectMake(w/2-140,h/2+30,280,8)];bootProgress.hidden=YES;
  [bootOverlay addSubview:bootStage];[bootOverlay addSubview:bootDetail];[bootOverlay addSubview:bootProgress];[host addSubview:bootOverlay];
+ shaderCompileLabel=[UILabel new];shaderCompileLabel.translatesAutoresizingMaskIntoConstraints=NO;
+ shaderCompileLabel.font=[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightMedium];
+ shaderCompileLabel.numberOfLines=2;shaderCompileLabel.textAlignment=NSTextAlignmentCenter;
+ shaderCompileLabel.backgroundColor=[UIColor.blackColor colorWithAlphaComponent:0.7];
+ shaderCompileLabel.layer.cornerRadius=8;shaderCompileLabel.clipsToBounds=YES;
+ shaderCompileLabel.accessibilityIdentifier=@"TOTKShaderCompileHUD";
+ shaderCompileLabel.accessibilityLabel=@"Shader and pipeline preparation";
+ shaderCompileLabel.userInteractionEnabled=NO;
+ [host addSubview:shaderCompileLabel];
+ NSLayoutConstraint *shaderWidth=[shaderCompileLabel.widthAnchor constraintEqualToConstant:540];
+ shaderWidth.priority=UILayoutPriorityDefaultHigh;
+ [NSLayoutConstraint activateConstraints:@[
+  shaderWidth,
+  [shaderCompileLabel.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
+  [shaderCompileLabel.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
+  [shaderCompileLabel.heightAnchor constraintEqualToConstant:44],
+  [shaderCompileLabel.widthAnchor constraintLessThanOrEqualToAnchor:host.safeAreaLayoutGuide.widthAnchor constant:-24]
+ ]];
+ runtime_ios_set_shader_hud_visible(shaderHUDVisible);
+ // Read before registration, as required by the thermal-state notification contract.
+ refresh_thermal_state();
  NSNotificationCenter *nc=NSNotificationCenter.defaultCenter;
+ [nc addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){(void)n;refresh_thermal_state();}];
  [nc addObserverForName:UIApplicationWillResignActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;app_active_changed(0);}];
  [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;app_active_changed(1);}];
  vsyncTarget=[TOTKVsync new];displayLink=[CADisplayLink displayLinkWithTarget:vsyncTarget selector:@selector(tick:)];
+ /* VI remains the display-service clock. Native-frame caps use the existing NVN pacer and Metal display link. */
  displayLink.preferredFrameRateRange=CAFrameRateRangeMake(60,60,60);[displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
 /* The app already runs the loader on a game thread with a large stack; the event loop belongs to UIKit. */

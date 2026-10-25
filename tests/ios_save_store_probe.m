@@ -255,6 +255,54 @@ static BOOL applySandbox(const char *profile) {
 #pragma clang diagnostic pop
     return result == 0;
 }
+static int editorProbe(NSString *scenario, TOTKSaveStore *store, NSURL *active, NSURL *profile, NSURL *output, NSURL *backups) {
+    NSError *error = nil;
+    NSURL *expected = [store exportToDirectory:output error:&error];
+    CHECK(expected && !error);
+    NSDictionary *original = snapshot(active), *expectedBefore = snapshot(expected);
+    NSMutableData *data = [NSMutableData dataWithLength:2307856];
+    unsigned char *bytes = data.mutableBytes;
+    bytes[0]=0x12; bytes[1]=0x34; bytes[2]=0x56; bytes[3]=0x78;
+    bytes[4]=0x46; bytes[5]=0xe9; bytes[6]=0x49; bytes[7]=0;
+    bytes[data.length-1]=0xab;
+    NSString *slot = @"slot_03";
+    if ([scenario isEqual:@"editor_timestamp_only"]) CHECK([NSFileManager.defaultManager setAttributes:
+        @{NSFileModificationDate:[NSDate dateWithTimeIntervalSince1970:1]} ofItemAtPath:child(active,@"slot_00/extra.bin").path error:NULL]);
+    if ([scenario isEqual:@"editor_stale_file"]) writeFile(child(active,@"slot_00/extra.bin"),@"changed");
+    if ([scenario isEqual:@"editor_stale_directory"]) CHECK([NSFileManager.defaultManager createDirectoryAtURL:child(active,@"new-empty") withIntermediateDirectories:NO attributes:nil error:NULL]);
+    if ([scenario isEqual:@"editor_stale_deleted"]) CHECK([NSFileManager.defaultManager removeItemAtURL:child(active,@"binary.bin") error:NULL]);
+    if ([scenario isEqual:@"editor_bad_size"]) [data setLength:2307855];
+    if ([scenario isEqual:@"editor_bad_header"]) bytes[4]=0;
+    if ([scenario isEqual:@"editor_wrong_header_offset"]) {
+        bytes[0]=0x46; bytes[1]=0xe9; bytes[2]=0x49; bytes[3]=0;
+        bytes[4]=0x12; bytes[5]=0x34; bytes[6]=0x56; bytes[7]=0x78;
+    }
+    if ([scenario isEqual:@"editor_bad_slot"]) slot=@"../slot_03";
+    if ([scenario isEqual:@"editor_missing_slot"]) slot=@"slot_01";
+    if ([scenario isEqual:@"editor_sealed"]) CHECK([store sealForPlay]);
+    if ([scenario isEqual:@"editor_backup_refused"]) {
+        NSString *policy = [NSString stringWithFormat:@"(version 1)(allow default)(deny file-write-create (subpath \"%@\"))",backups.path];
+        CHECK(applySandbox(policy.UTF8String));
+    }
+    NSDictionary *before = snapshot(active);
+    BOOL ok = [store applyEditedProgress:data slot:slot expectedDirectory:expected error:&error];
+    if ([scenario isEqual:@"editor_success"] || [scenario isEqual:@"editor_timestamp_only"]) {
+        CHECK(ok && !error);
+        NSMutableDictionary *edited = [original mutableCopy]; edited[@"slot_03/progress.sav"]=data;
+        CHECK([snapshot(active) isEqual:edited]);
+        NSArray<NSURL *> *saved = [store backups:&error]; CHECK(saved.count==1);
+        CHECK([snapshot(saved.firstObject) isEqual:original]);
+    } else {
+        CHECK(!ok && error);
+        CHECK([snapshot(active) isEqual:before]);
+        CHECK(([NSFileManager.defaultManager contentsOfDirectoryAtPath:backups.path error:NULL] ?: @[]).count==0);
+    }
+    CHECK([snapshot(expected) isEqual:expectedBefore]);
+    CHECK([[NSData dataWithContentsOfURL:child(profile,@"account.uid")] isEqual:[@"keep-account-identity" dataUsingEncoding:NSUTF8StringEncoding]]);
+    for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:active.URLByDeletingLastPathComponent.path error:NULL])
+        CHECK(![name hasPrefix:@".edit-"] && ![name hasPrefix:@".import-"]);
+    return 0;
+}
 static int probe(NSString *scenario, NSURL *root) {
     if ([scenario hasPrefix:@"settings_"]) return settings(scenario,root);
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -271,6 +319,7 @@ static int probe(NSString *scenario, NSURL *root) {
     NSDictionary *original = snapshot(active);
     NSError *error = nil;
     CHECK([store backups:&error].count == 0);
+    if ([scenario hasPrefix:@"editor_"]) return editorProbe(scenario,store,active,profile,output,backups);
     if ([scenario isEqual:@"sandbox_roundtrip"]) {
         // Apply after Foundation loads; a launch-time restriction prevents dyld from loading.
         CHECK(applySandbox("(version 1)(allow default)(deny file-read-data (literal \"/\"))"));

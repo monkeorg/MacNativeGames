@@ -20,6 +20,8 @@
 static pthread_mutex_t gamepadLock = PTHREAD_MUTEX_INITIALIZER;
 static RuntimeGamepadState gamepadState;
 static uint64_t pressedEdges;
+static RuntimeGamepadState touchState;
+static uint64_t touchPressedEdges;
 #if TARGET_OS_IPHONE
 // Keep mouse taps separate so capture loss cannot replay them or discard a
 // controller/touch tap mapped to the same Switch button.
@@ -514,7 +516,7 @@ static void refresh_gamepads(void) {
     // Compare each source with its own previous mapped state. A controller tap
     // can start while the mouse already holds that same Switch button; deriving
     // it from the combined state would discard it when mouse capture ends.
-    // Touch edges stay in pressedEdges through their existing independent path.
+    // Touch edges have their own queue so hiding touch controls cannot discard controller presses.
     uint64_t mappedMouse = controller_map_apply(controllerMap, held & mousePhysicalMask) | mouseSynthetic;
     uint64_t mappedController = controller_map_apply(controllerMap, held & ~mousePhysicalMask) | controllerSynthetic;
     mousePressedEdges |= mappedMouse & ~mouseMappedButtons;
@@ -601,6 +603,7 @@ void runtime_gamepad_clear(void) {
     pthread_mutex_lock(&gamepadLock);
     gamepadState = (RuntimeGamepadState){0};
     pressedEdges = 0;
+    touchPressedEdges = 0;
 #if TARGET_OS_IPHONE
     mousePressedEdges = 0;
     mouseMappedButtons = controllerMappedButtons = 0;
@@ -612,18 +615,23 @@ void runtime_gamepad_clear(void) {
 /* On-screen touch controls (iPhone, ios/app/Sources/touch_controls.m) feed a second state merged with the physical
    controllers: buttons are OR-ed (a tap shorter than one game frame is latched like a controller press), each stick
    axis takes the stronger value. */
-static RuntimeGamepadState touchState;
 void runtime_touch_pad_set(const RuntimeGamepadState *s) {
     pthread_mutex_lock(&gamepadLock);
-    pressedEdges |= s->buttons & ~touchState.buttons;
+    touchPressedEdges |= s->buttons & ~touchState.buttons;
     touchState = *s;
+    pthread_mutex_unlock(&gamepadLock);
+}
+void runtime_touch_pad_clear(void) {
+    pthread_mutex_lock(&gamepadLock);
+    touchState = (RuntimeGamepadState){0};
+    touchPressedEdges = 0;
     pthread_mutex_unlock(&gamepadLock);
 }
 
 void runtime_gamepad_read(RuntimeGamepadState *out) {
     pthread_mutex_lock(&gamepadLock);
     *out = gamepadState;
-    out->buttons |= touchState.buttons | pressedEdges;
+    out->buttons |= touchState.buttons | touchPressedEdges | pressedEdges;
 #if TARGET_OS_IPHONE
     out->buttons |= mousePressedEdges;
     mousePressedEdges = 0;
@@ -633,6 +641,7 @@ void runtime_gamepad_read(RuntimeGamepadState *out) {
     out->rx = stronger_axis(out->rx, mouseRX); out->ry = stronger_axis(out->ry, mouseRY);
     if (touchState.connected) out->connected = 1;
     pressedEdges = 0;
+    touchPressedEdges = 0;
 #if TARGET_OS_IPHONE
     // Focus can already be gone before the main-thread clear/cancel callbacks
     // finish. Suppress controls while preserving device connection metadata;

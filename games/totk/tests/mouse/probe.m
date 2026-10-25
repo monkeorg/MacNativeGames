@@ -73,6 +73,22 @@ int main(int argc, char **argv) { @autoreleasepool {
     check(motionMouse == 0 && feeds == before, "TOTK_GYRO=0 (no six-axis device for the game): no mouse gyro either");
     runtime_mouse_toggle();
 
+    runtime_gamepad_clear();
+    RuntimeGamepadState touch = {.connected=1,.buttons=Y,.rx=22000};
+    runtime_touch_pad_set(&touch);
+    touch.buttons=0;runtime_touch_pad_set(&touch); // A tap remains queued before the game can poll.
+    pthread_mutex_lock(&gamepadLock);
+    gamepadState=(RuntimeGamepadState){.connected=1,.buttons=ZL,.lx=16000};
+    pressedEdges=Y; // A controller tap shares the same output as the cancelled touch tap.
+    pthread_mutex_unlock(&gamepadLock);
+    runtime_touch_pad_clear();
+    runtime_gamepad_read(&s);
+    check(s.buttons==(Y|ZL)&&s.lx==16000&&s.rx==0,"touch cancellation preserves held controller input and same-button controller edge");
+    runtime_gamepad_read(&s);
+    check(s.buttons==ZL&&s.rx==0,"controller edge is consumed once and cancelled touch cannot replay");
+    runtime_touch_pad_clear();runtime_gamepad_clear();
+    runtime_gamepad_read(&s);check(!s.buttons&&!s.rx&&!s.lx,"repeated touch clear leaves no held input");
+
     printf("{\"status\":\"%s\",\"probe\":\"mouse\",\"checked\":%d,\"failures\":%d}\n", failures ? "fail" : "pass", checked, failures);
     return failures != 0;
 }}

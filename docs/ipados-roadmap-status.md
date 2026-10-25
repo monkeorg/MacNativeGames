@@ -1,4 +1,56 @@
-# iPad roadmap: source delivery and external blockers
+# iPad roadmap: integration checkpoint and historical cloud audit
+
+## Local integration checkpoint — 2026-10-25
+
+The overnight source at `feat/totk-cloud-ready` (`2241674`) is integrated through draft [PR #33](https://github.com/monkeorg/MacNativeGames/pull/33). Current candidate `3b0888e` adds anchored setting popovers, a real Game → final MetalFX stage with optional intermediate canvas, custom output height, an input slider and a toggleable shader-preparation indicator. The full settings overlay, telescope correction and thermal badge remain. The final signed app installed under the same identity; account bytes matched and the device launch command succeeded. No game-image copy, merge or release occurred.
+
+Current build evidence: 366 repository tests and 710 overlay/probe checks passed. Both iPhoneOS source profiles compiled (28 objects), and the Mac v143 host, full iPad app and device-runner builds passed. Independent review found and corrected two bugs: final MetalFX incorrectly required scene replacement, and some custom input heights produced an oversized canvas from rounded input aspect. Regression tests now cover 366/372/384-high input. Physical acceptance remains open for the new popovers, shader indicator and actual two-stage scaling. No simulator or automated Play/save-load cycle ran. Input remains within the signed 1920×1080 profile; final presentation is separate. See [current graphics controls](ipados-graphics.md#resolution-controls--2026-10-25).
+
+Formatting follow-up `bac6172`: dropdowns measure their table content, anchor to the selected value and prefer the space below it. Configured status uses stacked Input/Output lines and includes Canvas only when different. The missing Input symbol and long footer were corrected. The full iPad app built, signed and installed; account bytes matched and the launch command succeeded. Device Hub shows the root menu. Detailed dropdown/status visual acceptance awaits navigation because coordinate clicks return `noWindowsAvailable`. No game start or save load ran.
+
+Visual follow-up: the user confirmed the `bac6172` dropdown is good. Device Hub showed its complete three-option menu below the selected value and the restored Input icon. The same screen exposed clipped subtitle text in Configured status. `e862096` replaces that block with ordinary Input size/Output size/Effective multiplier/MetalFX activity rows and optional Game canvas. Its full iPad app build passed; the signed app installed, account bytes matched and the launch command succeeded. No new simulator, unit test, automated game start or save-load cycle ran for this formatting-only change. Device Hub visual inspection then confirmed separate, aligned Input size, Output size, Effective multiplier and MetalFX activity rows with no clipping: 1280×960 input, 2752×2064 output and 2.15×. This is menu appearance acceptance, not a renderer-dimension measurement.
+
+The user reports mouse movement is fixed and performance is acceptable until the device heats up. These are user observations, not matched trace results. Performance Trace setup is underway; no new trace file has been collected or analyzed. The shader toggle helps distinguish preparation requests from sustained workload but does not diagnose every stall.
+
+The requested Restart game action remains unimplemented. The user accepts unsaved-progress loss and requests a red action with two confirmations. Original 1.4.3 metadata verifies a normal return-to-title sequence and scene-lifecycle callback. The request that selects Title as the target and its allowed guest-thread context remain unidentified. Observing one normal engine transition is the next bounded debugging step; calling the lifecycle callback alone does not select Title. A full host teardown is an alternative, not a proven prerequisite for an engine-owned reload. Track the implementation in [issue #55](https://github.com/monkeorg/MacNativeGames/issues/55). Warnings do not supply a callable restart mechanism, and no exit/relaunch shortcut is exposed.
+
+Previous resolution-settings candidate `12bda7d`: 363 repository tests passed, both iPhoneOS object profiles compiled, and the full Apple app build passed. The signed app installed successfully; account identity remained byte-identical and the device launch command succeeded. It reused Documents/GameData without another image copy. The user requested no repetitive save-loading automation, so no XCTest or automated Play ran for this candidate.
+
+Previous thermal candidate `259e1cb`: 362 repository tests passed, 22 iPhoneOS source objects compiled, and the cached native host, full iPad app and UI runner builds passed. Physical `test04PlayAndNativeHUD` passed in 42.028 seconds. Its screenshot shows gameplay and `Thermal: Nominal`; the badge reports the public device thermal state, not a temperature in degrees. Account identity remained byte-identical. Live badge visibility and the corrected telescope appearance remain unchecked.
+
+The one-time external game-image copy completed all 16 parts. First launch hashed all 17,052,625,232 bytes and mounted the image before loading `slot_04/progress.sav`. The app now omits the bundled image: its local signed bundle is approximately 1.87 GB; the device data container holds approximately 17.90 GB, including 17.05 GB of game data. These logical sizes total approximately 19.8 GB, not an independently measured Settings storage total. The earlier approximately 37 GB report is consistent with the temporary overlap between the old bundled image and the external copy. No saves, caches or private inputs were deleted.
+
+The user requested a pause after this delivery and asked to stop repetitive UI automation. No further launch or live-menu test ran after that request. Retain the installed app and private evidence; do not restart automation without a concrete acceptance need.
+
+Verified host evidence: 360 repository tests passed in the retained project environment, both iPhoneOS profiles compiled (22 objects), the full cached native host and iPad app builds passed, and all nine embedded executable-section hashes matched. The first system-Python test run had three environment errors; the project-environment run passed all 360 tests.
+
+Verified physical evidence: the installed candidate loaded the retained post-tutorial test save into gameplay. Account identity remained byte-identical. The user confirmed the bottom-left gear opens the full settings overlay. Earlier installed candidate `fa4e94b` passed byte-verified fixture import, editor prefill/cancel, full menu open/close and live HUD checks. Those earlier checks remain separate from this candidate's acceptance.
+
+The current source adds live native 30/40/60 FPS ceilings, capability-gated TAA requests, live touch visibility, editable keyboard mappings, a single pending-restart footer and the full shared overlay. Forty FPS requires a compatible display. TAA remains off by default. A requested rate or TAA state is not proof of achieved performance or successful temporal scaling.
+
+Physical test `test06fExistingGameGraphicsAndTouchApplyLive` passed in 89.942 seconds after the user enabled UI Automation. It exercised available FPS choices, TAA request persistence, touch removal/restoration and outside dismissal, then restored 60 FPS, the prior TAA preference and Automatic touch controls. Renderer logs recorded successful temporal scaling frames. These checks do not establish achieved FPS or TAA quality/cost. Earlier failures remain recorded: automated menu opening failed before physical confirmation, and a subsequent attempt timed out before actions while automation mode was disabled.
+
+Open delivery limits:
+
+- The 4:3 **telescope/scope** mask correction from `a6a794a` is installed in `259e1cb`. Eleven layout tests passed; private archive validation changed only one guarded scale float. Its appearance is not physically accepted yet. Full display remains experimental; scoped world projection still needs a matched capture.
+- Stable native 60 FPS at 1080 high, synchronized memory/thermal measurements, and complete projection/effects acceptance remain unverified.
+- The user reports mouse movement fixed. Physical keyboard/controller regression, editor Apply followed by game load, and the complete ordered save/provider regression remain open.
+- Experimental in-app game restart and a generic mod manager are not implemented. Restart uses close/reopen guidance; arbitrary executable mods are unsupported.
+- The current app uses external-image packaging to reduce later transfers. It still contains game binaries and some assets; this does not make the app content-free.
+
+Remaining requested work after this graphics batch:
+
+- Restart button plus two red confirmations: needs the original Title target request; risk acceptance is already recorded. A title reload will not itself apply host resolution preferences.
+- Live resolution/aspect/scaler rebuild and verified active buffer dimensions: need coordinated engine/resource changes and a device capture. Current settings remain next-start plans; recent MetalFX activity is an encode observation.
+- Input above the signed 1920×1080 profile: needs a new checked capacity/layout profile; high presentation output is already separate.
+- Additional filtering, FXAA, temporal-upscaling, sharpening and interpolation controls: need specific renderer integration and visual/performance checks. They are not supplied by the new spatial-stage selector. No external performance mod was imported.
+- Warm-device performance analysis: collect one normal trace after setup, then use its actual bottleneck to select changes. The user does not need to supply a path before a trace exists.
+
+The current post-tutorial save stays active by user instruction. Retain the original automatic backup and previous signed app. The user waived a fresh full-profile backup; do not claim an immediate complete pre-install comparison. Private reports, inputs, saves, signing and caches remain outside Git.
+
+The user established two tracks: local work improves TOTK performance, visuals and game patches; cloud work builds the new native/recompiled launcher under [issue #34](https://github.com/monkeorg/MacNativeGames/issues/34). Read [the cloud handoff](content-free-launcher-handoff.md) and use [the goal prompt](content-free-launcher-goal.txt). The future mod manager is backlog-only [issue #35](https://github.com/monkeorg/MacNativeGames/issues/35), explicitly excluded from the current cloud build. BOTW remains a separate assessment under issue #8.
+
+## Historical cloud delivery — 2026-10-24
 
 Review date: 2026-10-24. Specification: [roadmap #9](https://github.com/monkeorg/MacNativeGames/issues/9), its issues #1–#8, and [ipados-roadmap.md](ipados-roadmap.md). This continuation starts at `236930c` after the [cloud audit](ipados-cloud-audit.md). The resumed goal prohibits tests and simulators: **no tests, probes, compiler checks, simulators, app launches or device operations ran in this phase**. Earlier test results do not cover the new Controls implementation. New source remains unbuilt and untested.
 
