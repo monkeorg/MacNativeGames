@@ -58,6 +58,9 @@ typedef struct thr {
     uint64_t entry, arg, stack_top; uint64_t host_context[2]; int prio, core; uint64_t mask;
     uint64_t born_ns, exit_ns; uint32_t born_tick, exit_tick;   // 建立 / 退出的时刻与当时的游戏拍（现场导出用：作业工人是不是在卡住前退的） | Time of creation / exit and the game tick at that time (for the state dump: did the job worker exit before the stall)
     int started, exited, cancel;
+#if defined(CANOPY_HOST_RUNTIME)
+    int host_owned, host_joining;
+#endif
     pthread_t pt; pthread_cond_t cv;
     // 当前等待：kind 0=无 1=锁 2=条件 3=地址 4=同步对象
     // Current wait: kind 0=none 1=lock 2=condition 3=address 4=synchronization object
@@ -491,6 +494,84 @@ static void thr_free(thr_t *t) {   // 持 G；从全部线程链摘下并释放 
     pthread_cond_destroy(&t->cv); free(t);
 }
 
+#if defined(CANOPY_HOST_RUNTIME)
+/* Guest handle lifetime is independent of native pthread lifetime. This one
+ * process-lifetime service may block in a child's TLS destructors; bounded
+ * callers still return pending and retain the child and its host resources. */
+static pthread_cond_t g_host_changed = PTHREAD_COND_INITIALIZER;
+static unsigned g_host_owned, g_host_failures;
+static uint64_t g_host_joined;
+static int g_host_admission_closed, g_host_reaper_started;
+static void *host_reaper(void *unused) {
+    (void)unused;
+    pthread_mutex_lock(&G);
+    for (;;) {
+        thr_t *t;
+        for (t=g_all;t;t=t->all)
+            if (t->host_owned && t->exited && !t->host_joining) break;
+        if (!t) { pthread_cond_wait(&g_host_changed,&G); continue; }
+        t->host_joining=1;
+        pthread_t child=t->pt;
+        pthread_mutex_unlock(&G);
+        int result=pthread_join(child,NULL);
+        pthread_mutex_lock(&G);
+        if (result) {
+            /* Never interpret a join error as completion or free the object. */
+            if (g_host_failures<UINT32_MAX) g_host_failures++;
+        } else {
+            t->host_owned=0; t->host_joining=0; g_host_owned--;
+            if (g_host_joined<UINT64_MAX) g_host_joined++;
+            if (t->closed) thr_free(t);
+        }
+        pthread_cond_broadcast(&g_host_changed);
+    }
+    return NULL;
+}
+static int host_reaper_start(void) { /* G held; no guest is published yet. */
+    if (g_host_reaper_started) return 0;
+    pthread_attr_t attr;
+    if (pthread_attr_init(&attr)) return -1;
+    int result=pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);
+    pthread_t worker;
+    if (!result) result=pthread_create(&worker,&attr,host_reaper,NULL);
+    pthread_attr_destroy(&attr);
+    if (result) return -1;
+    g_host_reaper_started=1; return 0;
+}
+static int host_state_valid(struct canopy_threads_state *state) {
+    return state && state->abi==CANOPY_THREADS_ABI && state->size==sizeof(*state);
+}
+static void host_state(struct canopy_threads_state *state) { /* G held. */
+    unsigned joining=0;
+    for (thr_t *t=g_all;t;t=t->all) if (t->host_owned && t->host_joining) joining++;
+    *state=(struct canopy_threads_state){CANOPY_THREADS_ABI,sizeof(*state),
+        (uint32_t)g_host_admission_closed,g_host_owned,joining,g_host_failures,g_host_joined};
+}
+void runtime_canopy_threads_close_admission(void) {
+    pthread_mutex_lock(&G); g_host_admission_closed=1;
+    pthread_cond_broadcast(&g_host_changed); pthread_mutex_unlock(&G);
+}
+int runtime_canopy_threads_snapshot(struct canopy_threads_state *state) {
+    if (!host_state_valid(state)) return -1;
+    pthread_mutex_lock(&G); host_state(state); pthread_mutex_unlock(&G); return 0;
+}
+int runtime_canopy_threads_drain(uint64_t wait_ns,struct canopy_threads_state *state) {
+    if (!host_state_valid(state) || wait_ns>UINT64_C(1000000000) || me_or_null()) return -1;
+    uint64_t deadline=now_ns()+wait_ns;
+    pthread_mutex_lock(&G);
+    if (!g_host_admission_closed) { pthread_mutex_unlock(&G); return -1; }
+    while (g_host_owned && wait_ns) {
+        uint64_t now=now_ns(); if (now>=deadline) break;
+        uint64_t left=deadline-now;
+        struct timespec relative={(time_t)(left/1000000000),(long)(left%1000000000)};
+        int result=pthread_cond_timedwait_relative_np(&g_host_changed,&G,&relative);
+        if (result && result!=ETIMEDOUT) break;
+    }
+    host_state(state); int drained=g_host_owned==0;
+    pthread_mutex_unlock(&G); return drained;
+}
+#endif
+
 static _Noreturn void thread_exit_on_host(void *argument) {
     thr_t *t=argument;
     t->exit_ns = now_ns(); t->exit_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
@@ -501,7 +582,12 @@ static _Noreturn void thread_exit_on_host(void *argument) {
     t->exited = 1;
     for (thr_t *w = g_wait; w; ) { thr_t *n = w->next; if (w->wkind == 4) wake(w, -1); w = n; }   // 同步等待者重查 | Synchronization waiters re-check
     pthread_setspecific(g_keythr, NULL);
+#if defined(CANOPY_HOST_RUNTIME)
+    if (t->host_owned) pthread_cond_broadcast(&g_host_changed);
+    if (t->closed && !t->host_owned) thr_free(t);
+#else
     if (t->closed) thr_free(t);
+#endif
     pthread_mutex_unlock(&G);
     pthread_exit(NULL);
 }
@@ -649,9 +735,14 @@ int svc_thread(int num, uint64_t *regs) {
     case 0x08: {  // CreateThread(→w1 句柄; x1 入口, x2 参数, x3 栈顶, w4 优先级, w5 核) | CreateThread(→w1 handle; x1 entry, x2 argument, x3 stack top, w4 priority, w5 core)
         if(!regs[1]||!regs[3]||(regs[3]&15)||(int)regs[4]<28||(int)regs[4]>59||(int)regs[5]<-3||(int)regs[5]>2){regs[0]=R_BAD_STATE;return 1;}
         thr_t *t = calloc(1, sizeof *t);
+#if defined(CANOPY_HOST_RUNTIME)
+        if (!t) { regs[0]=R_OUT_OF_RES; return 1; }
+        if (pthread_cond_init(&t->cv,NULL)) { free(t); regs[0]=R_OUT_OF_RES; return 1; }
+#else
         if(!t)die("thread allocation");
-        t->cur_core = -1;
         pthread_cond_init(&t->cv, NULL);
+#endif
+        t->cur_core = -1;
         t->entry = regs[1]; t->arg = regs[2]; t->stack_top = regs[3] & ~0xFull;
 #ifdef GAME_BOTW
         { int c = (int)regs[5]; if (c == -2) c = PROCESS_IDEAL_CORE;
@@ -661,13 +752,49 @@ int svc_thread(int num, uint64_t *regs) {
         t->prio = (int)regs[4]; t->core = (int)regs[5]; t->mask = t->core >= 0 ? 1ull << t->core : 7;
 #endif
         t->born_ns = now_ns(); t->born_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
+        pthread_attr_t a;
+        uint32_t created_handle;
+#if defined(CANOPY_HOST_RUNTIME)
+        if (pthread_attr_init(&a)) {
+            pthread_cond_destroy(&t->cv); free(t); regs[0]=R_OUT_OF_RES; return 1;
+        }
+        if (pthread_attr_setstacksize(&a,8 << 20)) {
+            pthread_attr_destroy(&a); pthread_cond_destroy(&t->cv); free(t); regs[0]=R_OUT_OF_RES; return 1;
+        }
+        pthread_mutex_lock(&G);
+        unsigned slot; for (slot=1;slot<MAX_H && g_h[slot].type;slot++) {}
+        if (g_host_admission_closed || g_host_owned>=CANOPY_THREADS_MAX_CHILDREN || slot==MAX_H || host_reaper_start()) {
+            int closed=g_host_admission_closed;
+            pthread_mutex_unlock(&G); pthread_attr_destroy(&a); pthread_cond_destroy(&t->cv); free(t);
+            regs[0]=closed ? R_BAD_STATE:R_OUT_OF_RES; return 1;
+        }
+        t->host_owned=1; g_host_owned++;
+        t->handle=h_new(O_THREAD,t); t->id=g_next_id++; t->all=g_all; g_all=t;
+        /* Publication and creation share G with admission closure and reaping.
+         * The child cannot run guest code until StartThread after this returns. */
+        int created=pthread_create(&t->pt,&a,thread_main,t);
+        if (created) {
+#ifdef GAME_BOTW
+            unsigned failed_slot=h_index(t->handle);
+#else
+            unsigned failed_slot=t->handle-0x1000;
+#endif
+            g_h[failed_slot].type=O_FREE; g_h[failed_slot].obj=NULL;
+            g_host_owned--; t->host_owned=0; thr_free(t);
+            pthread_mutex_unlock(&G); pthread_attr_destroy(&a); regs[0]=R_OUT_OF_RES; return 1;
+        }
+        created_handle=t->handle;
+        pthread_mutex_unlock(&G);
+#else
+        pthread_attr_init(&a); pthread_attr_setstacksize(&a,8 << 20);
         pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
-        pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 8 << 20);   // also the host-service stack of this guest thread
-        pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);   // 退出即回收宿主资源（客体经句柄等待，不 join） | Host resources are reclaimed on exit (the guest waits through the handle, no join)
+        pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);   // Guest waits through the handle in standalone builds.
         if (pthread_create(&t->pt, &a, thread_main, t)) die("pthread_create");
+        created_handle=t->handle;
+#endif
         pthread_attr_destroy(&a);
-        LOG("CreateThread h=%#x entry=%#llx sp=%#llx", t->handle,t->entry,t->stack_top);
-        regs[0] = 0; regs[1] = t->handle; return 1;
+        LOG("CreateThread h=%#x entry=%#llx sp=%#llx", created_handle,regs[1],regs[3]);
+        regs[0] = 0; regs[1] = created_handle; return 1;
     }
     case 0x09: {  // StartThread(w0)
         pthread_mutex_lock(&G);
@@ -897,7 +1024,11 @@ int svc_thread(int num, uint64_t *regs) {
             valid=1;thr_t *t = g_h[i].obj;
             g_h[i].type = O_FREE; g_h[i].obj = NULL;
             t->closed = 1;
+#if defined(CANOPY_HOST_RUNTIME)
+            if (t->exited && !t->host_owned) thr_free(t);
+#else
             if (t->exited) thr_free(t);
+#endif
         }
         pthread_mutex_unlock(&G);
         regs[0] = valid?0:R_BAD_HANDLE; return 1;
