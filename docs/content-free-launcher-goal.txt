@@ -1,7 +1,11 @@
-Build the complete native/recompiled iPad game launcher in monkeorg/MacNativeGames issue #34. Read docs/content-free-launcher-handoff.md, inspect current instructions/state, then create a separate redesign branch. Preserve the working TOTK track. Ship no Nintendo-derived content in the public app. Switch is in scope; do not implement a mod manager or future console backends.
+/goal Complete Canopy’s cloud-side implementation in monkeorg/MacNativeGames #34.
 
-First create the architecture decision, full roadmap, dependency graph and issues; then implement the current Switch release scope. Prove executable loading before treating ROM extraction as a working game pipeline. Use gpt-6.1-sol Medium workers, up to 20 when supported; otherwise queue work within the real runtime limit.
+Resume from .goal-task/content-free-launcher/state.md (initialize from the roadmap if absent) and implement the complete docs/canopy-development-roadmap.md matrix: native NSP/folder-to-assets preparation, updates/DLC, recoverable multi-game storage/library, per-game settings/full overlay, saves, input/players, native runtime integration, shaders/cache, diagnostics and multiplayer infrastructure.
 
-Loop: audit gaps → delegate independent tasks → implement → review → run meaningful checks → fix → publish checkpoints and update .goal-task/content-free-launcher/state.md. Continue beyond plans and scaffolds.
+Use gpt-6.1-sol Medium workers with distinct file ownership within the actual runtime limit. Loop implement → independent review → available tests/Apple CI → fix → focused commit/draft PR → reassess. Continue after each checkpoint and around blocked components.
 
-Finish only when the in-scope Switch requirement matrix is implemented and verified, including public-artifact purity, real import/gameplay, per-game settings/saves, supported multiplayer, recovery, efficient updates and physical Apple acceptance. If an external gate remains, complete independent work and report the exact blocker without claiming completion. No merges, releases or private-data uploads.
+Reviewed source-only Apple work is authorized for later Mac/iPad validation. Missing devices, private inputs or an unresolved execution mechanism must not stop independent coding. Track implementation, compilation and device acceptance separately. No unused interfaces, mock backends or disabled controls counted as completed features; no invented title patches, save formats or gameplay results.
+
+Close the cloud phase only when every implementable requirement is connected and reviewed, available checks pass, and each remaining item demonstrably needs named external evidence with exact local next steps. Keep gameplay/release acceptance open. Never stop at a partial app or one global hardware blocker.
+
+Preserve TOTK behavior/identity and PR dependencies. Native/recompiled only; no Nintendo-derived public payload or private uploads. Exclude the mod manager, Wii U and future console backends. No merges or releases.
