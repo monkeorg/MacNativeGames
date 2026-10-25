@@ -746,6 +746,11 @@
       "file": "spirv_msl.cpp",
       "originalInventoryAnchor": "spirv_msl.cpp:4143",
       "originalSourceLine": 4143
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:9256",
+      "originalSourceLine": 9256
     }
   ],
   "delegatedUnbracedSites": [
@@ -769,7 +774,8 @@
     "Six metadata writers share ordinary ParsedIR::prepare_member_metadata exactly once: existing0035 planner then map insertion/resize; three Compiler qualified/extended set/unset paths now use same bounds while preserving row-creating unset and variable-ID/pre-type metadata",
     "Three conditional GLSL flattening helpers: member-path indices before reads/naming, recursive member-count narrowing, I/O Struct refusal and leaf nonempty path/primary-alias final member bounds; empty root store path preserved, not global ID or flattening validation",
     "ensure_struct_members_valid_vecsizes only: parent-member index before write, dimension-count narrowing and once-evaluated uint32 products, zero advances preserved and positive interface cursor result strictly below unknown sentinel; no hardware/type-format/global layout validity claim",
-    "Fixed composite caller storage availability: two Parser composite opcodes check minimum2operands before access/subtraction, fixedbranch nonzero count, shared result/source dimensions andnonnull1..4 constituents before3pointer-constructor set sites; Struct/array/longvectorID-list andReplicatedEXT unchanged"
+    "Fixed composite caller storage availability: two Parser composite opcodes check minimum2operands before access/subtraction, fixedbranch nonzero count, shared result/source dimensions andnonnull1..4 constituents before3pointer-constructor set sites; Struct/array/longvectorID-list andReplicatedEXT unchanged",
+    "emit_tessellation_access_chain only: operand minima, local vector-size narrowing, all local actual member-read/mask-prefix bounds and known interface-index additions reserving unresolvedMAX; preserves array/Struct precedence, deferred states and intentional resets, not global type/ID/array/helper validation"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
@@ -794,7 +800,8 @@
     "GLSL flattened I/O struct-member emission",
     "GLSL flattened struct-store member traversal",
     "conditional GLSL zero-initialization eligibility member query",
-    "conditional MSL tessellation struct vector-size adjustment"
+    "conditional MSL tessellation struct vector-size adjustment",
+    "conditional MSL tessellation access-chain rematerialization"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
@@ -806,8 +813,8 @@
     "Parser direct raw-ID self-alias refusal before source lookup and Variant replacement for OpTypeArray/RuntimeArray/Pointer only; UntypedPointer and distinct-pointee forward resolution unchanged, not a global ID/redefinition validator"
   ],
   "instrumentedBracedLoops": 356,
-  "instrumentedLoopCheckpoints": 500,
-  "instrumentedOriginallyUnbracedLoops": 144,
+  "instrumentedLoopCheckpoints": 501,
+  "instrumentedOriginallyUnbracedLoops": 145,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "removedBracedLoopCheckpoints": [
     {
@@ -884,7 +891,7 @@
       "reason": "At most four iterations after checked patch0033: fill_composite_constant preflight rejects a selected non-array/non-Struct vector width>4 or fewer than width initializers before target mutation/fixed writes. The existing vector branch uses the same type.vecsize and no callback can change it before the loop. Matrix/array/Struct and caller validity remain separate; no checkpoint added."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 1,
+  "unbracedLoopsInputDependentOrUnprovenCount": 0,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:3676",
     "spirv_cross.cpp:3842",
@@ -901,10 +908,9 @@
     "spirv_msl.cpp:1856",
     "spirv_msl.cpp:4265",
     "spirv_msl.cpp:6099",
-    "spirv_msl.cpp:9256",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 17,
+  "unbracedLoopsNotInstrumentedCount": 16,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",

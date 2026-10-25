@@ -478,6 +478,16 @@
       },
       "patch": "0042-fixed-composite-caller-storage-preflight.patch",
       "sha256": "1ccd1213643aa6333a68d530b2878ee58108b1b6f616df56cfb85ec68b28902c"
+    },
+    {
+      "after": {
+        "spirv_msl.cpp": "141f74fb93587c3b35613b2f3146afd25db461168a2f5f18a5e11b4dbd0eccab"
+      },
+      "before": {
+        "spirv_msl.cpp": "a705609da55ee4f5bc698c20bf6b433d92a0665d2b6526bd4b113185bdefc771"
+      },
+      "patch": "0043-tessellation-access-chain-bounds.patch",
+      "sha256": "b9aa05c886abec62a08910462b4e35ae73f0d5540f2bff8ae81f4b3c565da2ac"
     }
   ],
   "schemaVersion": 1
