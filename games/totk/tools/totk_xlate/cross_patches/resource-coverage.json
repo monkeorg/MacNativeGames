@@ -738,6 +738,13 @@
       "originalSourceLine": 17268
     }
   ],
+  "delegatedUnbracedSites": [
+    {
+      "originalInventoryAnchor": "spirv_cross.cpp:5103",
+      "patch": "0040-null-constant-helper-delegation.patch",
+      "reason": "Inactive protected Compiler null-constant duplicate now delegates to existing guarded ParsedIR::make_constant_null(id,type,true). Original raw array-fill loop removed, not instrumented or statically bounded; no new checkpoint credit and no current-bridge feature claim."
+    }
+  ],
   "explicitArithmetic": [
     "type-location vector-size narrowing, member-count addition and array-factor multiplication (caller location offsets and specialization evaluation excluded)",
     "MSL used-location spans and automatic builtin search advancement reserve the existing unknown-location sentinel (upstream caller offset arithmetic excluded)",
@@ -785,10 +792,18 @@
   "explicitOwnership": [
     "Parser direct raw-ID self-alias refusal before source lookup and Variant replacement for OpTypeArray/RuntimeArray/Pointer only; UntypedPointer and distinct-pointee forward resolution unchanged, not a global ID/redefinition validator"
   ],
-  "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 500,
+  "instrumentedBracedLoops": 356,
+  "instrumentedLoopCheckpoints": 499,
   "instrumentedOriginallyUnbracedLoops": 143,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
+  "removedBracedLoopCheckpoints": [
+    {
+      "file": "spirv_cross.cpp",
+      "originalSourceLine": 5112,
+      "patch": "0040-null-constant-helper-delegation.patch",
+      "reason": "Delegation removes the duplicate Compiler struct-member loop and its existing0001 checkpoint. Subtract one from current braced and total checkpoint counts; no new ParsedIR loop step added."
+    }
+  ],
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
     {
@@ -856,12 +871,11 @@
       "reason": "At most four iterations after checked patch0033: fill_composite_constant preflight rejects a selected non-array/non-Struct vector width>4 or fewer than width initializers before target mutation/fixed writes. The existing vector branch uses the same type.vecsize and no callback can change it before the loop. Matrix/array/Struct and caller validity remain separate; no checkpoint added."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 3,
+  "unbracedLoopsInputDependentOrUnprovenCount": 2,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:3676",
     "spirv_cross.cpp:3842",
     "spirv_cross.cpp:3848",
-    "spirv_cross.cpp:5103",
     "spirv_parser.cpp:1411",
     "spirv_glsl.cpp:792",
     "spirv_glsl.cpp:4953",
@@ -878,7 +892,7 @@
     "spirv_msl.cpp:9256",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 19,
+  "unbracedLoopsNotInstrumentedCount": 18,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",
