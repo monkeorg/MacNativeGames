@@ -70,6 +70,16 @@
       },
       "patch": "0005-function-query-depth.patch",
       "sha256": "2d8bb4f58bf20a628529e686f5dbd9541b6c18eef938e499d8f70cd1db5a8242"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "f30dd1e9f23dbf85ebf32e6623f80fbd02861bb90b32fd5ab9d37ea13142fae1"
+      },
+      "before": {
+        "spirv_cross.cpp": "276c771f15bc878ddade70c44d5531cf517656dc54501e13d1f25407d7f1126c"
+      },
+      "patch": "0006-phi-classification-loop-checkpoints.patch",
+      "sha256": "c862be9e25c2c3a11280ea60130edfd2dc69073dd326b4dc375ed9e3d579ab72"
     }
   ],
   "schemaVersion": 1
