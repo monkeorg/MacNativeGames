@@ -104,10 +104,23 @@ CPU-cluster and GPU-state tables contain no rows, and shader compilation metrics
 
 The added drawable-buffer preference selects two or three CAMetalLayer drawables before attachment. Three preserves the prior default. It does not alter the game's own swapchain or backend allocator counts. Changes during play are saved for the next app start. Extra drawables can permit overlap but also cost memory and latency; no measured speedup is claimed.
 
-The lower 20 and 24 FPS targets use the same real-time deadline cap as 30/40/60. Options remain conditional on the active display's maximum rate being divisible by the target. They do not enable interpolation or native frame rates above 60.
+The lower 20 and 24 FPS targets use the same real-time deadline cap as 30/40/60. Options remain conditional on the active display's maximum rate being divisible by the target. They do not enable interpolation. The subsequent experimental high-target revision is described below.
 
 The app no longer displays a thermal-state label. Diagnostic state remains available to existing logs; no numerical temperature is fabricated. Apple's supported [thermalState](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.property) reports a category rather than degrees.
 
 The editor picker now requires a supported progress file and a non-empty caption date. It excludes unsupported formats as well as empty slots and never deletes them. The current private audit found five real older-format slots and one supported slot; these are not six empty saves. The supported editor write contract remains unchanged.
 
 Verification for this revision: 372 repository tests passed, both iPhoneOS source profiles compiled (28 objects), and the full physical-iPad app build succeeded. Independent integration review found no actionable issue. A read-only copy of the device profile passed the production picker predicates for slot_05 only; slots_00–04 had populated captions but unsupported progress formats. No saves were modified. Installation and physical pacing/buffer/UI acceptance remain separate results. No resolution preference or default changed; the menu now recommends 900p or higher input for clearer text.
+
+
+## HUD configuration and experimental high targets
+
+Graphics → Apple Metal HUD now opens a configuration page within the existing bounded settings card. It selects 18 documented metrics, nine positions, scale, opacity, encoder timing, performance insights and metric ranges. Changes persist and update the layer dictionary live. Logging stays disabled; encoder timing, insights and ranges default off. Thermal categories are not offered. Individual metrics may remain unavailable on a particular device or workload. The page uses Apple's documented [developerHUDProperties configuration](https://developer.apple.com/documentation/xcode/customizing-metal-performance-hud).
+
+Experimental 90/120 targets are available when the active display maximum supports them. At 120 Hz, 90 FPS has unequal display cadence. High targets replace the guest interval's period only within the existing uncapped real-time path; original timing, explicit developer caps, interpolation and movie pacing retain their guards. No sustained 90/120 gameplay or correctness result is established. Defaults and the selected resolution remain unchanged.
+
+The resolution footer recommends 900p minimum input, with 960p+ for better clarity, and Native output. All lower-resolution choices remain available.
+
+Verification: 373 repository tests passed; both iPhoneOS profiles compiled, including the new HUD page (30 objects); the complete iPad app build succeeded. The first source-build invocation stopped before compilation because the new files were not yet in Git's index. After staging those files, the tracked-input build passed. Independent source review found no actionable issue. This is separate from physical UI and high-frame-rate acceptance.
+
+The reported purple right/bottom border remains unresolved. A host GPU test used the production spatial helper at 1280×960 → 2752×2064. Eleven flat RGB/HDR colors passed checks across the complete two-pixel perimeter. Source review found matching integer viewport dimensions and valid-texel-center sample clamps. These checks do not verify the iPad's actual source texture, content rectangle or final edge pixels. The existing paired source/drawable screenshot path is the next bounded diagnostic; no speculative crop or scaler patch was added.

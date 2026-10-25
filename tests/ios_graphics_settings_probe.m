@@ -40,7 +40,7 @@ int main(int argc,const char **argv) {
                 assert(!TOTKLauncherSpatialUpscaling(defaults));
                 assert(![defaults objectForKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"]);
             }
-            for (id invalid in @[@YES,@0,@29,@45,@120,@(-30),@30.5,@"40",@[],@{},@(NAN),@(INFINITY)]) {
+            for (id invalid in @[@YES,@0,@29,@45,@144,@(-30),@30.5,@"40",@[],@{},@(NAN),@(INFINITY)]) {
                 [defaults setObject:invalid forKey:@"TOTK_LAUNCHER_FPS_LIMIT"];
                 assert(TOTKLauncherFPSLimit(defaults)==60);
                 assert([defaults objectForKey:@"TOTK_LAUNCHER_FPS_LIMIT"]==nil);

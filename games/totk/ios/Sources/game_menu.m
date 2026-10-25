@@ -182,7 +182,7 @@
     for (unsigned i=0; i<3 && fps_overlay_hud_mode()!=wanted; i++) fps_overlay_toggle_hints();
     BOOL enabled = TOTKLauncherMetalHUD(defaults);
     [defaults setBool:enabled forKey:@"MetalHUDForceEnabled"];
-    [self applyMetalHUD:enabled toView:self.parentViewController.view];
+    [self applyMetalHUDProperties:TOTKLauncherMetalHUDProperties(defaults) toView:self.parentViewController.view];
     runtime_ios_set_shader_hud_visible([defaults boolForKey:@"TOTK_LAUNCHER_SHADER_HUD"]);
     runtime_ios_set_fps_limit((unsigned)TOTKLauncherFPSLimit(defaults));
     runtime_ios_set_taa_enabled(TOTKLauncherTAA(defaults));
@@ -192,11 +192,11 @@
         pad.userInteractionEnabled = NO;
     }
 }
-- (void)applyMetalHUD:(BOOL)enabled toView:(UIView *)view {
+- (void)applyMetalHUDProperties:(NSDictionary *)properties toView:(UIView *)view {
     if ([view.layer isKindOfClass:CAMetalLayer.class]) {
-        ((CAMetalLayer *)view.layer).developerHUDProperties = @{@"mode": enabled ? @"default" : @"disabled"};
+        ((CAMetalLayer *)view.layer).developerHUDProperties = properties;
     }
-    for (UIView *child in view.subviews) [self applyMetalHUD:enabled toView:child];
+    for (UIView *child in view.subviews) [self applyMetalHUDProperties:properties toView:child];
 }
 
 @end

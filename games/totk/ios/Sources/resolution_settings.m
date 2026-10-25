@@ -213,7 +213,7 @@
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
-    if (section == 1) return @"Use 900p or higher input for clearer text. Native output matches the iPad’s pixels.";
+    if (section == 1) return @"Recommended input: 900p minimum, 960p+ for better clarity. Use Native output.";
     if (section == 2) {
         TOTKGraphicsPlan plan;
         return [self graphicsPlan:&plan]

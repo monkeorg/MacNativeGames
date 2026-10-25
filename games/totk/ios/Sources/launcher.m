@@ -1,6 +1,7 @@
 #import "launcher.h"
 #import "launcher_settings.h"
 #import "resolution_settings.h"
+#import "metal_hud_settings.h"
 #import "menu_style.h"
 #import "settings_choices.h"
 #import "save_editor.h"
@@ -234,7 +235,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section == 0) return _inGame ? @"Adjust graphics and controls. The game stays active while this menu is open." : (_unavailable ?: @"Choose settings and manage saves before Play. Use the game menu to return to settings during play.");
-    if (section == 1) return _inGame ? @"Frame rate, anti-aliasing and HUDs apply live. Resolution and drawable buffers apply after restart." : @"Choose your picture size, performance target and overlays.";
+    if (section == 1) return _inGame ? @"Frame rate, anti-aliasing and HUDs apply live. Resolution and drawable buffers need an app restart. 90/120 FPS are experimental." : @"Choose your picture size, performance target and overlays. 90/120 FPS are experimental.";
     if (_inGame && section == 2) return @"Touch visibility and keyboard mappings apply live. Other control changes apply after an app restart.";
     if (_inGame && section == 3) return @"Save transfers, backups and restores are available before Play only. Reopen the app to manage saves safely.";
     if (_inGame && section == 4) return @"Language changes require an app restart.";
@@ -263,7 +264,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     if (path.section == 1) {
         if (path.row == 0) { cell.detailTextLabel.text = @"Configure"; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; }
         else if (path.row == 1) cell.detailTextLabel.text = @{@0:@"Off",@1:@"Full",@2:@"FPS only"}[@(TOTKLauncherHUD(d))];
-        else if (path.row == 2) cell.detailTextLabel.text = TOTKLauncherMetalHUD(d) ? @"On" : @"Off";
+        else if (path.row == 2) { cell.detailTextLabel.text = TOTKLauncherMetalHUD(d) ? @"On" : @"Off"; cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator; }
         else if (path.row == 3) {
             unsigned rate = _inGame ? runtime_ios_fps_limit() : (unsigned)TOTKLauncherFPSLimit(d);
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%u FPS%@",rate,runtime_ios_fps_limit_supported(rate) ? @"" : @" · unavailable"];
@@ -426,10 +427,14 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             if (self->_HUDChanged) self->_HUDChanged();
         }];
     } else if (path.section == 1 && path.row == 2) {
-        [self choose:@[@"On",@"Off"] path:path selected:^(NSUInteger i) {
-            [d setBool:i == 0 forKey:@"TOTK_LAUNCHER_METAL_HUD"];
-            if (self->_HUDChanged) self->_HUDChanged();
+        __weak TOTKLauncher *weakSelf = self;
+        TOTKMetalHUDSettings *settings = [[TOTKMetalHUDSettings alloc] initWithChanged:^{
+            TOTKLauncher *owner = weakSelf;
+            if (!owner) return;
+            if (owner->_HUDChanged) owner->_HUDChanged();
+            [owner.tableView reloadData];
         }];
+        [self.navigationController pushViewController:settings animated:YES];
     } else if (path.section == 1 && path.row == 3) {
         NSMutableArray<NSNumber *> *rates = [NSMutableArray array];
         NSMutableArray<NSString *> *titles = [NSMutableArray array];

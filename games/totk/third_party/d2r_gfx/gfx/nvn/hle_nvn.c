@@ -2751,7 +2751,7 @@ static uint64_t present_period(const win_t *o) {
     uint64_t period = m == MFX_30 || game_holds_30() ? 1000000000ull / 30
         : hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
 #if TARGET_OS_IPHONE
-    period = ios_fps_cap_period(period, runtime_ios_fps_period());
+    period = ios_fps_present_period(period, runtime_ios_fps_period(), uncapped_now() && !dm_detclock_enabled());
 #endif
     return period;
 }

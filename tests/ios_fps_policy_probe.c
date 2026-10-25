@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 int main(void) {
-    const unsigned rates[]={20,24,30,40,60};
+    const unsigned rates[]={20,24,30,40,60,90,120};
     for (unsigned i=0;i<sizeof(rates)/sizeof(*rates);i++) {
         unsigned fps=rates[i];
         assert(ios_fps_supported(fps,120,1,0));
@@ -22,6 +22,19 @@ int main(void) {
         }
         now+=period*3;assert(!nvn_pace(&pacer,now,period));assert(pacer.target==now);
     }
+    for (unsigned fps=90;fps<=120;fps+=30) {
+        uint64_t cap=1000000000ull/fps;
+        /* The production high-cap branch must bypass a guest interval=2 at 120 Hz. */
+        assert(ios_fps_present_period(2*1000000000ull/120,cap,1)==cap);
+        assert(ios_fps_present_period(1000000000ull/30,cap,0)==1000000000ull/30);
+        assert(!ios_fps_supported(fps,60,1,0));
+        assert(ios_fps_effective(fps,60)==60);
+        assert(ios_fps_effective(fps,120)==fps);
+    }
+    assert(ios_fps_supported(90,90,1,0));assert(!ios_fps_supported(120,90,1,0));
+    assert(ios_fps_present_period(1000000000ull/30,1000000000ull/60,1)==1000000000ull/30);
+    assert(ios_fps_present_period(1000000000ull/30,1000000000ull/20,1)==1000000000ull/20);
+    assert(ios_fps_present_period(123,0,1)==123);
     assert(ios_fps_supported(20,60,1,0));assert(!ios_fps_supported(24,60,1,0));
     assert(ios_fps_effective(24,120)==24);assert(ios_fps_effective(24,60)==60);
     assert(ios_fps_effective(20,60)==20);assert(ios_fps_effective(30,0)==60);

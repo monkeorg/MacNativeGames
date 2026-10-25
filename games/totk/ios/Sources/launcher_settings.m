@@ -26,7 +26,73 @@ BOOL TOTKLauncherMetalHUD(NSUserDefaults *defaults) {
     if ([value isKindOfClass:NSNumber.class] && [@[@0,@1] containsObject:value]) return [value boolValue];
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_METAL_HUD"]; return NO;
 }
-NSArray<NSNumber *> *TOTKLauncherFPSLimits(void) { return @[@20,@24,@30,@40,@60]; }
+NSArray<NSString *> *TOTKLauncherMetalHUDMetricOptions(void) {
+    return @[@"fps",@"frameinterval",@"gputime",@"metalcpu",@"memory",@"device",@"layersize",@"layerscale",
+        @"fpsgraph",@"frameintervalgraph",@"frameintervalhistogram",@"presentdelay",@"gputimeline",@"shaders",
+        @"framenumber",@"disk",@"toplabeledcommandbuffers",@"toplabeledencoders"];
+}
+NSArray<NSString *> *TOTKLauncherMetalHUDMetrics(NSUserDefaults *defaults) {
+    NSString *key = @"TOTK_LAUNCHER_METAL_HUD_METRICS";
+    id value = [defaults objectForKey:key];
+    if ([value isKindOfClass:NSArray.class] && [value count] > 0) {
+        NSMutableArray *selected = [NSMutableArray array];
+        BOOL valid = YES;
+        for (id metric in value) {
+            if (![metric isKindOfClass:NSString.class] || ![TOTKLauncherMetalHUDMetricOptions() containsObject:metric] ||
+                [selected containsObject:metric]) { valid = NO; break; }
+            [selected addObject:metric];
+        }
+        if (valid) return selected;
+    }
+    [defaults removeObjectForKey:key];
+    return @[@"fps",@"frameinterval",@"gputime",@"memory",@"layersize",@"frameintervalgraph"];
+}
+NSArray<NSString *> *TOTKLauncherMetalHUDAlignments(void) {
+    return @[@"topleft",@"topcenter",@"topright",@"centerleft",@"centered",@"centerright",
+        @"bottomleft",@"bottomcenter",@"bottomright"];
+}
+NSString *TOTKLauncherMetalHUDAlignment(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_METAL_HUD_ALIGNMENT"];
+    if ([value isKindOfClass:NSString.class] && [TOTKLauncherMetalHUDAlignments() containsObject:value]) return value;
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_METAL_HUD_ALIGNMENT"]; return @"topright";
+}
+static double launcher_metal_hud_fraction(NSUserDefaults *defaults, NSString *key, double fallback) {
+    id value = [defaults objectForKey:key];
+    if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        isfinite([value doubleValue]) && [value doubleValue] >= 0 && [value doubleValue] <= 1) return [value doubleValue];
+    [defaults removeObjectForKey:key]; return fallback;
+}
+double TOTKLauncherMetalHUDScale(NSUserDefaults *defaults) {
+    return launcher_metal_hud_fraction(defaults,@"TOTK_LAUNCHER_METAL_HUD_SCALE",0.2);
+}
+double TOTKLauncherMetalHUDOpacity(NSUserDefaults *defaults) {
+    return launcher_metal_hud_fraction(defaults,@"TOTK_LAUNCHER_METAL_HUD_OPACITY",1.0);
+}
+static BOOL launcher_metal_hud_flag(NSUserDefaults *defaults, NSString *key) {
+    id value = [defaults objectForKey:key];
+    if ([value isKindOfClass:NSNumber.class] && [@[@0,@1] containsObject:value]) return [value boolValue];
+    [defaults removeObjectForKey:key]; return NO;
+}
+BOOL TOTKLauncherMetalHUDEncoderTiming(NSUserDefaults *defaults) {
+    return launcher_metal_hud_flag(defaults,@"TOTK_LAUNCHER_METAL_HUD_ENCODER_TIMING");
+}
+BOOL TOTKLauncherMetalHUDInsights(NSUserDefaults *defaults) {
+    return launcher_metal_hud_flag(defaults,@"TOTK_LAUNCHER_METAL_HUD_INSIGHTS");
+}
+BOOL TOTKLauncherMetalHUDRange(NSUserDefaults *defaults) {
+    return launcher_metal_hud_flag(defaults,@"TOTK_LAUNCHER_METAL_HUD_RANGE");
+}
+NSDictionary<NSString *, id> *TOTKLauncherMetalHUDProperties(NSUserDefaults *defaults) {
+    return @{@"mode":TOTKLauncherMetalHUD(defaults) ? @"default" : @"disabled", @"logging":@"disabled",
+        @"MTL_HUD_ELEMENTS":[TOTKLauncherMetalHUDMetrics(defaults) componentsJoinedByString:@","],
+        @"MTL_HUD_ALIGNMENT":TOTKLauncherMetalHUDAlignment(defaults),
+        @"MTL_HUD_SCALE":@(TOTKLauncherMetalHUDScale(defaults)),
+        @"MTL_HUD_OPACITY":@(TOTKLauncherMetalHUDOpacity(defaults)),
+        @"MTL_HUD_ENCODER_TIMING_ENABLED":@(TOTKLauncherMetalHUDEncoderTiming(defaults)),
+        @"MTL_HUD_INSIGHTS_ENABLED":@(TOTKLauncherMetalHUDInsights(defaults)),
+        @"MTL_HUD_SHOW_METRICS_RANGE":@(TOTKLauncherMetalHUDRange(defaults))};
+}
+NSArray<NSNumber *> *TOTKLauncherFPSLimits(void) { return @[@20,@24,@30,@40,@60,@90,@120]; }
 NSInteger TOTKLauncherDrawableCount(NSUserDefaults *defaults) {
     id value = [defaults objectForKey:@"TOTK_LAUNCHER_DRAWABLE_COUNT"];
     if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
