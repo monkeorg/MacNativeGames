@@ -173,6 +173,11 @@ static CanopySessionController *ConsumedNativeSession;
         CAMetalLayer *layer = (CAMetalLayer *)self.view.layer;
         layer.contentsScale = self.view.window.screen.scale ?: UIScreen.mainScreen.scale;
         layer.drawableSize = CGSizeMake(self.view.bounds.size.width * layer.contentsScale,self.view.bounds.size.height * layer.contentsScale);
+    } else {
+        NSDictionary *layout=[_runtime updatePresentationLayout];
+        if(![layout[@"state"] isEqual:@"applied"]) {
+            (void)[_overlay open];[_overlay showStatus:layout[@"message"]];
+        }
     }
 }
 - (void)viewDidAppear:(BOOL)animated {

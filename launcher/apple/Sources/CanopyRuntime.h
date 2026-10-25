@@ -34,6 +34,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// native graphics/focus. This is not a promise that guest CPU execution paused.
 - (BOOL)captureInput:(NSError **)error;
 - (BOOL)restoreInput:(NSError **)error;
+/// Revalidate current oriented bounds and resize presentation only. Outcome
+/// state applied/restartRequired/rejected; incompatible layouts capture input.
+/// Returning to compatible bounds never restores focus automatically.
+- (NSDictionary<NSString *, id> *)updatePresentationLayout;
 /// Existing TOTK accepts one native pad; additional connected players refuse.
 - (BOOL)submitInput:(const struct mng_session_input *)input error:(NSError **)error;
 /// Host owns its display/render loop. Tick never manufactures frame evidence.

@@ -38,4 +38,12 @@ int mng_display_resolve(const struct mng_display_profile *,uint32_t requested_he
     uint32_t requested_aspect,double view_width,double view_height,struct mng_display_resolution *);
 /* Validate a resolved config against actual view + compiled capability. */
 int mng_display_check(const struct mng_display_profile *,const struct mng_display_config *,double view_width,double view_height);
+/* Presentation only: validates the immutable config at startup bounds. Retains
+ * the actual attached drawable width; never changes scene/projection or density.
+ * Returns 0 compatible, 1 restart required (full4:3 at another oriented ratio),
+ * -1 invalid/unrepresentable. Nonzero leaves output untouched. */
+struct mng_display_presentation {uint32_t width,height;};
+int mng_display_presentation(const struct mng_display_profile *,const struct mng_display_config *,
+    double startup_width,double startup_height,double current_width,double current_height,
+    double drawable_width,struct mng_display_presentation *);
 #endif

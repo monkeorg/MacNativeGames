@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 static void Check(BOOL value,const char *message) {if(!value){fprintf(stderr,"FAIL: %s\n",message);exit(1);}}
 @interface FixtureGameView : NSObject
 @property(nonatomic) CGRect bounds;
@@ -65,6 +66,9 @@ static int start(const struct canopy_totk_start *s) {
     struct mng_display_profile profile={MNG_DISPLAY_ABI,sizeof(profile),displayFlags};
     Check(!mng_display_check(&profile,&s->display,gameBounds.size.width,gameBounds.size.height),"actual native display config binding");
     selectedDisplay=s->display;displayValidation=MNG_DISPLAY_PENDING;
+    // Fixture host attaches a real Metal layer, without claiming a rendered frame.
+    CAMetalLayer *attached=(__bridge CAMetalLayer *)s->metal_layer;
+    attached.drawableSize=CGSizeMake(s->display.width,round(s->display.width*gameBounds.size.height/gameBounds.size.width));
     shaderLeasePath=[[@(s->shader_cache) stringByDeletingLastPathComponent] stringByAppendingPathComponent:@".lease"];
     mainLifecycle=(struct canopy_totk_lifecycle_state){CANOPY_TOTK_LIFECYCLE_ABI,sizeof(mainLifecycle),CANOPY_TOTK_MAIN_RUNNING,0,0,0,2,0,0,0,0};
     if(!strcmp(mode,"lifecycle-start-ended")) {
@@ -230,6 +234,18 @@ int main(int argc,char **argv) {
                     if(!strcmp(mode,"display-unknown-aspect"))Check([runtime.settingStates[@"aspect"][@"state"] isEqual:@"unsupported"] && selectedDisplay.aspect==MNG_DISPLAY_16_9,"unknown aspect explicit fallback");
                     if(!strcmp(mode,"display-full-fallback"))Check([runtime.settingStates[@"aspect"][@"state"] isEqual:@"unsupported"] && selectedDisplay.width==1920 && selectedDisplay.aspect==MNG_DISPLAY_16_9,"non4:3 full aspect explicit fallback");
                     if(!strcmp(mode,"display-stock-fallback"))Check([runtime.settingStates[@"renderHeight"][@"state"] isEqual:@"unsupported"] && [runtime.settingStates[@"aspect"][@"state"] isEqual:@"unsupported"] && selectedDisplay.height==720 && !selectedDisplay.fixed_resolution,"stock explicit fallback and dynamic scene distinction");
+                    if(!strcmp(mode,"display-full") || !strcmp(mode,"display-1080")) {
+                        Check([runtime restoreInput:&error] && focus,"compatible startup explicit resume");
+                        gameView.bounds=CGRectMake(0,0,768,1024);
+                        NSDictionary *layout=[runtime updatePresentationLayout];
+                        if(selectedDisplay.aspect==MNG_DISPLAY_FULL) {
+                            Check([layout[@"state"] isEqual:@"restartRequired"] && !focus,"incompatible full layout captures actual native input");
+                            Check(![runtime restoreInput:&error] && !focus,"incompatible restore denied");
+                            gameView.bounds=gameBounds;
+                            Check([[runtime updatePresentationLayout][@"state"] isEqual:@"applied"] && !focus,"compatible return never restores focus");
+                            Check([runtime restoreInput:&error] && focus,"explicit resume after compatible return");
+                        }else Check([layout[@"state"] isEqual:@"applied"] && layer.drawableSize.width==1920 && layer.drawableSize.height==2560,"actual presentation-only layer resize");
+                    }
                     if(!strcmp(mode,"display-live")) {
                         NSDictionary *outcomes=[runtime applyDesiredSettings:@{@"renderHeight":@1080,@"aspect":@"display"}];
                         Check([outcomes[@"renderHeight"][@"state"] isEqual:@"restartRequired"] && [outcomes[@"aspect"][@"state"] isEqual:@"restartRequired"],"live display target needs new process");

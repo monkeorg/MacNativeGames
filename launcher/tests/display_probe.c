@@ -27,10 +27,30 @@ static void tamper(void){
     for(unsigned i=0;i<sizeof(fields)/sizeof(*fields);i++){r.config=original;(*fields[i])++;check(mng_display_check(&p,&r.config,1024,768));}
     check(mng_display_check(&p,&original,1194,834));check(mng_display_check(NULL,&original,1024,768));check(mng_display_check(&p,NULL,1024,768));
 }
+static void presentation(const char *mode){
+    struct mng_display_profile p=profile(3);struct mng_display_resolution r=resolve(3,1080,0,1024,768);
+    struct mng_display_presentation sentinel={17,19},out=sentinel;
+    if(!strcmp(mode,"layout-wide")){
+        check(!mng_display_presentation(&p,&r.config,1024,768,768,1024,1920,&out));check(out.width==1920&&out.height==2560);
+        check(!mng_display_presentation(&p,&r.config,1024,768,2048,1536,1920,&out));check(out.height==1440);
+    }else if(!strcmp(mode,"layout-stock")){
+        p=profile(0);r=resolve(0,720,0,1024,768);
+        check(!mng_display_presentation(&p,&r.config,1024,768,2436,1125,1000,&out));check(out.width==1000&&out.height==462);
+    }else if(!strcmp(mode,"layout-full")){
+        r=resolve(3,1080,1,1024,768);
+        const double bad[][2]={{768,1024},{1024,768.01},{1194,834}};
+        for(unsigned i=0;i<3;i++){check(mng_display_presentation(&p,&r.config,1024,768,bad[i][0],bad[i][1],1440,&out)==1);check(!memcmp(&out,&sentinel,sizeof(out)));}
+        check(!mng_display_presentation(&p,&r.config,1024,768,2048,1536,1440,&out));check(out.width==1440&&out.height==1080);
+    }else{
+        const double bad[][3]={{NAN,768,1920},{1024,0,1920},{1,32768,1920},{32769,768,1920},{1024,768,0},{1024,768,1920.5},{1024,768,INFINITY},{32768,1,1}};
+        for(unsigned i=0;i<8;i++){check(mng_display_presentation(&p,&r.config,1024,768,bad[i][0],bad[i][1],bad[i][2],&out)==-1);check(!memcmp(&out,&sentinel,sizeof(out)));}
+        r.config.width++;check(mng_display_presentation(&p,&r.config,1024,768,1024,768,1920,&out)==-1);check(!memcmp(&out,&sentinel,sizeof(out)));
+    }
+}
 int main(int argc,char **argv){
     if(argc!=2)return 2;
     const char *mode=argv[1];
-    if(!strcmp(mode,"stock")){
+    if(!strncmp(mode,"layout-",7))presentation(mode);else if(!strcmp(mode,"stock")){
         struct mng_display_resolution r=resolve(0,720,0,1024,768);
         check(r.config.width==1280&&r.config.height==720&&!r.config.fixed_resolution&&!r.config.experimental&&!r.height_outcome&&!r.aspect_outcome);
     }else if(!strcmp(mode,"stock-fallback")){

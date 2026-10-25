@@ -347,6 +347,8 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     uint64_t _sequence,_timestamp,_deviceID;
     struct mng_display_config _displayConfig;
     CGSize _displayViewSize;
+    double _presentationWidth;
+    NSDictionary *_presentationOutcome;
     id _displayHostView,_graphicsSurface;
     id<MTLDevice> _graphicsDevice;
     NSDictionary *_displayDesired;
@@ -540,7 +542,10 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
             if(![validation isEqual:@"pending"] && ![validation isEqual:@"patchesValidated"]) {
                 [self captureFailedWorker];completion(NO,CRError(5,@"Native startup did not acknowledge its display configuration; safe teardown is unavailable."));return;
             }
-            self->_state=@"inputCaptured";[self applyDesiredSettings:desired];
+            self->_state=@"inputCaptured";
+            self->_presentationWidth=metalLayer.drawableSize.width;
+            (void)[self updatePresentationLayout];
+            [self applyDesiredSettings:desired];
             if([self->_state isEqual:@"failed"]) {completion(NO,CRError(5,@"The native main worker ended before startup completed; session protections remain owned."));return;}
             completion(YES,nil);
         });
@@ -575,6 +580,29 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         _displayViewSize.width,_displayViewSize.height))return @"unavailable";
     return state.validation==MNG_DISPLAY_PATCHES_VALIDATED?@"patchesValidated":@"pending";
 }
+- (NSDictionary *)updatePresentationLayout {
+    NSAssert(NSThread.isMainThread,@"Presentation layout belongs on main thread");
+    CGSize size;struct mng_display_presentation presentation={0};
+    int result=-1;
+    if(_host && _nativeEntryInvoked && _presentationWidth && CRViewSize(_displayHostView,&size))
+        result=mng_display_presentation(&_host->display.profile,&_displayConfig,_displayViewSize.width,_displayViewSize.height,
+            size.width,size.height,_presentationWidth,&presentation);
+    NSString *state=result==0?@"applied":result==1?@"restartRequired":@"rejected";
+    NSString *message=result==0?@"Presentation matches the current window. The startup scene/projection target is unchanged; no rendered-frame claim.":
+        result==1?@"The current window is incompatible with the startup 4:3 projection. Input is captured; guest CPU execution may continue. Return to a 4:3 window and explicitly Resume, or close the app and restart with 16:9.":
+        @"Current presentation bounds are invalid or exceed supported dimensions. Input is captured; return to a supported window before explicitly resuming.";
+    if(result==0) {
+        CAMetalLayer *layer=(CAMetalLayer *)_graphicsSurface;
+        CGSize target=CGSizeMake(presentation.width,presentation.height);
+        if(!CGSizeEqualToSize(layer.drawableSize,target))layer.drawableSize=target;
+    } else if([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]) {
+        _host->clear_input();_host->set_focus(0);_state=@"inputCaptured";
+    }
+    _presentationOutcome=@{@"state":state,@"message":message};
+    NSMutableDictionary *states=[_settingStates mutableCopy];
+    for(NSString *key in @[@"renderHeight",@"aspect"])if(_displayDesired[key])states[key]=[self displayOutcomeForKey:key value:_displayDesired[key]];
+    _settingStates=[states copy];return _presentationOutcome;
+}
 - (NSDictionary *)displayOutcomeForKey:(NSString *)key value:(id)value {
     BOOL height=[key isEqual:@"renderHeight"];id effective=height?@(_displayConfig.height):(_displayConfig.aspect==MNG_DISPLAY_FULL?@"4:3":@"16:9");
     NSString *validation=[self displayValidation];CGSize size;struct mng_display_resolution desired={0};
@@ -583,6 +611,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     uint32_t unsupported=height?desired.height_outcome:desired.aspect_outcome;
     BOOL changed=height?desired.config.height!=_displayConfig.height:desired.config.aspect!=_displayConfig.aspect;
     NSString *state=unsupported==MNG_DISPLAY_UNSUPPORTED?@"unsupported":changed?@"restartRequired":@"applied";
+    if(_presentationOutcome && ![_presentationOutcome[@"state"] isEqual:@"applied"])state=_presentationOutcome[@"state"];
     if([validation isEqual:@"unavailable"] || [validation isEqual:@"notConfigured"])state=@"rejected";
     NSString *proof=[validation isEqual:@"patchesValidated"]?@"The native loader completed its checked patch path; no rendered-frame claim.":
         [validation isEqual:@"pending"]?@"Native checked patches are pending; this is configuration only.":@"The native host has not acknowledged a matching display configuration.";
@@ -592,6 +621,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         !_displayConfig.fixed_resolution?@" The stock scene may dynamically scale below the selected 720 target.":@"";
     NSMutableDictionary *outcome=[CROutcome(state,value,effective,[NSString stringWithFormat:@"%@Selected scene/canvas target %ux%u. %@%@",timing,
         _displayConfig.width,_displayConfig.height,proof,detail]) mutableCopy];
+    if(_presentationOutcome) {outcome[@"presentationLayout"]=_presentationOutcome[@"state"];outcome[@"message"]=[outcome[@"message"] stringByAppendingFormat:@" %@",_presentationOutcome[@"message"]];}
     outcome[@"validation"]=validation;outcome[@"experimental"]=_displayConfig.experimental?@YES:@NO;return outcome;
 }
 - (NSDictionary *)applyDesiredSettings:(NSDictionary *)settings {
@@ -636,12 +666,14 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 - (BOOL)restoreInput:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Runtime input belongs on main thread");
     if(_nativeEntryInvoked && ![self observeMainWorker:error])return NO;
+    if(![[self updatePresentationLayout][@"state"] isEqual:@"applied"]) {if(error)*error=CRError(4,_presentationOutcome[@"message"]);return NO;}
     if(![_state isEqual:@"inputCaptured"]){if(error)*error=CRError(3,@"Native input was not captured.");return NO;}
     _host->clear_input();_host->set_focus(1);_state=@"active";return YES;
 }
 - (BOOL)submitInput:(const struct mng_session_input *)input error:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Runtime input belongs on main thread");
     if(_nativeEntryInvoked && ![self observeMainWorker:error])return NO;
+    if(![[self updatePresentationLayout][@"state"] isEqual:@"applied"]) {if(error)*error=CRError(4,_presentationOutcome[@"message"]);return NO;}
     struct timespec time={0};clock_gettime(CLOCK_MONOTONIC,&time);
     uint64_t now=(uint64_t)time.tv_sec*UINT64_C(1000000000)+(uint64_t)time.tv_nsec;
     BOOL valid=input && [_state isEqual:@"active"] && input->sequence && input->sequence>_sequence && input->timestamp_ns &&
@@ -665,9 +697,11 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
     if([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]) {
         if(![self observeMainWorker:error])return NO;
+        NSDictionary *layout=[self updatePresentationLayout];
         NSMutableDictionary *states=[_settingStates mutableCopy];
         for(NSString *key in @[@"renderHeight",@"aspect"])if(_displayDesired[key])states[key]=[self displayOutcomeForKey:key value:_displayDesired[key]];
         _settingStates=[states copy];
+        if(![layout[@"state"] isEqual:@"applied"]) {if(error)*error=CRError(4,layout[@"message"]);return NO;}
         if(![@[@"pending",@"patchesValidated"] containsObject:[self displayValidation]]) {if(error)*error=CRError(4,@"The native host returned an invalid display state.");return NO;}
         return YES;
     }
