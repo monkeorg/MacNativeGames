@@ -1,9 +1,13 @@
 # Canopy executable development backlog
 
-Live cursor after the app snapshot below: source drafts #102–#109/#111 add reviewed
-compiler controls (436 checkpoints,79 formerly unbraced,83 raw=10 fixed+73 pending).
+Live cursor after the app snapshot below: source compiler drafts through #121 add
+reviewed controls (457 checkpoints,100 formerly unbraced,62 raw=12 fixed+50 pending).
 #110 / `73bb8db` corrects the settings-first friendly-title fallback without
-metadata writes. All are source-only, unbuilt/untested, runtime translator off.
+metadata writes; #119 / `b136283` follows the same policy in the session title.
+#120 / `6c06d9a` and #122 / `2c3f23e` correct storage/save UI intent lifetimes
+across background/scene/navigation; accepted backend work and Files data retained
+until authoritative completion. Two independent lifecycle source reviews, no runs.
+All are source-only, unbuilt/untested, runtime translator off.
 See state.md for current author/reviewer ownership and the next bounded slice;
 historical checklist/counts below are not latest-head validation. Goal ACTIVE.
 

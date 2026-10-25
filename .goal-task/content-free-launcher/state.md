@@ -2,8 +2,8 @@
 
 ## Live source cursor after the published #101 handoff
 
-Current branch `feat/canopy-shader-traversal-work`, HEAD
-`c6f15028d73a8e0ca1e1ef287ab4b58f64264704` (#111). Inspect actual log/status.
+Current branch `feat/canopy-save-ui-intents`, HEAD
+`2c3f23e54c264cdda0cd78c1714e8c8b33b309e0` (#122). Inspect actual log/status.
 The visual Mac/iPad handoff is published in #101, branch
 `feat/canopy-cloud-handoff`, head `3cec301a6dc32da136e7c86f3038d92fb2a54607`.
 That snapshot covers app source through #100 and remains a valid local starting
@@ -34,24 +34,56 @@ Reviewed dependent compiler source drafts after #101:
 
 - #111 `c6f15028d73a8e0ca1e1ef287ab4b58f64264704`: patch0013, seven already
   depth-controlled wrapper loops;436/79/raw83=10 fixed+73 pending.
+- #112 `9c3654883cca18d7af8a50f234bb0b271581412d`: independently reviewed
+  visual progress/checklist/recovery refresh, app snapshot100 still explicit.
+- #113 `c099c0e28b68e2f2bed5b9214fe1e32ec884fea5`: patch0014, MSL occupied
+  location spans/search increments reserve existing unknown sentinel; counts unchanged.
+- #114 `4c658773d21b87f4dae559c67d4771fe3448d31e`: patch0015, four ordinary
+  flag/capability loops plus source-proven zero-iteration MSL4265 classification;
+  440/83/raw79=11 fixed+68 pending. No checkpoint credited for classification.
+- #115 `d7aec412e831a748f9d0c38bab0cb77e720df0dc`: patch0016, eight checked
+  caller interface offsets/cursor advances; conservative sentinel exhaustion refusal.
+- #116 `775594bdcd85800b8753527a818f9388e42832c4`: patch0017, actual recursive
+  composite-member entry depth guard; compiler-owned fixups discarded on failure.
+- #117 `41420059da1375b2d5294e172b14c77d1f903d71`: patch0018, eight normal
+  IR-collection loops;448/91/raw71=11 fixed+60 pending; underlying growth still gated.
+- #118 `073eff616f6b50494ec7e02cf86482c22081f85d`: patch0019, two packing/
+  workgroup entry depth guards; original visited/parent order retained.
+- #119 `b1362838022e1e2aeeef82d311e6096ce6462f2d`: session display name resolves
+  current settings/registry fallback without changing runtime entry. Product author,
+  independent root source review; unbuilt/untested.
+- #120 `6c06d9a010e87c91eac831eb580d52e5dbb04926`: StorageController UI intent
+  scene/epoch/foreground/top-owner/exact-modal checks, exact-sheet resume dismissal.
+  Storage author; root/artifact independent source reviews of exact final code.
+- #121 `5a95607a23360c8618aa1dd020d9469f039b260d`: patch0020, nine text/output
+  loops and one literal-array[2] classification;457/100/raw62=12 fixed+50 pending.
+- #122 `2c3f23e54c264cdda0cd78c1714e8c8b33b309e0`: SaveController queued export/
+  picker/confirmation intent expires across scene/background/navigation; accepted
+  Files export retains data until exact terminal picker. Runtime author; root/
+  artifact source reviews including exact-owned full-screen picker window fallback.
+  Underlying store/seals/backup/account/recovery unchanged; unbuilt/untested.
 
-Compiler drafts #102–#109 and #111 have two independent source reviews (root plus non-author reviewer), checked
+Compiler drafts #102–#109/#111/#113–#118/#121 have two independent source reviews (root plus non-author reviewer), checked
 patch/before/after SHA provenance, vendor untouched, source generation only.
 NO new tests/probes/compiler runs or new tests; `[skip ci]`. Runtime translator
 stays off; no malformed-SPIRV, heap-isolation, parity, FPS or hardware proof.
 
-Active ownership: native exclusively authors patch0014 and input-sha256/
-coverage/shader-doc changes for three MSL location-span/search methods;
-execution/root review next; no loop-count changes. Execution assesses further
-normal per-request loops read-only. Other caller location offsets and specialization evaluation
+Active ownership: native exclusively authors patch0021 and input-sha256/
+coverage/shader-doc changes for actual evaluate_spec_constant_u32 depth, exact
+supported-opcode arity, bounded shifts/unsigned negate and int64 signed semantics.
+Preserve lazy Select/intentional uint32 wraps; refuse signed min/-1 division.
+Execution/root review next; no loop-count changes. Execution has proposed next
+eight ordinary expression-dependency/invalidation loops (457→465,raw62→54,
+pending50→42), read-only until0021 committed and root grant. Other evaluator
 and other recursion/ownership remain separate gates. Product's supported app
 flow reassessment found the name defect now committed110; no other new source
 defect demonstrated in that pass. App acceptance still remains open.
 No concurrent metadata edits. Root owns this live cursor, visual-doc addenda,
 integration, PRs/issues and attachments. Other workers use followup_task.
 
-Attachment attempts88–107 and109–110 returned connection closed. Attempt108
-is in772 (may need wait);111 still needs attempt. No attachment success is
+Attachment attempts88–110 and116–119 returned connection closed. Attempts111–115
+are in functions cells800/807/810/816/826;120–122 in859 (may need wait).
+No attachment success is
 established. Source/source-review milestones do not replace exact CI:
 #77 green524/517/7 and940/931/9; later#85 red971/961/9/1, #99 fix UNRUN.
 
