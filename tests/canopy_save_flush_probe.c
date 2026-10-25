@@ -21,9 +21,31 @@
 #define F_FULLFSYNC 0x7f55
 #endif
 static int probe_fcntl(int,int,...);
+#if defined(PROBE_ORIGINAL_IOS)
+/* Select the real production iOS conditional on the host C runtime. This is
+ * not an iPhoneOS SDK build or evidence of device storage durability. */
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+#undef TARGET_OS_IPHONE
+#define TARGET_OS_IPHONE 1
+#if defined(CANOPY_HOST_RUNTIME)
+#error Original-iOS fixture must not use the Canopy selector
+#endif
+#endif
 #define fcntl probe_fcntl
 #include "FS_HOST_SOURCE"
 #undef fcntl
+#if defined(CANOPY_HOST_RUNTIME)
+_Static_assert(TOTK_SAFE_SAVE_FLUSH, "Canopy must select protected save lifetimes");
+#define PROBE_SAVE_MODE "canopy"
+#elif defined(PROBE_ORIGINAL_IOS)
+_Static_assert(TOTK_SAFE_SAVE_FLUSH, "Original iOS must select protected save lifetimes");
+#define PROBE_SAVE_MODE "original-ios"
+#else
+_Static_assert(!TOTK_SAFE_SAVE_FLUSH, "Standalone Mac must retain its existing branch");
+#define PROBE_SAVE_MODE "standalone"
+#endif
 static int fail_flush,sync_count,barrier,entered,released,observed_fd;
 static struct stat observed_before,observed_after;
 static pthread_mutex_t test_lock=PTHREAD_MUTEX_INITIALIZER;
@@ -58,7 +80,7 @@ unsigned runtime_romfs_size(int64_t *o,uint64_t h){(void)o;(void)h;return 1;}
 void runtime_romfs_close(uint64_t h){(void)h;}
 unsigned runtime_romfs_entry_type(int *o,const char *p){(void)o;(void)p;return 1;}
 static void check(int yes,const char *message){if(!yes){fprintf(stderr,"FAIL:%s\n",message);exit(4);}}
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
 static uint64_t handle;
 static unsigned committed,written_result;
 static _Atomic int attempted,finished;
@@ -121,7 +143,7 @@ int main(int argc,char **argv) {
     check(!mount_add("save",M_SAVE,argv[2]),"mount");
     check(!create_file("save:/save.bin",4),"create");
     check(!commit("save"),"initial commit");sync_count=0;
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     if(!strcmp(argv[1],"namespace"))namespace_moves(argv[2]);
     else if(!strcmp(argv[1],"close-race"))concurrent(0,argv[2]);
     else if(!strcmp(argv[1],"write-race"))concurrent(1,argv[2]);
@@ -161,5 +183,5 @@ int main(int argc,char **argv) {
     close_file(h);atomic_store(&save_changed_ns,0);
     check(!runtime_fs_save_busy(),"standalone age heuristic changed");
 #endif
-    puts("{\"status\":\"pass\",\"scope\":\"actual source, private synthetic files; no teardown/durability ACK\"}");return 0;
+    printf("{\"status\":\"pass\",\"mode\":\"%s\",\"scope\":\"actual source, private synthetic files; no teardown/durability ACK\"}\n",PROBE_SAVE_MODE);return 0;
 }
