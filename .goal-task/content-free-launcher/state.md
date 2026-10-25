@@ -1,13 +1,19 @@
-# Canopy cloud development — active recovery entrypoint
+# Canopy cloud source handoff — acceptance gates open
 
 ## Live source cursor after the published #101 handoff
 
-Current branch `feat/canopy-shader-parser-alias-bounds`, HEAD
-`2468ba0da7c36ae828d0a598f7a18588238d81f5` (#133). Inspect actual log/status.
-The visual Mac/iPad handoff is published in #101, branch
+Reviewed source point: `feat/canopy-shader-specialization-composite-bounds`,
+`6f166e738a4748dde8e0a844a3b1acc327c3ddd5` (#150). Documentation-only
+successors may be newer; inspect actual log/status. New source is unbuilt and
+untested. This finite cloud-source pass is handed off; overall product acceptance
+remains OPEN. No hardware/format/runtime gate is closed by source review.
+
+The original visual Mac/iPad handoff was published in #101, branch
 `feat/canopy-cloud-handoff`, head `3cec301a6dc32da136e7c86f3038d92fb2a54607`.
 That snapshot covers app source through #100 and remains a valid local starting
-point. The authorized cloud source goal continues; no hardware/format gate closed.
+point for that historical app snapshot. Later source and ordered local steps are
+recorded in docs/canopy-progress.md and docs/canopy-mac-ipad-checklist.md. The old
+.goal-task/totk-cloud/state.md path now redirects here.
 
 Reviewed dependent compiler source drafts after #101:
 
@@ -92,23 +98,76 @@ Reviewed dependent compiler source drafts after #101:
   precharge/replacement. Untyped short-circuit and distinct-pointee forward pointer
   resolution retained. Vector initial copy happens before old-holder destruction,
   not the same lifetime bug; no global ID/cycle validator claim. Counts unchanged.
+- #134 `3ab37a073f3e1080fc7e9657e1b8b5fd8ac8b961`: reviewed visual/local/
+  recovery refresh through133, no new execution or completion claim.
+- #135 `84b96489191d8593bac6c643d87387c58d877fa1`: patch0031, eight normal
+  analysis/emission wrappers;493/136/raw26=13 fixed+13 pending.
+- #136 `e0696d1510f1d01f4495e73f9cd0cf0321f050f0`: patch0032, actual recursive
+  member-decoration query entry depth guard; metadata/type-index assumption retained.
+- #137 `bc4f135c0fa5aed780009aa799f2c6c674cd45cb`: patch0033, selected fixed[4]
+  matrix/vector fill shape and MIN initializer availability before writes; arrays/
+  Structs/extras unchanged; caller CompositeInsert index validity still open.
+- #138 `5ae23ca66c6f5e0f77f0c07b255d4b5473163d27`: patch0034, two ordinary
+  collection checkpoints plus three source-bounded classifications (10 candidates,
+  6 dependencies, 4 fill slots under0033);495/138/raw24=16 fixed+8 pending.
+- #139 `1fca62a28c5f061fdb30bfe80b0b12dc7415d24f`: patch0035, capacity-aware
+  metadata growth before three ParsedIR writers and type-member query bound.
+  Artifact author; root/execution/native independent reviews.
+- #140 `47ede3ff7f1996672dc451de565153bf22d7a75d`: patch0036, actual MSL
+  alignment depth/member work;496/139/raw23=16 fixed+7 pending.
+- #141 `a659c7a8b9b9e67ce70c48bc20678532ae97d61c`: patch0037, shared preparation
+  helper routes six member writers once, preserving variable-ID/pre-type/pre-member
+  annotations and unset row creation. Artifact author; three independent reviews.
+- #142 `56e6bf91d62f86b7aade38da698fa86e2ce621df`: patch0038, three conditional
+  GLSL flattening helper bounds/depth and two walks;498/141/raw21=16+5.
+- #143 `c12f3f912512addea0f54e285f41a235225792f2`: patch0039, optional zero-init
+  query depth/two scans;500/143/raw19=16+3.
+- #144 `86be47753efdafe3daa5827bee9d201d5b5c216b`: patch0040, inactive Compiler
+  null helper delegates to guarded ParsedIR true-registration. Removes one old
+  braced checkpoint and raw duplicate, with no fake credit:499=356+143, raw18=16+2,
+  plus one separately delegated original site. Signature/valid-ID semantics kept.
+- #145 `9e25d5781a5b157cd7e28bbb825365d40b3c8c8e`: patch0041, optional tessellation
+  struct parent/depth/index/dimension/interface-cursor contract;500/144/raw17=16+1.
+- #146 `41923cb4163c1f1a0d4ef69b317b9ca49498fcb8`: patch0042, fixed composite
+  caller preflights before three pool constructors; empty aggregates/long-vector
+  ID-list/replicated branches kept. Artifact author; three independent reviews.
+- #147 `2ef26cfa134a3cc445548ac4db4c21242cb9db6c`: patch0043, actual selected
+  tessellation access chain bounds/depth/operand/sentinel contract; three reviews.
+  Original164 pending sites fully classified:145 instrumented+16 source-bounded+
+  2 fixed macro wrappers+1 delegated. Retained checks501=356+145, not full safety.
+- #148 `e57871fadb072b138c46fa7768faa94ec6885f88`: patch0044, finite38 parser
+  declaration/constant operand floors and Float8/wide-literal availability checks;
+  three reviews, no full grammar/ID/other-op validation claim.
+- #149 `52acf6a1a4802a2e2bfc7fdd64a071005400c8b6`: patch0045, actual ParsedIR
+  array-length dependency depth/ID/fixed-column/selected-operand controls, including
+  VectorShuffle two-ID dependency roles (literal selectors excluded). Five checks
+  in that additional file recorded separately, not original-inventory credit.
+  Root/execution/artifact reviewed the final revised source.
+- #150 `6f166e738a4748dde8e0a844a3b1acc327c3ddd5`: patch0046, selected GLSL
+  specialization CompositeExtract/Insert operand/initializer-index/Struct-member
+  guards, preserving array-first and whole-four-slot behavior. Three reviews.
 
-Compiler drafts #102–#109/#111/#113–#118/#121/#124–#133 have at least two independent source reviews (root plus non-author reviewer), checked
+Compiler drafts #102–#109/#111/#113–#118/#121/#124–#133/#135–#150 have at least two independent source reviews (root plus non-author reviewer), checked
 patch/before/after SHA provenance, vendor untouched, source generation only.
 NO new tests/probes/compiler runs or new tests; `[skip ci]`. Runtime translator
 stays off; no malformed-SPIRV, heap-isolation, parity, FPS or hardware proof.
 
-Active ownership: execution exclusively authors patch0031 and input-sha256/
-coverage/shader-doc changes for eight normal analysis/emission wrappers;
-native/root review next; expected493/136/raw26=13 fixed+13 pending. Native's
-approved single combined_decoration_for_member entry depth guard is QUEUED
-after0031, not abandoned. Native also assesses actual fill_composite_constant
-fixed[4] shape/initializer bounds read-only; that concrete finding remains TODO.
-Artifact may assess append-only parser buffers read-only but has no author grant.
-Other evaluator
-and other recursion/ownership remain separate gates. Product's supported app
-flow reassessment found the name defect now committed110; no other new source
-defect demonstrated in that pass. App acceptance still remains open.
+No authored source slice remains in flight. Root owns this final handoff/docs/
+issues integration; workers have released metadata ownership. The finite source
+reassessment's two demonstrated current-path contracts are addressed by #149/#150.
+No further supported Canopy app-flow defect was established by those bounded
+passes. This is not a blanket vendor audit or complete-product acceptance.
+
+Required future translator contracts remain OPEN: general SPIR-V ID/type/grammar,
+variable/function/control-flow/string/other-operator/image-mask validation,
+generic STL/framework work and allocator/noexcept isolation. Local checks do not
+authorize arbitrary translation jobs. Actual managed/NativeAOT static exports,
+resource/parity execution, Apple deployment/Metal and signed-device external-code
+permission still require their real tools/inputs/evidence. Runtime remains OFF.
+Use exact provider/build/parity results to scope further bounded implementation;
+do not invent a broad validator rewrite or enable capability from inventory counts.
+App acceptance remains open. Product's supported-flow pass found and fixed the
+name and lifecycle issues recorded above; these newer changes are unbuilt/untested.
 Product's additional read-only overlay/input/settings audit after122 found no new
 demonstrated source defect: modal capture/explicit Resume/focus+scene+callback
 epoch guards and desired/effective settings remain coherent. No execution or
@@ -116,16 +175,22 @@ feature-complete/physical acceptance claim follows.
 Product's preparation/update/add-on caller audit also found no new demonstrated
 source defect: exact selection/reuse/resume and cancellation/commit authority/
 verified catalog refresh inspected. No provider/format/device acceptance inferred.
-No concurrent metadata edits. Root owns this live cursor, visual-doc addenda,
-integration, PRs/issues and attachments. Other workers use followup_task.
+No concurrent metadata edits. Any newly demonstrated scoped Canopy gap should
+start a separately owned, independently reviewed cohort; historical fixtures do
+not validate source-only patches0005–0046. Current no-test/probe/install and
+other user constraints still apply; this batch ran no compilers/builds. Later
+local-checklist commands are not automatic action.
 
-Attachment attempts88–125 returned connection closed; earlier cells through869
-drained. Attempts126–132 are in cells882/886/892/895/899/906+909/912;133
-still needs its first attempt. No attachment success is
+Attachment attempts88–149 returned connection closed; all those wait cells
+are drained. Attempt150 is still in cell998; no attachment success is
 established. Source/source-review milestones do not replace exact CI:
 #77 green524/517/7 and940/931/9; later#85 red971/961/9/1, #99 fix UNRUN.
 
 ## App-source snapshot through #100 (historical below this cursor)
+
+Everything below is historical #100-era recovery context. All old ownership,
+ACTIVE/queue labels and counts are superseded by the live source handoff above;
+they must not revive a patch0005 assignment or override current user constraints.
 
 Reconciliation date: 2026-10-25. Current source branch is
 `feat/canopy-shader-removal-recovery`, HEAD
@@ -153,7 +218,7 @@ upstream phone performance claim. Current goal forbids new local tests/probes/
 builds/installs/private inputs. New #88–#100 commits use `[skip ci]`; none has new
 build/test evidence. Historical exact counts below remain unchanged.
 
-## Current authority
+## Historical #100 authority
 
 Follow CONTRIBUTING.md and `docs/canopy-development-roadmap.md` D0–D14. The goal
 remains active; status/cost questions and hardware gates did not cancel source
@@ -291,7 +356,7 @@ Counts overlap. The prior profile compile warning at30accb3 is fixed and the
 results above. Newer cohorts require their own evidence. Physical input/provider/
 save/rendering/FPS acceptance remains open.
 
-## Current dirty ownership and source handoff
+## Historical #100 dirty ownership and source handoff
 
 All published source cohorts through #100 are committed. The former native
 shader-cache and storage preflight ownership is complete at source-review level,

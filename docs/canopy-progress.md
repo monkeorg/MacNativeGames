@@ -1,55 +1,35 @@
 # Canopy · development update
 
-**FOSS native game launcher · source development continues**
-Source through [#100](https://github.com/monkeorg/MacNativeGames/pull/100),
-[`62dd868`](https://github.com/monkeorg/MacNativeGames/commit/62dd868c5e66d830ca1f5973462c4725a56aa759),
-on `feat/canopy-shader-removal-recovery`.
-Source review, Apple compilation and physical acceptance are separate. The current
-`/goal` runs no new tests or probes; the results below are recorded evidence.
+**FOSS native launcher · cloud source handoff · local validation outstanding**
 
-**Later compiler source:** dependent drafts [#102](https://github.com/monkeorg/MacNativeGames/pull/102)–[#109](https://github.com/monkeorg/MacNativeGames/pull/109)
-extend the same pinned compiler with loop quotas and recursion guards. At
-[`2408740`](https://github.com/monkeorg/MacNativeGames/commit/2408740f8546a7f8a0ccd8a3d284db10e3f619c4),
-Cross has 429 loop checkpoints (72 formerly unbraced); 90 raw loop sites remain (10 fixed, 80
-input-dependent or unproven). Each slice has two independent source reviews.
-These are unbuilt, untested source changes; runtime translation remains disabled.
-The app feature snapshot and recorded CI below still refer to their exact revisions.
+Current source: [#150 / `6f166e7`](https://github.com/monkeorg/MacNativeGames/pull/150),
+`feat/canopy-shader-specialization-composite-bounds`,
+`6f166e738a4748dde8e0a844a3b1acc327c3ddd5`.
+Newer source is reviewed but **unbuilt and untested**. This cloud pass ran no
+new tests, probes, compilers or builds and performed no installs, merges or releases.
 
-**Library correction:** [#110 / `73bb8db`](https://github.com/monkeorg/MacNativeGames/pull/110)
-keeps the friendly game name visible after the first settings change. Other
-custom names retain priority; an exact title-ID name uses the default fallback
-because legacy metadata has no name-origin flag. No metadata is rewritten.
-Independently source-reviewed; unbuilt and untested.
+| Recent change | Published source | Acceptance |
+|---|---|---|
+| Friendly names | Library keeps its name after the first preference write (#110); session uses current custom/friendly name (#119) | Source-reviewed; check rename/reload/start locally |
+| Save dialogs | Scene/navigation-bound export, picker and confirmation intent; accepted Files export retains its data until its exact picker finishes (#122) | Two independent reviews; no new execution |
+| Storage dialogs | Stale confirmations/resume cannot revive after background or scene changes; accepted backend work still settles (#120) | Two independent reviews; no new execution |
+| Existing TOTK updates | Reused upstream normalized keys, warm-up/memory controls, packaging/verified transfer, thermal reporting and optional pinned shader-pack route (#88–#98) | No inferred performance or device acceptance |
+| Recovery | Nonmutating generation-removal preflight (#99) and recorded shader-removal recovery (#100) | Source fixes **unrun**; older red CI retained below |
+| Compiler boundaries | Reviewed recursion, operands, fixed storage, capacity planning, dependency roles and local index/arithmetic guards (#102–#150) | Source-only; runtime translator **off** |
 
-[#111 / `c6f1502`](https://github.com/monkeorg/MacNativeGames/pull/111) then charges
-seven traversal-wrapper loops whose recursive callees already have depth guards:
-436 checkpoints,79 formerly unbraced,83 raw sites (10 fixed/73 pending).
-Two independent source reviews; no tests, probes or builds; runtime stays off.
+The original164 pending loop sites are fully classified:145 instrumented,
+16 source-bounded, two fixed macro wrappers and one delegated duplicate. The
+original four files now retain501 checks (356 originally braced +145 added).
+Five additional ParsedIR checks are recorded
+separately. This is an inventory, **not whole-compiler safety or runtime permission**.
+All compiler slices have at least two independent source reviews; parser/storage
+boundary cohorts received additional reviews where recorded. Exact checked patch,
+input and output SHA provenance is retained. General SPIR-V ID/grammar/other-op
+validation, allocator/noexcept isolation, managed/static/parity and Apple/device
+acceptance remain explicit gates.
 
-**Later app corrections:** [#119 / `b136283`](https://github.com/monkeorg/MacNativeGames/pull/119)
-also resolves the current friendly/custom name for the session title without
-changing its runtime entry. [#120 / `6c06d9a`](https://github.com/monkeorg/MacNativeGames/pull/120)
-expires stale storage confirmations/resume intent across scene/background/navigation
-changes. [#122 / `2c3f23e`](https://github.com/monkeorg/MacNativeGames/pull/122)
-does the same for save dialogs and queued exports while keeping accepted Files
-export data until the exact picker finishes. Each lifecycle correction has two
-independent source reviews; all remain unbuilt/untested.
-
-Compiler drafts through [#121 / `5a95607`](https://github.com/monkeorg/MacNativeGames/pull/121)
-add checked interface offsets, recursive interface/packing guards and further
-iteration accounting: **457 checkpoints, 100 formerly unbraced, 62 raw sites
-(12 fixed, 50 pending)**. These counts are an inventory, not a safety percentage.
-Runtime translation remains disabled; source assessment continues.
-
-**Parser/resource follow-ups through [#133 / `2468ba0`](https://github.com/monkeorg/MacNativeGames/pull/133):**
-checked null-constant planning, array queries and resource-binding arithmetic;
-normal emission/metadata iteration limits; precharges before amplified type
-copies; and three direct self-alias replacement refusals. Current recorded
-inventory is **485 checkpoints, 128 formerly unbraced, 34 raw sites
-(13 fixed, 21 pending)**. The capacity planner has its own source-proven bounded
-loop, excluded from that inventory. Every compiler slice has at least two
-independent source reviews; #132 has three. All are source-only and unbuilt;
-no new tests, probes or compiler runs. Runtime translation remains disabled.
+The table below includes the app-source snapshot through #100 plus the later
+corrections above. None inherits old green CI as proof of current behavior.
 
 | Area | Current source | Remaining acceptance / work |
 |---|---|---|
@@ -58,7 +38,7 @@ no new tests, probes or compiler runs. Runtime translation remains disabled.
 | ✎ SaveEditor · #7 | **Active:** TOTK reference-family rupee preview and explicit raw candidate share; Canopy source reviewed | No active Apply until an exact format/integrity contract exists; candidate integrity, checksum and game compatibility remain unverified. Both original iPad and Canopy candidate-share callers are committed; exact format/integrity and physical acceptance remain open |
 | 🎮 Input & accessibility | Real controller/keyboard/mouse/touch routing, modal capture; reviewed focus-owned VoiceOver analog actions and bounded preparation announcements | Physical models, pointer-lock, focus/rotation and VoiceOver interaction; four seats do not establish multiplayer TOTK/Mario Kart support |
 | ⚙ Display & settings | Supported live controls, System language; immutable startup projection with presentation-only layout updates and incompatible-4:3 capture | New Apple results, physical visual/input checks and actual rendered-resolution evidence; experimental quality presets remain off |
-| ⚡ Storage & reuse | Mac-tested copy-on-write reuse including growth/shrink; inode/lease-bound retirement recovery; nonmutating preflight correction source-fixed in #99 | Later Source run is **red** on hardlink refusal preserving the canonical namespace; new-request full-tree preflight is source-fixed, **not rerun**. Logical counters are not physical space savings |
+| ⚡ Storage & reuse | Existing copy-on-write reuse with earlier Mac growth/shrink evidence; inode/lease-bound retirement recovery; nonmutating preflight correction source-fixed in #99 | Later Source run is **red** on hardlink refusal preserving the canonical namespace; new-request full-tree preflight is source-fixed, **not rerun**. Logical counters are not physical space savings |
 | ◉ Lifecycle & restart · #55 | Native ownership observation retains protections; reviewed two-confirmation restart control protocol | **No actual TOTK restart mechanism or UIKit restart caller.** Protocol/fixture is not game reload; full teardown/relaunch remains separate |
 | ✦ Shaders | Private cache identity, cooperative compiler controls and upstream normalized keys/warm-up/memory controls; optional pinned original-iPad pack producer/reader | Interrupted shader-identity deletion recovery is **source-fixed in #100, unrun**. Pack/tuple/reuse and Apple/device acceptance remain open; translator stays **off** |
 | 🌿 Packaging & profiles | Compiled trusted profiles and actual UI/validator callers; upstream safe packaging/transfer checkpoints and actual thermal-state reporting | New source is unbuilt; metadata is not a provider, thermal reporting is not an optimization, and warm-up controls establish no performance gain |
@@ -93,9 +73,11 @@ Both received two independent source reviews and remain **unrun/not rerun**. The
 | [#93](https://github.com/monkeorg/MacNativeGames/pull/93)–[#98](https://github.com/monkeorg/MacNativeGames/pull/98) | Preparation announcements (`acbaf65`), label-only recovery API (`ce899d2`) and UI (`b9bc663`), signed-metadata optional pack producer (`8d67aec`) and original-iPad reader (`c09cbab`), save-preview declaration clarity cleanup (`98627cc`) |
 | [#99](https://github.com/monkeorg/MacNativeGames/pull/99) | Nonmutating full-tree generation-removal preflight ([`5f2f43d`](https://github.com/monkeorg/MacNativeGames/commit/5f2f43d36c116fa900055e279d968b82dce9c78f)); two source reviews, **not rerun** |
 | [#100](https://github.com/monkeorg/MacNativeGames/pull/100) | Recoverable shader-identity removal ([`62dd868`](https://github.com/monkeorg/MacNativeGames/commit/62dd868c5e66d830ca1f5973462c4725a56aa759)); two source reviews, **unrun** |
+| [#110](https://github.com/monkeorg/MacNativeGames/pull/110), [#119](https://github.com/monkeorg/MacNativeGames/pull/119), [#120](https://github.com/monkeorg/MacNativeGames/pull/120), [#122](https://github.com/monkeorg/MacNativeGames/pull/122) | Friendly names and scene-bound storage/save UI intent; source-reviewed, unbuilt/untested |
+| [#102](https://github.com/monkeorg/MacNativeGames/pull/102)–[#150](https://github.com/monkeorg/MacNativeGames/pull/150) · compiler cohorts | Scoped recursion/work/operand/index/arithmetic/storage guards, shared helper reuse and finite follow-up fixes; exact provenance and independent reviews recorded; translator off |
 
 These focused drafts depend on their predecessors. #77 has the green evidence
-above; #85 has the later red Source result. Subsequent cohorts through #100 are
+above; #85 has the later red Source result. Subsequent source cohorts through #150 are
 **source reviewed, untested/unbuilt**, with `[skip ci]` commits. Earlier green
 checks do not validate them. #97 is declaration **clarity cleanup**, not a
 reproduced compiler-failure fix: the old form compiled in the green #77 build. No local validation commands were run for these source changes; earlier automatic
@@ -105,12 +87,14 @@ Default original-iPad builds still bundle shaders. The optional pack route is
 bound to installed app metadata and a verified complete seed, has no cancellation
 API, and grants no Canopy trust bypass. Both routes need their own Apple/device
 results. Neither removal fix has rerun evidence; the recorded red failure is
-not relabeled green. Bounded compiler source assessment continues across the
-21 input-dependent or unproven loop sites (34 raw including 13 fixed), other
-recursion and noexcept boundaries at #133.
-This identifies coverage work, not a newly demonstrated broken app flow; it is
-not a claim that all cloud work is complete. There is no
-registered BOTW provider, active-save Apply or actual TOTK restart mechanism.
+not relabeled green. The finite source reassessment closed the demonstrated local
+array-length dependency and selected specialization-composite contracts in #149
+and #150. Bounded app-flow reviews found no additional demonstrated supported
+launcher/save/settings/preparation defect after the published corrections. This
+is not complete-product acceptance or a blanket vendor audit. General translator
+enablement, actual build/parity evidence and physical checks remain outstanding.
+There is no registered BOTW provider, active-save Apply or actual TOTK restart
+mechanism; their exact blockers remain in the issue ledger.
 
 Continue with [the ordered Mac/iPad handoff](canopy-mac-ipad-checklist.md),
 [issue coverage](canopy-issue-coverage.md) and [the development roadmap](canopy-development-roadmap.md).
