@@ -15,7 +15,7 @@ static int capacity(const struct mng_players *p, unsigned count) {
     return count<=UINT64_MAX-p->next_token;
 }
 static void clear(struct mng_players *p, struct mng_device *d) {
-    memset(&d->input,0,sizeof(d->input)); d->sequence=0; d->token=++p->next_token;
+    memset(&d->input,0,sizeof(d->input)); d->pressed_edges=0; d->sequence=0; d->token=++p->next_token;
 }
 void mng_players_init(struct mng_players *p) {
     if (p) { memset(p,0,sizeof(*p)); p->focused=1; }
@@ -35,6 +35,13 @@ enum mng_player_status mng_players_disconnect(struct mng_players *p, uint64_t id
     if (!d) return MNG_PLAYER_NOT_FOUND;
     for (unsigned i=0;i<MNG_PLAYER_COUNT;i++) if (p->seats[i]==id) p->seats[i]=0;
     memset(d,0,sizeof(*d)); return MNG_PLAYER_OK;
+}
+enum mng_player_status mng_players_reset_device(struct mng_players *p, uint64_t id) {
+    if (!p || !id) return MNG_PLAYER_INVALID;
+    struct mng_device *d=device(p,id);
+    if (!d) return MNG_PLAYER_NOT_FOUND;
+    if (!capacity(p,1)) return MNG_PLAYER_LIMIT;
+    clear(p,d); return MNG_PLAYER_OK;
 }
 enum mng_player_status mng_players_assign(struct mng_players *p, unsigned player, uint64_t id) {
     if (!p || player>=MNG_PLAYER_COUNT || !id) return MNG_PLAYER_INVALID;
@@ -72,7 +79,7 @@ enum mng_player_status mng_players_focus(struct mng_players *p, int focused) {
         /* Losing focus must still release every button even if the practically
          * unreachable token counter is exhausted. No further updates allowed. */
         p->focused=0;
-        for (unsigned i=0;i<MNG_DEVICE_COUNT;i++) memset(&p->devices[i].input,0,sizeof(struct mng_input));
+        for (unsigned i=0;i<MNG_DEVICE_COUNT;i++) { memset(&p->devices[i].input,0,sizeof(struct mng_input)); p->devices[i].pressed_edges=0; }
         return MNG_PLAYER_LIMIT;
     }
     for (unsigned i=0;i<MNG_DEVICE_COUNT;i++) if (p->devices[i].id) clear(p,&p->devices[i]);
@@ -101,7 +108,17 @@ enum mng_player_status mng_players_update(struct mng_players *p, uint64_t id,
         if (!isfinite(input->triggers[i])) return MNG_PLAYER_INVALID;
         normalized.triggers[i]=clamp(input->triggers[i],0);
     }
+    d->pressed_edges|=(normalized.buttons&~d->input.buttons)&MNG_GUEST_BUTTON_MASK;
     d->input=normalized; d->sequence=sequence; return MNG_PLAYER_OK;
+}
+enum mng_player_status mng_players_consume(struct mng_players *p, unsigned player,
+    uint64_t *id, struct mng_input *input) {
+    enum mng_player_status status=mng_players_read(p,player,id,input);
+    if (status!=MNG_PLAYER_OK) return status;
+    struct mng_device *d=device(p,*id);
+    if (d && p->focused) { input->buttons|=d->pressed_edges; d->pressed_edges=0; }
+    input->buttons&=MNG_GUEST_BUTTON_MASK;
+    return MNG_PLAYER_OK;
 }
 enum mng_player_status mng_players_read(const struct mng_players *p, unsigned player,
     uint64_t *id, struct mng_input *input) {

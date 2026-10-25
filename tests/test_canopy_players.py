@@ -55,6 +55,12 @@ class CanopyPlayers(unittest.TestCase):
     def test_capacity_clamping_sequence_and_token_exhaustion(self):
         self.scenario('limits')
 
+    def test_short_taps_are_delivered_once_without_changing_peek_or_held(self):
+        self.scenario('taps')
+
+    def test_reset_focus_swap_disconnect_clear_latched_edges_and_epochs(self):
+        self.scenario('edge-cancel')
+
 
 if __name__ == '__main__':
     unittest.main()

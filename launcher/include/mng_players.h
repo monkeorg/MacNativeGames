@@ -7,6 +7,7 @@
 /* Button bits: A,B,X,Y,L,R,ZL,ZR,plus,minus,left-stick,right-stick,
  * up,down,left,right,home,capture, respectively. */
 #define MNG_BUTTON_MASK UINT64_C(0x3ffff)
+#define MNG_GUEST_BUTTON_MASK UINT64_C(0xffff)
 struct mng_input { uint64_t buttons; float sticks[4]; float triggers[2]; };
 enum mng_player_status {
     MNG_PLAYER_OK, MNG_PLAYER_INVALID, MNG_PLAYER_NOT_FOUND,
@@ -14,6 +15,7 @@ enum mng_player_status {
 };
 struct mng_device {
     uint64_t id, token, sequence;
+    uint64_t pressed_edges;
     struct mng_input input;
 };
 /* Fixed storage; initialize once, then mutate only through this API. All calls
@@ -29,6 +31,8 @@ struct mng_players {
 void mng_players_init(struct mng_players *players);
 enum mng_player_status mng_players_connect(struct mng_players *, uint64_t id);
 enum mng_player_status mng_players_disconnect(struct mng_players *, uint64_t id);
+/* Clear held/latched input and invalidate callbacks, retaining assignment. */
+enum mng_player_status mng_players_reset_device(struct mng_players *, uint64_t id);
 /* Assign requires a vacant seat and an unassigned device; assigning the same
  * device to its existing seat is a no-op. Other conflicts require explicit
  * unassign or swap. Player indices are zero-based. */
@@ -48,5 +52,10 @@ enum mng_player_status mng_players_update(struct mng_players *, uint64_t id,
 /* Returns neutral input and id=0 for an empty seat. A connected assigned device
  * still reports its id while unfocused, with neutral input. */
 enum mng_player_status mng_players_read(const struct mng_players *, unsigned player,
+    uint64_t *id, struct mng_input *input);
+/* Gameplay read: also delivers guest-button rising edges once, preserving taps
+ * that completed between polls. Home/Capture remain separate host commands.
+ * Focus/assignment/disconnect/reset clears pending edges; peek read is unchanged. */
+enum mng_player_status mng_players_consume(struct mng_players *, unsigned player,
     uint64_t *id, struct mng_input *input);
 #endif

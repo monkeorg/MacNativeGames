@@ -115,6 +115,48 @@ static int limits(void) {
     CHECK(mng_players_update(&p,1,token(&p,1),1,&input)==MNG_PLAYER_INACTIVE);
     OK(mng_players_disconnect(&p,1)); CHECK(mng_players_connect(&p,1)==MNG_PLAYER_LIMIT); return 0;
 }
+static int short_taps(void) {
+    struct mng_players p; mng_players_init(&p);
+    OK(mng_players_connect(&p,1)); OK(mng_players_connect(&p,2));
+    OK(mng_players_assign(&p,0,1)); OK(mng_players_assign(&p,1,2));
+    struct mng_input press={1,{0},{0}}, release={0}, other={2,{0},{0}}, out; uint64_t id;
+    uint64_t t=token(&p,1);
+    OK(mng_players_update(&p,1,t,1,&press)); OK(mng_players_update(&p,1,t,2,&release));
+    OK(mng_players_update(&p,2,token(&p,2),1,&other));
+    OK(mng_players_read(&p,0,&id,&out)); CHECK(out.buttons==0);
+    OK(mng_players_consume(&p,0,&id,&out)); CHECK(id==1 && out.buttons==1);
+    OK(mng_players_consume(&p,0,&id,&out)); CHECK(out.buttons==0);
+    OK(mng_players_consume(&p,1,&id,&out)); CHECK(out.buttons==2);
+    OK(mng_players_consume(&p,1,&id,&out)); CHECK(out.buttons==2); /* still held */
+    press.buttons=(UINT64_C(1)<<16)|(UINT64_C(1)<<17);
+    OK(mng_players_update(&p,1,t,3,&press));
+    OK(mng_players_consume(&p,0,&id,&out)); CHECK(out.buttons==0); /* held UI commands also clipped */
+    OK(mng_players_update(&p,1,t,4,&release));
+    OK(mng_players_consume(&p,0,&id,&out)); CHECK(out.buttons==0); /* UI commands not guest edges */
+    return 0;
+}
+static int edge_cancellation(void) {
+    struct mng_players p; mng_players_init(&p); OK(mng_players_connect(&p,1)); OK(mng_players_assign(&p,0,1));
+    struct mng_input press={4,{0},{0}}, release={0}, out; uint64_t id,t=token(&p,1);
+    OK(mng_players_update(&p,1,t,1,&press)); OK(mng_players_update(&p,1,t,2,&release));
+    OK(mng_players_reset_device(&p,1)); CHECK(token(&p,1)!=t);
+    CHECK(mng_players_update(&p,1,t,3,&press)==MNG_PLAYER_STALE);
+    OK(mng_players_consume(&p,0,&id,&out)); CHECK(id==1 && neutral(&out));
+    t=token(&p,1); OK(mng_players_update(&p,1,t,1,&press));
+    OK(mng_players_focus(&p,0)); OK(mng_players_focus(&p,1));
+    OK(mng_players_consume(&p,0,&id,&out)); CHECK(neutral(&out));
+    t=token(&p,1); OK(mng_players_update(&p,1,t,1,&press));
+    OK(mng_players_swap(&p,0,2)); OK(mng_players_consume(&p,2,&id,&out)); CHECK(neutral(&out));
+    t=token(&p,1); OK(mng_players_update(&p,1,t,1,&press));
+    OK(mng_players_disconnect(&p,1)); OK(mng_players_connect(&p,1)); OK(mng_players_assign(&p,2,1));
+    OK(mng_players_consume(&p,2,&id,&out)); CHECK(neutral(&out));
+    CHECK(mng_players_reset_device(NULL,1)==MNG_PLAYER_INVALID);
+    CHECK(mng_players_reset_device(&p,0)==MNG_PLAYER_INVALID);
+    CHECK(mng_players_reset_device(&p,99)==MNG_PLAYER_NOT_FOUND);
+    struct mng_players before=p;
+    CHECK(mng_players_consume(&p,4,&id,&out)==MNG_PLAYER_INVALID && !memcmp(&p,&before,sizeof(p)));
+    return 0;
+}
 int main(int argc,char **argv) {
     if (argc!=2) return 2;
     int result;
@@ -124,6 +166,8 @@ int main(int argc,char **argv) {
     else if (!strcmp(argv[1],"focus")) result=focus_stale();
     else if (!strcmp(argv[1],"invalid")) result=invalid();
     else if (!strcmp(argv[1],"limits")) result=limits();
+    else if (!strcmp(argv[1],"taps")) result=short_taps();
+    else if (!strcmp(argv[1],"edge-cancel")) result=edge_cancellation();
     else return 2;
     if (!result) puts("{\"status\":\"pass\",\"scope\":\"portable player routing only\"}");
     return result;
