@@ -359,7 +359,20 @@
       "file": "spirv_msl.cpp",
       "originalInventoryAnchor": "spirv_msl.cpp:13789",
       "originalSourceLine": 13790
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:21007",
+      "originalSourceLine": 21007
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:21016",
+      "originalSourceLine": 21016
     }
+  ],
+  "explicitArithmetic": [
+    "type-location vector-size narrowing, member-count addition and array-factor multiplication (caller location offsets and specialization evaluation excluded)"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
@@ -372,7 +385,8 @@
     "compiler type-alias name resolution",
     "implied expression-read traversal",
     "invariant expression-dependency traversal",
-    "global-read function-dependency traversal"
+    "global-read function-dependency traversal",
+    "type-location member traversal"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
@@ -380,8 +394,8 @@
     "StringStream append/allocation/final copy"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 427,
-  "instrumentedOriginallyUnbracedLoops": 70,
+  "instrumentedLoopCheckpoints": 429,
+  "instrumentedOriginallyUnbracedLoops": 72,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -426,7 +440,7 @@
       "reason": "The source-defined contiguous implementation enum interval contains exactly 14 values."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 82,
+  "unbracedLoopsInputDependentOrUnprovenCount": 80,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:356",
     "spirv_cross.cpp:365",
@@ -493,8 +507,6 @@
     "spirv_glsl.cpp:20694",
     "spirv_glsl.cpp:20775",
     "spirv_glsl.cpp:20782",
-    "spirv_glsl.cpp:21007",
-    "spirv_glsl.cpp:21016",
     "spirv_glsl.cpp:21251",
     "spirv_msl.cpp:1728",
     "spirv_msl.cpp:1856",
@@ -521,7 +533,7 @@
     "spirv_msl.cpp:19930",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 92,
+  "unbracedLoopsNotInstrumentedCount": 90,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",

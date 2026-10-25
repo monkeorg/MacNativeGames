@@ -138,6 +138,16 @@
       },
       "patch": "0011-expression-dependency-depth.patch",
       "sha256": "40ea9f6c5268654fa43f15b302134978108aa9ced7e4ae831ff6ee2fdd74af28"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "4f72b3bcabe54383ddada1a0d241cf7b6c9588cd879f2a0a753539d0e5ac6801"
+      },
+      "before": {
+        "spirv_glsl.cpp": "fa0e2f3878b29783502bf706af86ee5cdf2a8973687264bd8208283b34c8dd4e"
+      },
+      "patch": "0012-type-location-count-bounds.patch",
+      "sha256": "0808bf44c0e7f9fd9841408ce673cf75eec89a78063b2ad235484d2dc4b2d59b"
     }
   ],
   "schemaVersion": 1
