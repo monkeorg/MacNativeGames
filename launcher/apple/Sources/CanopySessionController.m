@@ -2,6 +2,7 @@
 #import "CanopyRuntime.h"
 #import "CanopyOverlay.h"
 #import "CanopyGames.h"
+#import "CanopyGameProfiles.h"
 #import "CanopyDiagnosticsController.h"
 #import "CanopyInputController.h"
 #import <QuartzCore/CAMetalLayer.h>
@@ -65,7 +66,12 @@ static CanopySessionController *ConsumedNativeSession;
 }
 - (void)loadView { self.view = [CanopySessionSurface new]; self.view.backgroundColor = UIColor.blackColor; }
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title = _entry[@"displayName"];
+    [super viewDidLoad];
+    NSString *titleID=_entry[@"titleID"],*savedName=[_settings displayNameForTitleID:titleID];
+    // Match the library's display-only legacy placeholder policy. A literal
+    // titleID name is indistinguishable from a generated default; no rewrite.
+    if([savedName isEqual:titleID])savedName=nil;
+    self.title=savedName ?: CanopyGameNameForTitleID(titleID) ?: _entry[@"displayName"] ?: titleID;
     self.navigationItem.hidesBackButton = YES;
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Session lifecycle" style:UIBarButtonItemStylePlain target:self action:@selector(endSession)];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Diagnostics" style:UIBarButtonItemStylePlain target:self action:@selector(showDiagnostics)];
