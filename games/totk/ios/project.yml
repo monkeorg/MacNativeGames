@@ -12,6 +12,9 @@ targets:
     platform: iOS
     sources:
       - Sources
+      - path: ../../../launcher/src/mng_totk_save.c
+        compilerFlags: "-I$(SRCROOT)/../../../launcher/include"
+      - path: ../../../launcher/include/mng_totk_save.h
       - Settings.bundle   # the Settings app pane (game language picker); stored in NSUserDefaults, applied in main.m
       - path: ../runtime
         excludes:

@@ -1,6 +1,12 @@
 #import "launcher.h"
 #import "launcher_settings.h"
 #import "save_editor.h"
+#import "save_candidate.h"
+#include "../../../../launcher/include/mng_totk_save.h"
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <errno.h>
 #import "keyboard_input.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <GameController/GameController.h>
@@ -8,6 +14,20 @@
 #include <stdlib.h>
 #include "../../runtime/runtime.h"
 
+// Reads only a newly exported private copy, never the active save. Reject all
+// symlink components, special files, hardlinks, size changes and short reads.
+static NSData *candidate_progress(NSURL *snapshot,NSString *slot) {
+    NSString *path=[[[snapshot URLByAppendingPathComponent:slot] URLByAppendingPathComponent:@"progress.sav"] path];
+    for(NSString *alias in @[@"/tmp",@"/var"])if([path hasPrefix:[alias stringByAppendingString:@"/"]]){path=[@"/private" stringByAppendingString:path];break;}
+    int fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW_ANY|O_NONBLOCK|O_CLOEXEC);if(fd<0)return nil;
+    struct stat before={0},after={0};BOOL ok=!fstat(fd,&before)&&S_ISREG(before.st_mode)&&before.st_nlink==1&&before.st_uid==geteuid()&&before.st_size==MNG_TOTK_SAVE_REFERENCE_SIZE;
+    NSMutableData *data=ok?[NSMutableData dataWithLength:MNG_TOTK_SAVE_REFERENCE_SIZE]:nil;size_t used=0;
+    while(ok&&used<data.length){ssize_t n=read(fd,(unsigned char *)data.mutableBytes+used,data.length-used);if(n<0&&errno==EINTR)continue;if(n<=0){ok=NO;break;}used+=(size_t)n;}
+    unsigned char extra;
+    if(ok)ok=read(fd,&extra,1)==0&&!fstat(fd,&after)&&before.st_dev==after.st_dev&&before.st_ino==after.st_ino&&before.st_mode==after.st_mode&&before.st_nlink==after.st_nlink&&before.st_size==after.st_size&&
+        before.st_mtimespec.tv_sec==after.st_mtimespec.tv_sec&&before.st_mtimespec.tv_nsec==after.st_mtimespec.tv_nsec&&before.st_ctimespec.tv_sec==after.st_ctimespec.tv_sec&&before.st_ctimespec.tv_nsec==after.st_ctimespec.tv_nsec;
+    close(fd);return ok?[data copy]:nil;
+}
 static NSString *control_button_title(NSString *button) {
     return @{@"south":@"South face button",@"east":@"East face button",@"west":@"West face button",@"north":@"North face button",
         @"l3":@"Left stick press",@"r3":@"Right stick press",@"l1":@"Left shoulder",@"r1":@"Right shoulder",
@@ -176,6 +196,10 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     void (^_HUDChanged)(void);
     NSURL *_exportDirectory;
     NSDictionary *_runningPreferences;
+    dispatch_queue_t _candidateQueue;
+    NSUInteger _candidateEpoch,_candidateOperation;
+    BOOL _candidatePending;
+    NSURL *_candidateDirectory;
 }
 - (instancetype)initWithStore:(TOTKSaveStore *)store unavailable:(NSString *)reason play:(void (^)(void))play {
     if ((self = [super initWithNibName:nil bundle:nil])) {
@@ -200,8 +224,10 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     [self.tableView reloadData];
     [self refreshRestartFooter];
 }
+- (void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];}
 - (void)viewDidLoad {
     [super viewDidLoad];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(candidateBackground:) name:UIApplicationDidEnterBackgroundNotification object:nil];
     self.view.backgroundColor = _inGame ? UIColor.clearColor : UIColor.systemGroupedBackgroundColor;
     UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:[UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular]];
     card.accessibilityIdentifier = @"TOTKPrelaunchCard";
@@ -242,7 +268,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return (NSInteger[]){1,6,6,5,1}[section];
+    (void)tableView; return (NSInteger[]){1,6,6,6,1}[section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return @[@"",@"Graphics",@"Controls",@"Saves",@"Language"][section];
@@ -275,7 +301,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     cell.backgroundColor = [UIColor.secondarySystemGroupedBackgroundColor colorWithAlphaComponent:0.65];
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
     NSArray *titles = @[@[@"Play"],@[@"Render resolution",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD",@"Target frame rate",@"Anti-aliasing (TAA)"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
-        @[@"Import save folder",@"Export save folder",@"Back up save",@"Restore backup",@"Edit this save"],@[@"Game language"]];
+        @[@"Import save folder",@"Export save folder",@"Back up save",@"Restore backup",@"Edit this save",@"Unverified rupee candidate"],@[@"Game language"]];
     cell.textLabel.text = _inGame && path.section == 0 ? @"Resume game" : titles[path.section][path.row];
     BOOL displaySettings = TOTKLauncherDisplaySettingsAvailable(NSBundle.mainBundle.infoDictionary);
     if (path.section == 1) {
@@ -487,7 +513,8 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             NSError *error = nil; NSArray *backups = [_store backups:&error];
             if (!backups.count) { [self message:error.localizedDescription ?: @"No backups yet."]; return; }
             [self choose:[backups valueForKey:@"lastPathComponent"] path:path selected:^(NSUInteger i) { [self confirmImport:backups[i] restore:YES]; }];
-        } else [self editSaveAtPath:path];
+        } else if(path.row==4)[self editSaveAtPath:path];
+        else [self candidateAtPath:path];
     }
 }
 - (void)changeMouseSensitivity {
@@ -574,6 +601,72 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     _busy = NO;
     [self.tableView reloadData];
     if (message) [self message:message];
+}
+- (void)finishCandidateDirectory:(NSURL *)directory operation:(NSUInteger)operation {
+    dispatch_async(_candidateQueue,^{@autoreleasepool{
+        BOOL removed=!directory||![NSFileManager.defaultManager fileExistsAtPath:directory.path]||[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+        dispatch_async(dispatch_get_main_queue(),^{if(self->_candidateOperation!=operation)return;
+            self->_candidatePending=NO;self->_candidateDirectory=nil;self->_busy=NO;[self.tableView reloadData];
+            if(!removed&&self.view.window)[self message:@"The private candidate workspace could not be cleaned. No active save was edited."];
+        });
+    }});
+}
+- (void)candidateBackground:(NSNotification *)notification {
+    (void)notification;if(!_candidatePending)return;
+    ++_candidateEpoch;
+    if(self.presentedViewController)[self dismissViewControllerAnimated:NO completion:nil];
+    // Queue cleanup behind any pending copy. Programmatic sheet dismissal
+    // does not invoke its Cancel action; cleanup must be explicit.
+    [self finishCandidateDirectory:_candidateDirectory operation:_candidateOperation];
+}
+- (BOOL)candidateIntent:(NSUInteger)epoch {
+    return _candidatePending&&_candidateEpoch==epoch&&!_started&&!_inGame&&self.view.window&&UIApplication.sharedApplication.applicationState==UIApplicationStateActive;
+}
+- (void)candidateAtPath:(NSIndexPath *)path {
+    if(_busy||_started||_inGame||!_store)return;
+    if(!_candidateQueue)_candidateQueue=dispatch_queue_create("org.macnativegames.totk.save-candidate",DISPATCH_QUEUE_SERIAL);
+    _busy=YES;_candidatePending=YES;NSUInteger epoch=++_candidateEpoch;_candidateOperation=epoch;[self.tableView reloadData];
+    NSURL *workspace=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[@"TOTK-Unverified-" stringByAppendingString:NSUUID.UUID.UUIDString]] isDirectory:YES];
+    _candidateDirectory=workspace;TOTKSaveStore *store=_store;
+    dispatch_async(_candidateQueue,^{@autoreleasepool{
+        NSFileManager *fm=NSFileManager.defaultManager;
+        BOOL made=[fm createDirectoryAtURL:workspace withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:NULL];
+        NSURL *snapshot=made?[store exportToDirectory:workspace error:NULL]:nil;NSMutableDictionary<NSString *,NSData *> *slots=[NSMutableDictionary new];
+        if(snapshot)for(unsigned i=0;i<6;i++){NSString *slot=[NSString stringWithFormat:@"slot_0%u",i];NSData *data=candidate_progress(snapshot,slot);if(data)slots[slot]=data;}
+        dispatch_async(dispatch_get_main_queue(),^{
+            if(![self candidateIntent:epoch]||!slots.count){
+                if([self candidateIntent:epoch]&&!slots.count)[self message:@"No private slot snapshot could be read safely. Active saves were unchanged."];
+                [self finishCandidateDirectory:workspace operation:epoch];return;
+            }
+            UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"Unverified rupee candidate" message:@"Select a private snapshot. Family and integrity checks do not establish exact 1.4.3 compatibility. No candidate is applied to active saves." preferredStyle:UIAlertControllerStyleActionSheet];
+            for(NSString *slot in [slots.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+                NSData *data=slots[slot];
+                [sheet addAction:[UIAlertAction actionWithTitle:slot style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+                    (void)action;
+                    [self dismissViewControllerAnimated:YES completion:^{
+                        if(![self candidateIntent:epoch]){[self finishCandidateDirectory:workspace operation:epoch];return;}
+                        TOTKCandidateRefresh refresh=^NSData *(NSError **error){
+                            // The store exports to a fixed "TOTK Save" leaf.
+                            // Keep the original preview separate: each refresh
+                            // needs its own newly created private parent.
+                            NSURL *refreshRoot=[workspace URLByAppendingPathComponent:[@"refresh-" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
+                            NSFileManager *manager=NSFileManager.defaultManager;
+                            if(![manager createDirectoryAtURL:refreshRoot withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
+                            NSURL *fresh=[store exportToDirectory:refreshRoot error:error];NSData *result=fresh?candidate_progress(fresh,slot):nil;
+                            if(![manager removeItemAtURL:refreshRoot error:NULL])return nil;
+                            return result;
+                        };
+                        TOTKSaveCandidate *candidate=[[TOTKSaveCandidate alloc] initWithProgressData:data queue:self->_candidateQueue refreshSnapshot:refresh completion:^{[self finishCandidateDirectory:workspace operation:epoch];}];
+                        UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:candidate];navigation.modalInPresentation=YES;navigation.modalPresentationStyle=UIModalPresentationFullScreen;
+                        self->_candidatePending=NO;
+                        [self presentViewController:navigation animated:YES completion:nil];
+                    }];
+                }]];
+            }
+            [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){(void)action;[self finishCandidateDirectory:workspace operation:epoch];}]];
+            [self anchor:sheet path:path];[self presentViewController:sheet animated:YES completion:nil];
+        });
+    }});
 }
 - (void)editSaveAtPath:(NSIndexPath *)path {
     if (_busy || _started || _inGame) return;
