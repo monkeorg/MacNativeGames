@@ -1,6 +1,6 @@
 # Public evidence for a TOTK rupee-wallet editor
 
-Reviewed 2026-10-25 for [issue #7](https://github.com/monkeorg/MacNativeGames/issues/7), starting from repository revision `39da158`. This extends the [local prerequisite review](ipados-save-editor.md). Public source establishes a useful **1.4.x format candidate and wallet encoding**. It does not establish a complete, independently validated integrity contract for saves written by **1.4.3**. The in-app editor remains blocked; no parser, editor or write path is enabled by this document.
+Reviewed 2026-10-25 for [issue #7](https://github.com/monkeorg/MacNativeGames/issues/7), starting from repository revision `39da158`. This extends the [local prerequisite review](ipados-save-editor.md). Public source establishes a useful **1.4.x format candidate and wallet encoding**. It does not establish a complete, independently validated integrity contract for saves written by **1.4.3**. A separate read-only candidate inspector is now implemented; the in-app editor remains blocked and no save write path is enabled.
 
 The narrower conclusion is actionable: an offline, explicitly experimental 1.4.x-family reader and separate-copy candidate writer can be source-implemented from the evidence below without inventing offsets. Such implementation is distinct from declaring saves valid, claiming exact 1.4.3 support, or enabling production editing. Integrity and physical acceptance remain gates for use on real saves.
 
@@ -55,13 +55,27 @@ Bounded searches of the primary editor's code/commit history and public issue te
 
 ## Work justified now, without enabling the editor
 
-The primary MIT reference is sufficient to specify an **experimental offline source implementation** with the narrow scope below. This is a proposal for review; no implementation or validation ran in this research task.
+The primary MIT reference supports the following limited work. The read-only inspector is implemented independently from these format facts and has received source review. It has not been executed; mutable candidate writing remains a proposal and is not implemented.
 
 - Label its admitted format `TOTK 1.4.x reference tuple`, never `verified TOTK 1.4.3`. Require the full exact tuple above before any field inspection. Keep older layouts outside its scope unless separately specified.
 - Use bounded little-endian reads and complete eight-byte records. Locate one unambiguous table terminator and one wallet scalar before it; reject absent, repeated, out-of-bounds or otherwise ambiguous structures. Keep unresolved structural interpretations explicit rather than inventing magic offsets.
 - Provide a read-only inspection result with family label, wallet value and evidence status. A strict read-only parser is useful before any mutable API is admitted.
 - If a separate-copy candidate writer is added, accept only integer values within the reference UI policy, require distinct source/output destinations, preserve the source, patch only the discovered four bytes and verify that all other bytes are identical. Describe its output as an **unvalidated candidate**, not a repaired or guaranteed playable save. Do not use it on the active app save or integrate it into the launcher while integrity is unresolved.
 - Add no production capability flag, settings row or automatic migration from this evidence alone. Future in-app work still needs the [backup/stage/seal contract](ipados-save-editor.md), reviewed integrity decisions, appropriate validation when authorized, and a physical 1.4.3 load plus restoration result. Current “do not run tests” instructions remain in force.
+
+### Implemented read-only inspector
+
+`games/totk/scripts/inspect_save_format.py` requires the exact reference tuple, scans complete aligned records for the first terminator, requires one preceding wallet record, and applies the reference editor's range as a conservative inspection policy. Unknown payload and structural relationships remain uninterpreted. An accepted result is named `structural_candidate`; it is never a claim of a valid or genuine game save.
+
+Its file reader refuses symlinked path components and special files, limits reads to the expected size plus one byte, and checks size, timestamps and link count again after reading. These checks do not freeze the filesystem. On macOS use the actual directory path rather than a system symlink alias such as `/tmp`; the tool intentionally does not resolve links for the caller.
+
+When a later local inspection is authorized:
+
+```sh
+python3 games/totk/scripts/inspect_save_format.py /actual/private/path/progress.sav
+```
+
+Default JSON omits the input path and wallet value. An explicit `--show-private-value` flag adds the wallet value for a private in-game comparison; do not publish that output or any saves. Both success and refusal results state that exact game version and integrity are unverified, game-save validity is not established, and editing is disabled. The pure `inspect_save_bytes` function is available for later synthetic validation; no fixtures or private inputs were run in this continuation.
 
 Other public leads were screened without importing their content: the [archived lchmagKekse editor at `6968e1f37a2962b8462c8c28717ccdbbf681823c`](https://github.com/lchmagKekse/TOTK-SaveGame-Editor/tree/6968e1f37a2962b8462c8c28717ccdbbf681823c) advertises rupee editing but its reviewed root lists no license file and its README does not establish 1.4.3 support. [McSpazzy's README at `5bf06e5077aa24348eb1a1fb1ef1ef110081fb2a`](https://github.com/McSpazzy/totk-gamedata/blob/5bf06e5077aa24348eb1a1fb1ef1ef110081fb2a/README.md) describes save structure/GameDataList research but supplies no exact-version or integrity contract in that text; the root listing includes older `Product.110` metadata and no license file. No game-derived data tables were retrieved. [The position extractor README at `42a1738783d674d9acdd1af08912ff7d9fe1497e`](https://github.com/deano309/TotK-Save-Position-Extractor/blob/42a1738783d674d9acdd1af08912ff7d9fe1497e/README.md) covers position/rotation, not wallet integrity, and its reviewed root lists no license file. None of these leads is used to fill a missing contract by assumption.
 

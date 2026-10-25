@@ -6,6 +6,8 @@ Review date: 2026-10-24. Source reviewed at `236930c`, including the save-transf
 
 This was a manual source review. No tests, compilers, probes, simulators, game launches, private-save downloads, or device operations were run, following the current instruction not to run tests or simulators. Earlier physical transfer results do not validate an editor.
 
+Follow-up public research now identifies a pinned MIT-licensed **1.4.x family** signature and inline wallet field: see [the evidence and its limits](ipados-save-format-research.md). A separate read-only candidate inspector is implemented; it is not an in-app editor, does not write saves and has not been executed. The full 1.4.3 format/integrity and physical-load gates below remain open.
+
 ## What the repository establishes
 
 | Evidence | What it supports | What it does not establish |
