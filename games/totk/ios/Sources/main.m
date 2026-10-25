@@ -7,6 +7,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <math.h>
+#include <string.h>
+#import <CoreFoundation/CoreFoundation.h>
+#include <stdatomic.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include "game_version.h"
+#import "shader_pack.h"
 #include "runtime.h"
 #include "fs_host.h"
 #include "language.h"
@@ -22,6 +29,29 @@ void runtime_ios_attach_layer(CAMetalLayer *layer, UIView *host);
 static char *host_argv[3];
 static NSString *g_no_game_data;   // set when there is no RomFS image to play from (didFinishLaunching)
 static BOOL g_game_started;
+static TOTKShaderSeedLease *g_shader_seed_lease;
+static _Atomic int g_shader_pack_accepted;
+// Native verification authority for the original renderer, separate from an
+// Apple bundle seal. No environment value can create this retained lease.
+__attribute__((visibility("default"))) int totk_shader_pack_verified_path(const char *path) {
+    if(!path||!atomic_load_explicit(&g_shader_pack_accepted,memory_order_acquire))return 0;
+    TOTKShaderSeedLease *lease=g_shader_seed_lease;
+    if(!lease||strcmp(path,lease.seedURL.path.fileSystemRepresentation))return 0;
+    struct stat held={0},opened={0};int fd=open(path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW_ANY|O_CLOEXEC);
+    BOOL ok=fd>=0&&!fstat(lease.directoryFD,&held)&&!fstat(fd,&opened)&&S_ISDIR(opened.st_mode)&&opened.st_uid==geteuid()&&!(opened.st_mode&077)&&held.st_dev==opened.st_dev&&held.st_ino==opened.st_ino;
+    if(fd>=0)close(fd);return ok?1:0;
+}
+static BOOL shader_pack_tuple(TOTKShaderSeedLease *lease) {
+    NSDictionary *info=NSBundle.mainBundle.infoDictionary;id abi=info[@"TOTKShaderSeedPackReaderABI"],version=info[@"TOTKShaderSeedPackTitleVersion"];
+    if(![abi isKindOfClass:NSNumber.class]||CFGetTypeID((__bridge CFTypeRef)abi)==CFBooleanGetTypeID()||CFNumberIsFloatType((__bridge CFNumberRef)abi)||![abi isEqual:@1]||
+        ![version isKindOfClass:NSNumber.class]||CFGetTypeID((__bridge CFTypeRef)version)==CFBooleanGetTypeID()||CFNumberIsFloatType((__bridge CFNumberRef)version)||
+        !isfinite([version doubleValue])||[version doubleValue]<0||[version doubleValue]>UINT32_MAX||floor([version doubleValue])!=[version doubleValue]||[version unsignedLongLongValue]!=lease.titleVersion)return NO;
+    NSDictionary *facts=@{@"TOTKShaderSeedPackTitleID":lease.titleID,@"TOTKShaderSeedPackRomFSSHA256":lease.sourceRomFSSHA256,
+        @"TOTKShaderSeedPackChain":lease.chain,@"TOTKShaderSeedPackMetadataSHA256":lease.metadataSHA256};
+    for(NSString *key in facts)if(![info[key] isKindOfClass:NSString.class]||![info[key] isEqual:facts[key]])return NO;
+    return [lease.titleID isEqual:@"0100f2c0115b6000"]&&[lease.chain isEqual:@DMSH_CHAIN]&&
+        [info[@"TOTKShaderSeedPackGameVersion"] isKindOfClass:NSString.class]&&[info[@"TOTKShaderSeedPackGameVersion"] isEqual:@TOTK_GAME_VERSION];
+}
 static UIViewController *g_root_controller;
 static __weak UIWindow *g_active_window;
 static void *run_host(void *unused) { (void)unused; return (void *)(intptr_t)totk_host_main(3, host_argv); }
@@ -34,9 +64,15 @@ void runtime_shortcut_help_toggle(void) {}
 @end
 
 @interface TOTKGameController : UIViewController @property(nonatomic,strong) TOTKMetalView *gameView; @end
-@implementation TOTKGameController
+@implementation TOTKGameController {
+    BOOL _seedBusy,_seedReady,_seedFailed;
+    UIView *_seedOverlay;
+    UILabel *_seedLabel;
+    UIProgressView *_seedProgress;
+}
 - (void)viewDidLoad {
     [super viewDidLoad];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(shaderSeedForeground:) name:UIApplicationDidBecomeActiveNotification object:nil];
     self.view.backgroundColor = UIColor.blackColor;
     self.gameView = [[TOTKMetalView alloc] initWithFrame:self.view.bounds];
     self.gameView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
@@ -59,6 +95,44 @@ void runtime_shortcut_help_toggle(void) {}
         [self.view addSubview:say];
         return;
     }
+    if(!_seedReady){[self prepareShaderSeed];return;}
+    [self startNativeGame];
+}
+- (void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];}
+- (void)shaderSeedForeground:(NSNotification *)notification {
+    (void)notification;if(_seedReady&&self.view.window)[self startNativeGame];
+}
+- (void)prepareShaderSeed {
+    if(_seedBusy||_seedReady||_seedFailed||g_game_started)return;
+    NSURL *game=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"GameData" isDirectory:YES];
+    NSURL *bundled=[game URLByAppendingPathComponent:@"shader-seed/seed-manifest.json"];
+    if([NSFileManager.defaultManager fileExistsAtPath:bundled.path]){_seedReady=YES;[self startNativeGame];return;}
+    NSURL *metadata=[game URLByAppendingPathComponent:@"shader-seed-pack.json"];
+    _seedOverlay=[[UIView alloc] initWithFrame:self.view.bounds];_seedOverlay.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;_seedOverlay.backgroundColor=UIColor.blackColor;
+    _seedLabel=[[UILabel alloc] initWithFrame:CGRectInset(_seedOverlay.bounds,32,80)];_seedLabel.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;_seedLabel.textColor=UIColor.whiteColor;_seedLabel.numberOfLines=0;_seedLabel.textAlignment=NSTextAlignmentCenter;[_seedOverlay addSubview:_seedLabel];
+    _seedProgress=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];_seedProgress.frame=CGRectMake(32,_seedOverlay.bounds.size.height-60,MAX(1,_seedOverlay.bounds.size.width-64),12);_seedProgress.autoresizingMask=UIViewAutoresizingFlexibleTopMargin|UIViewAutoresizingFlexibleWidth;[_seedOverlay addSubview:_seedProgress];[self.view addSubview:_seedOverlay];
+    if(TOTKShaderPackReaderABI()!=TOTK_SEED_PACK_READER_ABI||![NSFileManager.defaultManager fileExistsAtPath:metadata.path]){_seedFailed=YES;_seedProgress.hidden=YES;_seedLabel.text=@"The bundled shader seed is missing and no signed shader-pack setup is available. Finish setup and reopen TOTK. No game session started.";return;}
+    _seedBusy=YES;_seedLabel.text=@"Preparing a verified private shader snapshot…";
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{
+        TOTKShaderSeedLease *lease=[TOTKShaderPack prepareWithExpectedChain:@DMSH_CHAIN progress:^(uint64_t done,uint64_t total){
+            dispatch_async(dispatch_get_main_queue(),^{if(!self->_seedBusy)return;
+                self->_seedLabel.text=[NSString stringWithFormat:@"Preparing verified shader snapshot\nStream %.2f / %.2f GB",done/1e9,total/1e9];self->_seedProgress.progress=total?(float)((double)done/(double)total):0;
+            });
+        } error:NULL];
+        dispatch_async(dispatch_get_main_queue(),^{
+            self->_seedBusy=NO;BOOL accepted=lease&&shader_pack_tuple(lease);
+            if(accepted){const char *path=lease.seedURL.path.fileSystemRepresentation;NSString *map=[lease.seedURL.path stringByAppendingPathComponent:@"shader_map.tsv"];
+                accepted=!setenv("TOTK_SHADER_SEED_DIR",path,1)&&!setenv("DM_MSL_DIR",path,1)&&!setenv("DM_NVN_SHMAP",map.fileSystemRepresentation,1);
+            }
+            if(!accepted){self->_seedFailed=YES;self->_seedProgress.hidden=YES;self->_seedLabel.text=@"The signed shader-pack setup, matching parts or private snapshot could not be verified. Existing seeds and saves were preserved. Finish setup and reopen TOTK. No game session started.";return;}
+            g_shader_seed_lease=lease;atomic_store_explicit(&g_shader_pack_accepted,1,memory_order_release);
+            self->_seedReady=YES;[self->_seedOverlay removeFromSuperview];self->_seedOverlay=nil;
+            if(self.view.window&&UIApplication.sharedApplication.applicationState==UIApplicationStateActive)[self startNativeGame];
+        });
+    }});
+}
+- (void)startNativeGame {
+    if(g_game_started||!_seedReady||_seedBusy||_seedFailed)return;
     /* Playback category (PR #97): plays with the ring / silent switch off and routes to the speaker. Without an active
        session the game's CoreAudio output stays on a null sink on iOS 27 ("no device sink in use"); activating it in
        didFinishLaunching blocked the main thread before the log file was opened. Interruptions: audio_observe. */
@@ -79,6 +153,7 @@ void runtime_shortcut_help_toggle(void) {}
         pthread_attr_destroy(&attr);
     }
     if (result) {
+        _seedFailed=YES;
         UILabel *label = [[UILabel alloc] initWithFrame:self.view.bounds];
         label.text = @"Cannot start the game. Close and reopen TOTK to retry.";
         label.textColor = UIColor.whiteColor; label.textAlignment = NSTextAlignmentCenter;

@@ -98,6 +98,10 @@ static void (*totk_seed_progress)(int pass, NSUInteger done, NSUInteger total);
 /* Exact lease-backed path attested by the dedicated private host after native
  * manifest/content validation. This is integrity verification, not code signing. */
 extern int runtime_canopy_shader_seed_verified(const char *path);
+#elif TARGET_OS_IPHONE
+/* Original iOS host only: a genuinely retained, privately verified pack
+ * snapshot. Absence never grants authority; writable Documents/env do not. */
+extern int totk_shader_pack_verified_path(const char *path) __attribute__((weak_import));
 #endif
 static NSDictionary *totk_seed_import_into(NSString *source, NSString *cache, NSString *marker, NSError **error) {
     NSFileManager *fm = NSFileManager.defaultManager;
@@ -129,6 +133,11 @@ static NSDictionary *totk_seed_import_into(NSString *source, NSString *cache, NS
         // The attested private cache is never described as an Apple-signed bundle.
         if (verifiedPrivate) sealed = NO;
         readInPlace = sealed || verifiedPrivate;
+#elif TARGET_OS_IPHONE
+        BOOL verifiedPack = marker && totk_shader_pack_verified_path &&
+            totk_shader_pack_verified_path(source.fileSystemRepresentation);
+        if (verifiedPack) sealed = NO;
+        readInPlace = sealed || verifiedPack;
 #endif
         for (id name in names) {
             if (![name isKindOfClass:NSString.class] || ![safe numberOfMatchesInString:name options:0 range:NSMakeRange(0, [name length])]) {
@@ -141,6 +150,9 @@ static NSDictionary *totk_seed_import_into(NSString *source, NSString *cache, NS
 #if defined(CANOPY_HOST_RUNTIME)
             return @{@"available": @YES, @"shaders": m[@"shaders"], @"imported_files": @0,
                 @"sealed": @(sealed), @"readInPlace": @YES, @"verifiedPrivate": @(verifiedPrivate), @"overlay": names};
+#elif TARGET_OS_IPHONE
+            return @{@"available": @YES, @"shaders": m[@"shaders"], @"imported_files": @0,
+                @"sealed": @(sealed), @"readInPlace": @YES, @"verifiedPrivate": @(verifiedPack), @"overlay": names};
 #else
             return @{@"available": @YES, @"shaders": m[@"shaders"], @"imported_files": @0, @"sealed": @YES, @"overlay": names};
 #endif

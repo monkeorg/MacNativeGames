@@ -97,6 +97,11 @@ NSString *totk_rt_dir(void) {
 #if defined(CANOPY_HOST_RUNTIME)
             if (!seed || ![seed[@"available"] boolValue]) runtime_fail("Required verified private shader seed unavailable");
 #else
+#if TARGET_OS_IPHONE
+            if ((!seed || ![seed[@"available"] boolValue]) && totk_shader_pack_verified_path &&
+                totk_shader_pack_verified_path(source.fileSystemRepresentation))
+                runtime_fail("Required verified private shader pack is unsupported");
+#endif
             if (!seed) {   // 2026-10-18: a damaged bundle or a full disk used to end the game here with nothing on screen. The
                            // cache stays usable (totk_seed_import writes shader files before the indexes that name them),
                            // so play on and translate shaders as they first appear, as before the prepared shaders existed.
@@ -117,7 +122,8 @@ NSString *totk_rt_dir(void) {
                 LOG("[shader-seed] 发现随 App 准备的着色器 %llu 个，导入 %llu 个文件%s%s；首次启动即可预热",
                     [seed[@"shaders"] unsignedLongLongValue], imported,
                     [seed[@"cloned_folder"] boolValue] ? "（整个文件夹一次克隆）" : "",
-                    g_seed_dir ? "（App 包已签名，原地读取，不校验也不复制）" : "");
+                    [seed[@"verifiedPrivate"] boolValue] ? "（已校验的私有快照，原地读取；不代表 App 签名）" :
+                    [seed[@"sealed"] boolValue] ? "（App 包已签名，原地读取，不校验也不复制）" : "");
 #endif
                 if ([seed[@"folder_skipped"] length]) LOG("[shader-seed] 缓存里已有文件（例如 %s），逐个导入", [seed[@"folder_skipped"] UTF8String]);
                 if ([seed[@"clone_errno"] intValue]) LOG("[shader-seed] 【红】克隆失败（%s），改为复制文件", strerror([seed[@"clone_errno"] intValue]));
@@ -126,6 +132,9 @@ NSString *totk_rt_dir(void) {
 #if defined(CANOPY_HOST_RUNTIME)
                     : g_seed_dir ? "Reading the verified private shader seed in place; starting warm-up"
 #else
+#if TARGET_OS_IPHONE
+                    : [seed[@"verifiedPrivate"] boolValue] ? TOTK_UI("直接读取已校验的私有着色器快照；开始预热","Reading the verified private shader snapshot in place; starting warm-up")
+#endif
                     : g_seed_dir ? TOTK_UI("直接读取 App 附带的着色器，无需导入；开始预热","Reading the shaders bundled with the app in place, nothing to import; starting warm-up")
 #endif
                     : TOTK_UI("本机缓存已存在，无需重新导入；开始预热","Local cache already present, nothing to import; starting warm-up"));
