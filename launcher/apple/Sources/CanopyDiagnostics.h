@@ -31,6 +31,11 @@ typedef NS_ENUM(NSInteger, CanopyDiagnosticsError) {
 /// Preparation may use Catalog's nested integrity or Job's flat flags. Optional
 /// phaseDone/phaseTotal are counts, with phaseUnit bytes/blocks/records; omitted
 /// or unknown units are unspecified, never guessed from an overall percentage.
+/// preparationIO accepts only scope logicalPayloadIO and observed streamed,
+/// written, cloned-logical, compared-equal, resumed bytes and clone asset counts.
+/// These are attempt counters, including failed attempts, never saved space or
+/// proof of publication. Separate preparationPublished and
+/// preparationPublicationMayHaveCompleted booleans preserve result uncertainty.
 - (BOOL)recordPreparedEntry:(nullable NSDictionary<NSString *,id> *)entry
     phase:(CanopyDiagnosticsPhase)phase errorCode:(CanopyDiagnosticsError)error
     metrics:(nullable NSDictionary<NSString *,id> *)metrics;
