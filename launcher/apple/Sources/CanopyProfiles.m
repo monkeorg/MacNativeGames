@@ -10,9 +10,12 @@
 
 static const size_t PPLimit=65536;
 static BOOL PPFail(NSError **error,BOOL uncertain) {
-    if(error)*error=[NSError errorWithDomain:@"CanopyProfiles" code:1 userInfo:@{
+    if(error) {
+        *error=[NSError errorWithDomain:@"CanopyProfiles" code:1 userInfo:@{
         NSLocalizedDescriptionKey:uncertain?@"Profile metadata publication was not fully confirmed. The previous snapshot and live profile are preserved. Reload before Play.":@"Profile metadata is busy, invalid, unsupported or unavailable. Existing profile data was preserved.",
-        @"publicationUncertain":uncertain?@YES:@NO}];return NO;
+        @"publicationUncertain":uncertain?@YES:@NO}];
+    }
+    return NO;
 }
 static BOOL PPHex(id value,NSUInteger n) {
     return [value isKindOfClass:NSString.class]&&[value length]==n&&
