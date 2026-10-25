@@ -4,6 +4,7 @@
 #import <TargetConditionals.h>
 #include "canopy_host.h"
 #include "canopy_metal_device.h"
+#include "language.h"
 #include <stdlib.h>
 #include <stdatomic.h>
 static _Atomic int display_patches_validated;
@@ -17,7 +18,8 @@ int canopy_host_bind_metal_device(id<MTLDevice> device) {
 }
 id<MTLDevice> runtime_canopy_metal_device(void) {return retained_renderer_device;}
 int canopy_host_pin_compile_environment(void) {
-    const char *experiments[]={"TOTK_FAST_MATH","TOTK_SHADER_XLATE","TOTK_SHADER_SERVICE","TOTK_SHADER_DEBUGMODE",NULL};
+    const char *experiments[]={"TOTK_FAST_MATH","TOTK_SHADER_XLATE","TOTK_SHADER_SERVICE","TOTK_SHADER_DEBUGMODE",
+        "TOTK_MFX","TOTK_MFX_UPSCALE","TOTK_MFX_OUTPUT","TOTK_ANISO","DM_NVN_NOFXAA",NULL};
     for(unsigned i=0;experiments[i];i++)if(unsetenv(experiments[i]))return -1;
     return 0;
 }
@@ -268,7 +270,7 @@ static int start_host(const struct canopy_totk_start *s) {
        put_path("TOTK_FONT_DIR",s->resources,"font") || put_path("TOTK_SHADER_SEED_DIR",s->shader_seed,NULL) ||
        put_path("DM_NVN_SHMAP",s->shader_seed,"shader_map.tsv") || put_path("DM_MSL_DIR",s->shader_seed,NULL) ||
        put_path("TOTK_ROMFS_PATCHES",s->resources,"romfs-patches") || put_path("TOTK_ROMFS_PATCHES_OUT",s->resources,"romfs-patches-out"))return -1;
-    if(setenv("TOTK_OPERATION_MODE","handheld",1) || setenv("TOTK_LANG",s->language,1) ||
+    if(runtime_language_apply_preferred_choice(s->language,0) || setenv("TOTK_OPERATION_MODE","handheld",1) ||
        setenv("TOTK_SLOT_OWNER","user",1) || setenv("TOTK_SLOT_PURPOSE","player",1))return -1;
     const char *reset[]={"TOTK_AUTOLOAD","TOTK_INPUT_FILE","TOTK_INPUT_SCRIPT","TOTK_HEADLESS","TOTK_VERIFY_STARTUP",NULL};
     for(unsigned i=0;reset[i];i++)unsetenv(reset[i]);
