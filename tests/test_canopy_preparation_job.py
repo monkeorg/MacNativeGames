@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -25,11 +26,18 @@ class CanopyPreparationJobTests(unittest.TestCase):
         cls.addClassCleanup(cls.build.cleanup)
         directory = Path(cls.build.name).resolve()
         objects = []
-        for name in ('mng_container', 'mng_crypto', 'mng_keys', 'mng_prepare', 'mng_store', 'mng_content', 'mng_bktr', 'mng_folder', 'mng_romfs'):
+        for name in ('mng_container', 'mng_crypto', 'mng_keys', 'mng_prepare', 'mng_store', 'mng_content', 'mng_bktr', 'mng_folder', 'mng_romfs', 'mng_romfs_runtime', 'mng_install'):
             output = directory / (name + '.o')
+            source = ROOT / ('launcher/src/' + name + '.c')
+            if name == 'mng_store':
+                source = directory / 'instrumented-store.c'
+                source.write_text('#ifndef _DARWIN_C_SOURCE\n#define _DARWIN_C_SOURCE\n#endif\n#include <unistd.h>\n#include <stdio.h>\n'
+                    'int preparation_probe_fsync(int);\nint preparation_probe_renameat(int,const char *,int,const char *);\n'
+                    '#define fsync preparation_probe_fsync\n#define renameat preparation_probe_renameat\n'
+                    '#include "'+str(ROOT/'launcher/src/mng_store.c')+'"\n')
             cls.compile(['xcrun', 'clang', '-std=c11', '-D_DARWIN_C_SOURCE',
                          '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'launcher/include'),
-                         '-c', str(ROOT / ('launcher/src/' + name + '.c')), '-o', str(output)])
+                         '-c', str(source), '-o', str(output)])
             objects.append(str(output))
         cls.probe = directory / 'canopy-preparation-probe'
         cls.compile(['xcrun', 'clang', '-fobjc-arc', '-fblocks', '-Wall', '-Wextra', '-Werror',
@@ -304,6 +312,81 @@ class CanopyPreparationJobTests(unittest.TestCase):
     def test_second_start_is_refused_while_worker_is_busy(self):
         self.job('busy')
         self.assertTrue(self.current().exists())
+
+
+    def addon_inputs(self,**options):
+        import test_canopy_content as cf
+        from test_canopy_prepare import CanopyPrepareTests
+        from test_canopy_addon_prepare import CanopyAddonPrepareTests
+        from extract_exefs import decrypt
+        from cryptography.hazmat.primitives.ciphers import modes
+        helper=CanopyPrepareTests();helper.fixture=self.fixture;helper.content_fixture=cf;helper.decrypt=staticmethod(decrypt);helper.modes=modes
+        self.source.write_bytes(self.fixture.partition(helper.identified_package()))
+        base=self.job()['result'];base_current=self.current(cf.APP).read_bytes()
+        addon=CanopyAddonPrepareTests();addon.f=self.fixture;addon.cf=cf;addon.helper=helper
+        files,cnmt=addon.package(**options);self.source.write_bytes(self.fixture.partition(files))
+        return base,base_current,cnmt
+
+    def addon_job(self,base,mode='success',job=None,env=None,application=None,generation=None,title=None):
+        source_before=self.source.read_bytes();keys_before=self.keys.read_bytes()
+        run=subprocess.run([str(self.probe),'addon-'+mode,str(self.source),str(self.keys),str(self.store),job or '-',
+            application or '0100123456780000',generation or base['generationID'],title or '0100123456781001'],
+            capture_output=True,text=True,timeout=30,env={**os.environ,**(env or {})})
+        self.assertEqual(run.returncode,0,run.stdout+run.stderr);self.assertEqual(run.stderr,'')
+        self.assertEqual(self.source.read_bytes(),source_before);self.assertEqual(self.keys.read_bytes(),keys_before)
+        for secret in (self.fixture.HEADER,self.fixture.AREA,self.fixture.CONTENT,self.fixture.TITLEKEK):self.assertNotIn(secret.hex(),run.stdout)
+        report=json.loads(run.stdout);self.assertEqual(report['status'],'pass');self.assertNotIn(str(self.directory),json.dumps(report))
+        return report
+
+    def test_actual_addon_job_installs_v5_with_typed_provenance(self):
+        base,before,cnmt=self.addon_inputs()
+        report=self.addon_job(base);result=report['result'];root=self.generation(report,0x0100123456781001)
+        self.assertEqual(self.current(0x0100123456780000).read_bytes(),before)
+        self.assertEqual((root/'romfs.bin').read_bytes(),self.fixture.romfs())
+        self.assertEqual((result['preparedKind'],result['recipeID'],result['applicationID'],result['titleVersion']),('addOn','canopy-assets-v5','0100123456780000',3))
+        self.assertEqual(result['cnmtSHA256'],hashlib.sha256(cnmt).hexdigest())
+        self.assertEqual(result['sourceSHA256'],hashlib.sha256(self.source.read_bytes()).hexdigest())
+        self.assertEqual(result['indexSHA256'],hashlib.sha256((root/'runtime-index.bin').read_bytes()).hexdigest())
+        self.assertEqual((result['requiredApplicationVersion'],result['verifiedBaseVersion'],result['assetCount']),(7,7,2))
+        self.assertIs(result['exefsVerified'],False);self.assertIs(result['romfsVerified'],True);self.assertIs(result['romfsStructureVerified'],True)
+        self.assertIs(result['signatureVerified'],False);self.assertIs(result['executionVerified'],False)
+
+    def test_actual_addon_job_cancel_waits_and_resumes_same_inode(self):
+        base,before,_=self.addon_inputs();identifier='d'*32
+        cancelled=self.addon_job(base,'cancel',identifier);self.assertEqual(cancelled['error']['code'],6)
+        self.assertEqual(cancelled['error']['jobID'],identifier);self.assertFalse(cancelled['error']['publicationUncertain'])
+        staged=self.store/'jobs'/identifier/'romfs.bin';inode=staged.stat().st_ino
+        resumed=self.addon_job(base,job=identifier);root=self.generation(resumed,0x0100123456781001)
+        self.assertEqual((root/'romfs.bin').stat().st_ino,inode);self.assertEqual(self.current(0x0100123456780000).read_bytes(),before)
+
+    def test_actual_addon_job_postrename_io_preserves_uncertainty_and_current_facts(self):
+        base,before,_=self.addon_inputs()
+        report=self.addon_job(base,'failure',env={'CANOPY_PREPARATION_FAIL_CURRENT_SYNC':'1'});error=report['error']
+        self.assertEqual(error['code'],2)
+        for key in ('commitAttempted','publicationUncertain','reloadRequired','currentReadable'):self.assertIs(error[key],True)
+        self.assertEqual(self.current(0x0100123456781001).read_text().strip(),error['currentGenerationID'])
+        current=self.current(0x0100123456781001).parent/'generations'/error['currentGenerationID']
+        self.assertEqual((current/'romfs.bin').read_bytes(),self.fixture.romfs());self.assertEqual(self.current(0x0100123456780000).read_bytes(),before)
+
+    def test_actual_addon_job_late_cancel_does_not_relabel_native_commit_success(self):
+        base,before,_=self.addon_inputs()
+        report=self.addon_job(base,env={'CANOPY_PREPARATION_CANCEL_AFTER_CURRENT':'1'})
+        self.assertTrue(report['late_cancel']);self.assertIn('result',report);self.generation(report,0x0100123456781001)
+        self.assertEqual(self.current(0x0100123456780000).read_bytes(),before)
+
+    def test_actual_addon_job_identifier_base_authority_and_required_version(self):
+        base,_,_=self.addon_inputs(required=8)
+        self.assertEqual(self.addon_job(base,'failure')['error']['code'],3)
+        self.assertNotIn('result',self.addon_job(base,'failure',generation='a'*64))
+        for options in ({'application':'0'*16},{'title':'../invalid'},{'generation':'A'*64},{'title':'0100123456780000'}):
+            self.assertTrue(self.addon_job(base,'invalid',**options)['rejected'])
+
+    def test_actual_addon_job_empty_volume_and_unicode_index_validation(self):
+        from test_canopy_romfs import romfs
+        for image in (romfs()[0],romfs([('é',b'original')])[0]):
+            base,_,_=self.addon_inputs(image=image);report=self.addon_job(base);root=self.generation(report,0x0100123456781001)
+            self.assertEqual((root/'romfs.bin').read_bytes(),image)
+            self.assertEqual(report['result']['indexFileCount'],0 if image==romfs()[0] else 1)
 
 
 if __name__ == '__main__':

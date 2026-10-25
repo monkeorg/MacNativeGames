@@ -56,6 +56,16 @@ static void Options(NSURL *root) {
     Check([settings setValue:mapping forSetting:@"buttonMappings" titleID:A error:&error], "mapping write");
     mapping[@"south"] = @"b";
     Check([Values(settings,A)[@"buttonMappings"][@"south"] isEqual:@"a"], "caller mutation changed settings");
+    NSArray *badKeys=@[@{@"a":@4},@{@"a":@41},@{@"a":@227},@{@"a":@231},@{@"a":@YES},@{@"a":@4.5},@{@"a":@256},@{@"invented":@0}];
+    for(NSDictionary *keys in badKeys)Check(![settings setValue:keys forSetting:@"keyboardBindings" titleID:A error:&error],"invalid keyboard map accepted");
+    NSMutableDictionary *keys=[@{@"moveLeft":@0,@"a":@4} mutableCopy];
+    Check([settings setValue:keys forSetting:@"keyboardBindings" titleID:A error:&error],"keyboard map write");
+    keys[@"a"]=@5;
+    NSDictionary *reopened=Values(Settings(root),A);
+    Check([CanopySettings keyboardBindingForAction:@"a" settings:reopened]==4,"keyboard persistence/mutation");
+    Check([CanopySettings keyboardBindingForAction:@"moveLeft" settings:reopened]==0,"explicit None");
+    Check([CanopySettings keyboardBindingForAction:@"a" settings:Values(settings,B)]==13,"keyboard title isolation");
+    Check(CanopySettings.keyboardActions.count==24 && ![CanopySettings.keyboardSupportedKeys containsObject:@41] && ![CanopySettings.keyboardSupportedKeys containsObject:@227],"keyboard public choices");
 }
 static void Invalid(NSURL *root, NSString *scenario) {
     Directory(root); NSURL *index = Child(root,@"titles.json");
@@ -66,6 +76,7 @@ static void Invalid(NSURL *root, NSString *scenario) {
     else if ([scenario isEqual:@"unknown_key"]) data = JSON(@{@"schemaVersion":@1,@"titles":@{},@"keys":@[]});
     else if ([scenario isEqual:@"invalid_title"]) data = JSON(Document(@{@"../bad":Row(@{})}));
     else if ([scenario isEqual:@"invalid_option"]) data = JSON(Document(@{A:Row(@{@"fpsLimit":@50})}));
+    else if ([scenario isEqual:@"invalid_keyboard"]) data = JSON(Document(@{A:Row(@{@"keyboardBindings":@{@"a":@4}})}));
     else if ([scenario isEqual:@"oversize"]) { NSMutableData *large = [data mutableCopy]; [large increaseLengthBy:1024*1024+1]; data = large; }
     else if ([scenario isEqual:@"title_limit"]) {
         NSMutableDictionary *titles = [NSMutableDictionary dictionary];
@@ -195,11 +206,36 @@ static void FolderCatalogScenario(NSURL *directory) {
     NSData *json=JSON(@{@"status":@"pass",@"entries":catalog.entries});
     fwrite(json.bytes,1,json.length,stdout);putchar('\n');
 }
+static void AddonCatalogScenario(NSURL *directory,BOOL corrupt) {
+    NSURL *prepared=Child(directory,@"prepared");
+    CanopyCatalog *catalog=Catalog(prepared,Settings(Child(directory,@"metadata")));
+    Check(catalog.entries.count==1 && catalog.addOns.count==1 && !catalog.issues.count,"actual base/add-on separation");
+    NSDictionary *base=catalog.entries[0],*addon=catalog.addOns[0];
+    Check([base[@"titleID"] isEqual:@"0100123456780000"] && ![base[@"preparedKind"] isEqual:@"addOn"],"add-on mixed into playable library");
+    Check([addon[@"titleID"] isEqual:@"0100123456781001"] && [addon[@"applicationID"] isEqual:base[@"titleID"]],"add-on owner identity");
+    Check([addon[@"preparedKind"] isEqual:@"addOn"] && [addon[@"recipeID"] isEqual:@MNG_STORE_RECIPE_V5] &&
+        [addon[@"contentRole"] unsignedIntValue]==0x82,"typed add-on provenance");
+    Check([addon[@"titleVersion"] isEqual:@3] && [addon[@"requiredApplicationVersion"] isEqual:@7] &&
+        [addon[@"versionIdentified"] isEqual:@YES] && [addon[@"cnmtSHA256"] length]==64,"add-on version/CNMT facts");
+    Check([addon[@"mountState"] isEqual:@"notActivated"] && [addon[@"runtimeEligibility"] isEqual:@"unassessed"],"add-on activation inferred");
+    Check([addon[@"integrity"][@"exefsVerified"] isEqual:@NO] && [addon[@"integrity"][@"romfsVerified"] isEqual:@YES] &&
+        [addon[@"integrity"][@"signatureVerified"] isEqual:@NO],"add-on integrity claims");
+    if(corrupt) {
+        NSString *relative=[NSString stringWithFormat:@"titles/%@/generations/%@/romfs.bin",addon[@"titleID"],addon[@"generationID"]];
+        NSURL *asset=Child(prepared,relative);Write([@"corrupt original fixture" dataUsingEncoding:NSUTF8StringEncoding],asset);
+        Check(chmod(asset.fileSystemRepresentation,0400)==0,"private corrupt fixture mode");
+        NSError *error=nil;Check([catalog reload:&error] && catalog.entries.count==1 && catalog.addOns.count==0 && catalog.issues.count>0,"corrupt add-on hid healthy base");
+        Check([catalog.entries[0][@"generationID"] isEqual:base[@"generationID"]],"corrupt add-on changed good base identity");
+    }
+    NSData *json=JSON(@{@"status":@"pass",@"entries":catalog.entries,@"addOns":catalog.addOns,@"issues":catalog.issues});
+    fwrite(json.bytes,1,json.length,stdout);putchar('\n');
+}
 int main(int argc, char **argv) {
     @autoreleasepool {
         Check(argc==3,"arguments"); NSString *scenario=[NSString stringWithUTF8String:argv[1]];
         NSURL *root=[NSURL fileURLWithPath:[NSString stringWithUTF8String:argv[2]] isDirectory:YES];
         if ([scenario isEqual:@"folder"]) { FolderCatalogScenario(root);return 0; }
+        if ([scenario isEqual:@"addons"] || [scenario isEqual:@"addons_corrupt"]) { AddonCatalogScenario(root,[scenario isEqual:@"addons_corrupt"]);return 0; }
         if ([scenario isEqual:@"settings"]) SettingsRoundtrip(root);
         else if ([scenario isEqual:@"options"]) Options(root);
         else if ([scenario isEqual:@"partial"]) Partial(root);

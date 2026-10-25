@@ -25,6 +25,17 @@ NS_ASSUME_NONNULL_BEGIN
         jobIdentifier:(nullable NSString *)identifier
            completion:(void (^)(NSDictionary<NSString *, id> * _Nullable result,
                                 NSError * _Nullable error))completion;
+/// Actual full-install add-on installation. Identifiers are exact lowercase
+/// hexadecimal (owner/add-on16, base generation64). The native installer
+/// rehashes that base generation and derives its known version under its lock;
+/// caller metadata never supplies version authority. No game DLC activation.
+/// Error userInfo preserves publicationUncertain/reloadRequired/currentReadable
+/// and currentGenerationID (observed pointer only, not an execution assertion).
+- (BOOL)startAddonURL:(NSURL *)source keysURL:(NSURL *)keys
+       applicationID:(NSString *)applicationID baseGenerationID:(NSString *)baseGenerationID
+        addonTitleID:(NSString *)addonTitleID jobIdentifier:(nullable NSString *)identifier
+          completion:(void (^)(NSDictionary<NSString *, id> * _Nullable result,
+                               NSError * _Nullable error))completion;
 /// Requests cancellation, including native verification. Completion is the
 /// authority: a request after publication may still return a successful result.
 - (void)cancel;

@@ -21,18 +21,19 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
 @implementation CanopyCatalog {
     NSURL *_root;
     CanopySettings *_settings;
-    NSArray *_entries;
+    NSArray *_entries, *_addOns;
     NSArray *_issues;
 }
 - (instancetype)initWithPreparedRootURL:(NSURL *)root settings:(CanopySettings *)settings {
-    if ((self = [super init])) { _root = [root copy]; _settings = settings; _entries = @[]; _issues = @[]; }
+    if ((self = [super init])) { _root = [root copy]; _settings = settings; _entries = @[]; _addOns=@[]; _issues = @[]; }
     return self;
 }
 - (NSArray *)entries { return _entries; }
+- (NSArray *)addOns { return _addOns; }
 - (NSArray *)issues { return _issues; }
 - (BOOL)reload:(NSError **)error {
     int root = open(_root.fileSystemRepresentation, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (root < 0 && errno == ENOENT) { _entries = @[]; _issues = @[]; return YES; }
+    if (root < 0 && errno == ENOENT) { _entries = @[]; _addOns=@[]; _issues = @[]; return YES; }
     if (root < 0) return CatalogError(error, @"The prepared library directory is unavailable or is a link.");
     struct mng_store *store = NULL;
     enum mng_prepare_status status = mng_store_open(root, &store);
@@ -40,12 +41,12 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
     int titles = openat(root, "titles", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (titles < 0) {
         int saved = errno; mng_store_close(store); close(root);
-        if (saved == ENOENT) { _entries = @[]; _issues = @[]; return YES; }
+        if (saved == ENOENT) { _entries = @[]; _addOns=@[]; _issues = @[]; return YES; }
         return CatalogError(error, @"The title directory is unavailable or is a link.");
     }
     DIR *directory = fdopendir(titles);
     if (!directory) { close(titles); mng_store_close(store); close(root); return CatalogError(error, @"The prepared library could not be enumerated."); }
-    NSMutableArray *entries = [NSMutableArray array], *issues = [NSMutableArray array];
+    NSMutableArray *entries = [NSMutableArray array], *addOns=[NSMutableArray array], *issues = [NSMutableArray array];
     NSUInteger scanned = 0;
     BOOL okay = YES;
     for (;;) {
@@ -69,7 +70,7 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
         }
         if (result.title_id != title) { [issues addObject:@"A verified generation returned an inconsistent title identity."]; continue; }
         NSMutableDictionary *entry = [@{@"titleID":titleID, @"generationID":[NSString stringWithUTF8String:generation],
-            @"recipeID":result.source_kind ? @MNG_STORE_RECIPE_V4 : result.update_applied ? @MNG_STORE_RECIPE_V3 : result.version_identified ? @MNG_STORE_RECIPE_V2 : @MNG_STORE_RECIPE,
+            @"recipeID":result.content_role==0x82 ? @MNG_STORE_RECIPE_V5 : result.source_kind ? @MNG_STORE_RECIPE_V4 : result.update_applied ? @MNG_STORE_RECIPE_V3 : result.version_identified ? @MNG_STORE_RECIPE_V2 : @MNG_STORE_RECIPE,
             @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)result.application_id],
             @"titleVersion":@(result.title_version), @"versionIdentified":result.version_identified ? @YES : @NO,
             @"contentRole":@(result.content_role),
@@ -92,7 +93,13 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
             integrity[@"romfsStructureVerified"]=result.romfs_structure_verified ? @YES : @NO;
             entry[@"integrity"]=[integrity copy];
         }
-        [entries addObject:[entry copy]];
+        if(result.content_role==0x82) {
+            entry[@"preparedKind"]=@"addOn";
+            entry[@"requiredApplicationVersion"]=@(result.addon_required_application_version);
+            entry[@"cnmtSHA256"]=HexDigest(result.addon_cnmt_sha256);
+            entry[@"mountState"]=@"notActivated";
+            [addOns addObject:[entry copy]];
+        } else [entries addObject:[entry copy]];
     }
     closedir(directory); mng_store_close(store); close(root);
     if (!okay) return CatalogError(error, @"The prepared library exceeds 500 entries or could not be read completely. Existing catalog state was retained.");
@@ -100,6 +107,10 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
         NSComparisonResult order = [left[@"displayName"] localizedCaseInsensitiveCompare:right[@"displayName"]];
         return order == NSOrderedSame ? [left[@"titleID"] compare:right[@"titleID"]] : order;
     }];
-    _entries = [entries copy]; _issues = [issues copy]; return YES;
+    [addOns sortUsingComparator:^NSComparisonResult(NSDictionary *left,NSDictionary *right) {
+        NSComparisonResult order=[left[@"applicationID"] compare:right[@"applicationID"]];
+        return order==NSOrderedSame ? [left[@"titleID"] compare:right[@"titleID"]] : order;
+    }];
+    _entries = [entries copy]; _addOns=[addOns copy]; _issues = [issues copy]; return YES;
 }
 @end
