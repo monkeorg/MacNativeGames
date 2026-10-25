@@ -7,6 +7,8 @@
 #import <Metal/Metal.h>
 #include "../games/totk/runtime/canopy_host.h"
 #include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -18,6 +20,17 @@ static int32_t expectedLX=16384;
 static int expectedConnected=1;
 static int taa,hud=1,focus=1;
 static const char *mainHash="304100cd4db5f85f0804e00866a37143a7ca214d5b4c09d99fef829cb8b0a344";
+static BOOL PhysicalDirectory(const char *path) {
+    if(!path || path[0]!='/' || strlen(path)>=4096)return NO;
+    char copy[4096];strcpy(copy,path);char *part=copy+1;
+    int fd=open("/",O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+    while(fd>=0 && *part) {
+        char *slash=strchr(part,'/');if(slash)*slash=0;
+        if(*part) {int child=openat(fd,part,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);close(fd);fd=child;}
+        if(!slash)break;part=slash+1;
+    }
+    BOOL valid=fd>=0;if(fd>=0)close(fd);return valid;
+}
 static int start(const struct canopy_totk_start *s) {
     Check(NSThread.isMainThread,"native attach thread");
     Check(s->metal_layer && s->host_view && s->metal_device,"native graphics target");
@@ -28,6 +41,7 @@ static int start(const struct canopy_totk_start *s) {
     Check(strstr(s->active_saves,"active") && strstr(s->identity,"identity"),"separate native save paths");
     Check([NSFileManager.defaultManager fileExistsAtPath:[@(s->shader_seed) stringByAppendingPathComponent:@"shader_map.tsv"]],"verified shader seed binding");
     Check([NSFileManager.defaultManager fileExistsAtPath:@(s->shader_cache)],"separate mutable shader cache");
+    Check(PhysicalDirectory(s->shader_cache) && PhysicalDirectory(s->shader_seed),"native shader paths contain no linked components");
     fps=s->fps_limit;taa=s->taa_enabled;hud=s->hud_mode;focus=0;starts++;
     return !strcmp(mode,"entry-failure") ? -1:0;
 }
@@ -64,7 +78,7 @@ int main(int argc,char **argv) {
         for(NSURL *url in @[saves,identity,cache])Check([NSFileManager.defaultManager createDirectoryAtURL:url
             withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:NULL],"private directories");
         id<MTLDevice> device=MTLCreateSystemDefaultDevice();
-        BOOL deviceDependent=!strcmp(mode,"success") || !strcmp(mode,"entry-failure") || !strcmp(mode,"cache-reuse") || !strcmp(mode,"actual-shader-device");
+        BOOL deviceDependent=!strcmp(mode,"success") || !strcmp(mode,"entry-failure") || !strcmp(mode,"cache-reuse") || !strcmp(mode,"actual-shader-device") || !strcmp(mode,"cache-parent-alias");
         if(!device && deviceDependent){puts("{\"status\":\"skip\",\"reason\":\"No actual native Metal device is available\"}");return 0;}
         if(!strcmp(mode,"actual-shader-device")) {
             NSError *shaderError=nil;
@@ -96,7 +110,7 @@ int main(int argc,char **argv) {
             Check(completed,"native completion timeout");
             if(deviceDependent && !runtime.nativeEntryInvoked && failure)
                 fprintf(stderr,"Native preflight refused: code=%ld message=%s\n",(long)failure.code,failure.localizedDescription.UTF8String);
-            if(!strcmp(mode,"wrong-main") || !strcmp(mode,"wrong-index") || !strcmp(mode,"corrupt-cache") || !strcmp(mode,"public-cache") || !strcmp(mode,"cancel")) {
+            if(!strcmp(mode,"wrong-main") || !strcmp(mode,"wrong-index") || !strcmp(mode,"corrupt-cache") || !strcmp(mode,"public-cache") || !strcmp(mode,"cache-leaf-symlink") || !strcmp(mode,"cancel")) {
                 Check(!started && failure && !runtime.nativeEntryInvoked && starts==0,"pin mismatch reaches no native entry");
                 Check([runtime close:&error],"preflight refusal permits seal release");
             } else if(!strcmp(mode,"entry-failure")) {

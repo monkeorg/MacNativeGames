@@ -8,6 +8,8 @@
 #include "mng_crypto.h"
 #include "mng_romfs_runtime.h"
 #include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
@@ -43,10 +45,18 @@ static const struct canopy_totk_host *CRHost(void) {
        !h->get_hud || !h->cycle_hud || !h->clear_input || !h->set_focus || !h->input)return NULL;
     return h;
 }
+static NSURL *CRTrustedDirectory(NSURL *url) {
+    /* Foundation standardization may spell Darwin's physical /private/var
+     * as /var again. Strict descriptor traversal needs the actual realpath.
+     * Only trusted existing bases use this; derived final leaves do not. */
+    char physical[PATH_MAX];
+    if(!url.isFileURL || !realpath(url.fileSystemRepresentation,physical))return nil;
+    return [NSURL fileURLWithFileSystemRepresentation:physical isDirectory:YES relativeToURL:nil];
+}
 static NSURL *CRResources(const struct canopy_totk_host *h) {
     NSURL *url=h->resource_directory ? [NSURL fileURLWithPath:CRString(h->resource_directory) isDirectory:YES]:
         [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"GameData" isDirectory:YES];
-    return url.URLByResolvingSymlinksInPath; /* Compiled trusted resource base. */
+    return CRTrustedDirectory(url); /* Compiled trusted resource base. */
 }
 static NSDictionary *CRCapabilities(BOOL available) {
     return @{@"available":@(available),@"singleUse":@YES,@"canStop":@NO,@"canPauseCPU":@NO,
@@ -197,7 +207,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     if(selectedDevice)metalLayer.device=selectedDevice;
     /* Resolve only the app-owned cache base; preserve the derived final leaf
      * so a symlink there is still refused by descriptor-relative validation. */
-    cache=[[cache.URLByDeletingLastPathComponent URLByResolvingSymlinksInPath]
+    cache=[CRTrustedDirectory(cache.URLByDeletingLastPathComponent)
         URLByAppendingPathComponent:cache.lastPathComponent isDirectory:YES];
     const char *savePath=saves.fileSystemRepresentation,*identityPath=identity.fileSystemRepresentation;
     if(!savePath || !identityPath || strnlen(savePath,1024)>=1024 || strnlen(identityPath,1024)>=1024) {

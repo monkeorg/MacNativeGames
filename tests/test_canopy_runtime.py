@@ -92,8 +92,17 @@ class CanopyRuntimeTests(unittest.TestCase):
                 if mode == 'public-cache':
                     cache_file.parent.chmod(0o755)
                 before = (cache_file.stat().st_ino, cache_file.stat().st_mtime_ns, cache_file.read_bytes())
+            cache_argument = root / 'cache'
+            if mode == 'cache-leaf-symlink':
+                target = root / 'separate-cache'
+                target.mkdir(mode=0o700)
+                cache_argument.symlink_to(target, target_is_directory=True)
+            if mode == 'cache-parent-alias':
+                alias = root / 'trusted-base-alias'
+                alias.symlink_to(root, target_is_directory=True)
+                cache_argument = alias / 'cache'
             run = subprocess.run([str(self.probe), mode, str(store), report['generation'], str(resources),
-                                  str(root / 'profiles'), str(root / 'cache'), romfs_sha, index_sha, manifest_sha],
+                                  str(root / 'profiles'), str(cache_argument), romfs_sha, index_sha, manifest_sha],
                                  capture_output=True, text=True, timeout=30)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             result = json.loads(run.stdout)
@@ -114,6 +123,9 @@ class CanopyRuntimeTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.assertEqual(self.scenario(mode)['starts'], 0)
 
+    def test_trusted_cache_parent_alias_is_canonicalized_before_strict_import(self):
+        self.assertEqual(self.scenario('cache-parent-alias')['starts'], 1)
+
     def test_shader_seed_import_with_actual_device_identity(self):
         self.assertEqual(self.scenario('actual-shader-device')['starts'], 0)
 
@@ -121,7 +133,7 @@ class CanopyRuntimeTests(unittest.TestCase):
         self.assertEqual(self.scenario('cache-reuse')['starts'], 1)
 
     def test_corrupt_or_public_index_cache_is_refused(self):
-        for mode in ('corrupt-cache', 'public-cache'):
+        for mode in ('corrupt-cache', 'public-cache', 'cache-leaf-symlink'):
             with self.subTest(mode=mode):
                 self.assertEqual(self.scenario(mode)['starts'], 0)
 
