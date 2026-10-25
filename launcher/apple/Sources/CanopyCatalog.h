@@ -9,9 +9,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// titleID, generationID, recipeID, displayName, sourceSize, sourceSHA256,
 /// assetCount/assetBytes, integrity, preparationState="prepared", runtimeEligibility="unassessed".
 @property(nonatomic, readonly) NSArray<NSDictionary<NSString *, id> *> *entries;
+/// Verified, isolated V5 add-on generations. Includes applicationID, titleID,
+/// requiredApplicationVersion and cnmtSHA256. Preparation does not mount them.
+@property(nonatomic, readonly) NSArray<NSDictionary<NSString *, id> *> *addOns;
 /// Bounded sanitized per-title failures. A corrupt title does not hide valid titles.
 @property(nonatomic, readonly) NSArray<NSString *> *issues;
-- (instancetype)initWithPreparedRootURL:(NSURL *)root settings:(CanopySettings *)settings;
+/// Nil settings uses verified title IDs as display names and reads no metadata.
+- (instancetype)initWithPreparedRootURL:(NSURL *)root settings:(nullable CanopySettings *)settings;
 - (BOOL)reload:(NSError **)error;
 @end
 

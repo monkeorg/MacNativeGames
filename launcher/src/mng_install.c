@@ -45,9 +45,13 @@ static enum mng_prepare_status stream_index(struct installation *i,int fd,const 
     unsigned char *bytes=malloc(65536);struct mng_sha256 *hash=NULL;if(!bytes||mng_sha256_init(&hash)){free(bytes);return MNG_PREPARE_NOMEM;}
     enum mng_prepare_status status=MNG_PREPARE_OK;unsigned char digest[32];
     for(uint64_t at=0;at<index->index_size;){
-        if(stopped(i)){status=MNG_PREPARE_CANCELLED;break;}size_t n=index->index_size-at>65536?65536:(size_t)(index->index_size-at),used=0;
-        while(used<n){if(stopped(i)){status=MNG_PREPARE_CANCELLED;break;}ssize_t got=pread(fd,bytes+used,n-used,(off_t)(at+used));if(got<0&&errno==EINTR)continue;if(got<=0){status=MNG_PREPARE_IO;break;}used+=(size_t)got;}
-        if(status)break;
+        if(stopped(i)){status=MNG_PREPARE_CANCELLED;break;}
+        uint64_t remaining=index->index_size-at;
+        size_t request=remaining<65536 ? (size_t)remaining:65536;
+        ssize_t got=pread(fd,bytes,request,(off_t)at);
+        if(got<0 && errno==EINTR)continue;
+        if(got<=0 || (size_t)got>request){status=MNG_PREPARE_IO;break;}
+        size_t n=(size_t)got;
         if(mng_sha256_update(hash,bytes,n)||i->sink.write(i->sink.context,bytes,n)){status=stopped(i)?MNG_PREPARE_CANCELLED:MNG_PREPARE_IO;break;}
         at+=n;progress(i,"write-addon-index",at,index->index_size);
     }

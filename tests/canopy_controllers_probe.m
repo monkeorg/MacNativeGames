@@ -53,7 +53,7 @@ int main(int argc,const char *argv[]) {
         Emit(first); Emit(second);
         if ([scenario isEqual:@"independent"]) {
             struct mng_input left=Read(bridge,0,a), right=Read(bridge,1,b);
-            Check(left.buttons==1 && right.buttons==2 && left.sticks[0]==1 && right.sticks[0]==-1,"player inputs merged");
+            Check(left.buttons==2 && right.buttons==1 && left.sticks[0]==1 && right.sticks[0]==-1,"player inputs merged or default position layout changed");
             Check([bridge assignDevice:b toPlayer:0]==MNG_PLAYER_CONFLICT,"occupied assignment accepted");
             Notify(GCControllerDidConnectNotification,first);
             Check(bridge.devices.count==2,"duplicate connect changed IDs");
@@ -61,7 +61,7 @@ int main(int argc,const char *argv[]) {
         } else if ([scenario isEqual:@"disconnect"]) {
             Notify(GCControllerDidDisconnectNotification,first);
             Check(Neutral(Read(bridge,0,0)),"disconnect left held input");
-            Emit(second); Check(Read(bridge,1,b).buttons==2,"disconnect released another player");
+            Emit(second); Check(Read(bridge,1,b).buttons==1,"disconnect released another player");
             Notify(GCControllerDidConnectNotification,first);
             uint64_t replacement=Identifier(bridge,1);
             Check(replacement>b && replacement!=a,"reconnected ID was reused");
@@ -72,7 +72,7 @@ int main(int argc,const char *argv[]) {
             Check([bridge swapPlayer:0 withPlayer:1]==MNG_PLAYER_OK,"swap failed");
             old(first.extendedGamepad,first.extendedGamepad.buttonA);
             Check(Neutral(Read(bridge,1,a)) && Neutral(Read(bridge,0,b)),"stale swap callback changed input");
-            Emit(first); Check(Read(bridge,1,a).buttons==1,"new swapped handler failed");
+            Emit(first); Check(Read(bridge,1,a).buttons==2,"new swapped handler failed");
         } else if ([scenario isEqual:@"focus"]) {
             GCExtendedGamepadValueChangedHandler old=[first.extendedGamepad.valueChangedHandler copy];
             Check([bridge setFocused:NO]==MNG_PLAYER_OK,"deactivation failed");
@@ -80,7 +80,7 @@ int main(int argc,const char *argv[]) {
             Check([bridge setFocused:YES]==MNG_PLAYER_OK,"reactivation failed");
             old(first.extendedGamepad,first.extendedGamepad.buttonA);
             Check(Neutral(Read(bridge,0,a)),"queued pre-focus event accepted");
-            Emit(first); Check(Read(bridge,0,a).buttons==1,"fresh focus sample failed");
+            Emit(first); Check(Read(bridge,0,a).buttons==2,"fresh focus sample failed");
         } else if ([scenario isEqual:@"reassign"]) {
             GCExtendedGamepadValueChangedHandler other=[second.extendedGamepad.valueChangedHandler copy];
             GCExtendedGamepadValueChangedHandler old=[first.extendedGamepad.valueChangedHandler copy];
@@ -89,7 +89,35 @@ int main(int argc,const char *argv[]) {
             old(first.extendedGamepad,first.extendedGamepad.buttonA);
             Check(Neutral(Read(bridge,2,a)),"old assignment input survived");
             Check((id)other==(id)second.extendedGamepad.valueChangedHandler,"unaffected handler sequence was restarted");
-            Emit(second); Check(Read(bridge,1,b).buttons==2,"unaffected player input lost");
+            Emit(second); Check(Read(bridge,1,b).buttons==1,"unaffected player input lost");
+        } else if ([scenario isEqual:@"mapping"]) {
+            NSError *error=nil;
+            GCExtendedGamepadValueChangedHandler stale=[first.extendedGamepad.valueChangedHandler copy];
+            GCExtendedGamepadValueChangedHandler unchanged=[second.extendedGamepad.valueChangedHandler copy];
+            Check([bridge configurePlayer:0 controllerType:@"xbox" buttonMappings:@{@"south":@"x"} error:&error],"mapping configuration failed");
+            Check(Neutral(Read(bridge,0,a)),"mapping retained old held state");
+            Check((id)unchanged==(id)second.extendedGamepad.valueChangedHandler,"mapping reset another seat");
+            stale(first.extendedGamepad,first.extendedGamepad.buttonA);
+            Check(Neutral(Read(bridge,0,a)),"old mapping callback changed input");
+            Emit(first); Check(Read(bridge,0,a).buttons==4,"real physical remap did not reach router");
+            Check(Read(bridge,1,b).buttons==1,"mapping changed another player");
+            Check(![bridge configurePlayer:0 controllerType:@"bad" buttonMappings:@{} error:&error],"unknown type accepted");
+            Check(![bridge configurePlayer:0 controllerType:@"auto" buttonMappings:@{@"south":@"bad"} error:&error],"invalid map accepted");
+            Check(Read(bridge,0,a).buttons==4,"invalid configuration changed current input");
+            Check([bridge configurePlayer:0 controllerType:@"switch" buttonMappings:@{} error:&error],"Switch type failed");
+            Emit(first); Check(Read(bridge,0,a).buttons==1,"forced Switch label mapping failed");
+            Check([bridge applySettings:@{@"controllerType":@"xbox",@"buttonMappings":@{@"south":@"a",@"east":@"b"}} error:&error],"title settings apply failed");
+            Emit(first); Emit(second);
+            Check(Read(bridge,0,a).buttons==1 && Read(bridge,1,b).buttons==2,"common title layout was not applied independently");
+        } else if ([scenario isEqual:@"taps"]) {
+            [first.extendedGamepad.buttonA setValue:0]; Emit(first);
+            struct mng_input out={0};uint64_t identifier=0;
+            Check([bridge readPlayer:0 deviceID:&identifier input:&out]==MNG_PLAYER_OK && out.buttons==0,"peek did not show released state");
+            Check([bridge consumePlayer:0 deviceID:&identifier input:&out]==MNG_PLAYER_OK && identifier==a && out.buttons==2,"short tap vanished between polls");
+            Check([bridge consumePlayer:0 deviceID:&identifier input:&out]==MNG_PLAYER_OK && out.buttons==0,"short tap replayed");
+            [first.extendedGamepad.buttonA setValue:1];Emit(first);[first.extendedGamepad.buttonA setValue:0];Emit(first);
+            Check([bridge setFocused:NO]==MNG_PLAYER_OK && [bridge setFocused:YES]==MNG_PLAYER_OK,"tap focus clear failed");
+            Check([bridge consumePlayer:0 deviceID:&identifier input:&out]==MNG_PLAYER_OK && Neutral(out),"focus replayed pending tap");
         } else if ([scenario isEqual:@"commands"]) {
             if (!first.extendedGamepad.buttonHome) {
                 puts("{\"status\":\"skip\",\"reason\":\"The public snapshot controller does not expose Home\"}"); return 0;

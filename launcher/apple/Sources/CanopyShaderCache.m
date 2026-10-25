@@ -186,7 +186,11 @@ static BOOL SCSeedStructure(int seed,NSDictionary *manifest,NSArray<NSString *> 
             NSString *prefix=[[name substringToIndex:64] stringByAppendingString:@"-"];
             for(NSDictionary *row in rows) {if((cancel && cancel()) || ![row isKindOfClass:NSDictionary.class] || ![row[@"variant"] isKindOfClass:NSString.class] ||
                 ![row[@"variant"] hasPrefix:prefix] || ![variants containsObject:row[@"variant"]] ||
-                [indexed containsObject:row[@"variant"]] || !SCDeps(row[@"deps"]))return NO;[indexed addObject:row[@"variant"]];}
+                [indexed containsObject:row[@"variant"]] || !SCDeps(row[@"deps"])) {
+                    return NO;
+                }
+                [indexed addObject:row[@"variant"]];
+            }
         }
         if([name isEqual:@"shader-keys.json"]) {
             NSDictionary *scope=SCParse(SCData(seed,name,16u<<20,YES));if(![scope isKindOfClass:NSDictionary.class])return NO;id keys=scope[@"keys"];
@@ -326,7 +330,11 @@ static BOOL SCIdentity(NSDictionary *identity) {
     verificationStage=13;total=raw.length;
     for(NSString *name in names) {struct stat s;if(cancel && cancel())goto finish;
         if(fstatat(fresh ? input:seed,name.fileSystemRepresentation,&s,AT_SYMLINK_NOFOLLOW) || !S_ISREG(s.st_mode) ||
-            s.st_size<0 || (uint64_t)s.st_size>SCFileBytes || (uint64_t)s.st_size>SCTotalBytes-total)goto finish;total+=(uint64_t)s.st_size;}
+            s.st_size<0 || (uint64_t)s.st_size>SCFileBytes || (uint64_t)s.st_size>SCTotalBytes-total) {
+                goto finish;
+            }
+        total+=(uint64_t)s.st_size;
+    }
     verificationStage=14;for(NSString *name in names) {@autoreleasepool {uint64_t bytes=0;
         if(!SCFile(fresh ? input:seed,name,fresh ? seed:-1,files[name],!fresh,cancel,^(uint64_t n){
             done+=n;SCReport(progress,fresh ? @"copy-private-shader-seed":@"verify-private-shader-seed",done,total,&lastProgress);
@@ -372,7 +380,10 @@ finish:
     if(![receipt isKindOfClass:NSDictionary.class] || receipt.count!=3 || !SCNumber(receipt[@"schema"],1,1) ||
         ![receipt[@"identityHash"] isEqual:hash] || ![receipt[@"identity"] isKindOfClass:NSDictionary.class] ||
         !SCIdentity(receipt[@"identity"]) || ![receipt[@"identity"][@"titleID"] isEqual:title] ||
-        ![SCDigest(SCJSON(receipt[@"identity"])) isEqual:hash])return nil;return receipt;
+        ![SCDigest(SCJSON(receipt[@"identity"])) isEqual:hash]) {
+        return nil;
+    }
+    return receipt;
 }
 - (NSArray *)identitiesForTitleID:(NSString *)title error:(NSError **)error {
     if(!SCHex(title,16)){if(error)*error=SCError(1);return nil;}int root=SCRoot(_root,NO,YES),lock=root<0 ? -1:SCLock(root);

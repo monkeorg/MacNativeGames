@@ -22,7 +22,7 @@ class CanopyCatalogTests(unittest.TestCase):
         cls.addClassCleanup(cls.workspace.cleanup)
         cls.root = Path(cls.workspace.name).resolve()
         objects = []
-        for name in ('mng_store', 'mng_crypto'):
+        for name in ('mng_store', 'mng_crypto', 'mng_keyboard'):
             output = cls.root / (name + '.o')
             cls.build(['xcrun', 'clang', '-std=c11', '-D_DARWIN_C_SOURCE',
                        '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'launcher/include'),
@@ -40,7 +40,7 @@ class CanopyCatalogTests(unittest.TestCase):
     def build_folder_cli(cls):
         cls.cli=cls.root/'canopy-cli'
         names=('mng_container','mng_file','mng_crypto','mng_keys','mng_prepare','mng_store',
-               'mng_content','mng_bktr','mng_folder','mng_romfs')
+               'mng_content','mng_bktr','mng_folder','mng_romfs','mng_romfs_runtime','mng_addon','mng_install')
         cls.build(['xcrun','clang','-std=c11','-D_DARWIN_C_SOURCE','-Wall','-Wextra','-Werror',
                    '-I',str(ROOT/'launcher/include'),str(ROOT/'launcher/cli/main.c'),
                    *(str(ROOT/'launcher/src'/(name+'.c')) for name in names),'-o',str(cls.cli)])
@@ -69,7 +69,7 @@ class CanopyCatalogTests(unittest.TestCase):
 
     def test_invalid_metadata_refused_preserved_until_explicit_reset(self):
         for case in ('malformed', 'version', 'boolean_version', 'unknown_key',
-                     'invalid_title', 'invalid_option', 'oversize', 'title_limit', 'symlink'):
+                     'invalid_title', 'invalid_option', 'invalid_keyboard', 'oversize', 'title_limit', 'symlink'):
             with self.subTest(case=case):
                 self.scenario(case)
 
@@ -129,6 +129,49 @@ class CanopyCatalogTests(unittest.TestCase):
     def test_catalog_bound_and_linked_root_refusals(self):
         self.scenario('catalog_limit')
         self.scenario('catalog_link')
+
+
+    @unittest.skipUnless(importlib.util.find_spec('cryptography'),'actual encrypted add-on fixtures require cryptography')
+    def test_actual_installer_to_catalog_keeps_addons_separate_and_isolates_corruption(self):
+        import test_game_containers as fixture
+        import test_canopy_content as content
+        from test_canopy_prepare import CanopyPrepareTests
+        from test_canopy_addon_prepare import CanopyAddonPrepareTests
+        from extract_exefs import decrypt
+        from cryptography.hazmat.primitives.ciphers import modes
+        helper=CanopyPrepareTests();helper.fixture=fixture;helper.content_fixture=content;helper.decrypt=staticmethod(decrypt);helper.modes=modes
+        addon=CanopyAddonPrepareTests();addon.f=fixture;addon.cf=content;addon.helper=helper
+        self.build_folder_cli()
+        with tempfile.TemporaryDirectory(dir=self.root) as temporary:
+            directory=Path(temporary).resolve();prepared=directory/'prepared';keys=directory/'invented.keys'
+            keys.write_text('\n'.join(f'{name} = {value.hex()}' for name,value in (
+                ('header_key',fixture.HEADER),('key_area_key_application_00',fixture.AREA),('titlekek_00',fixture.TITLEKEK))))
+            base=directory/'base.nsp';base.write_bytes(fixture.partition(helper.identified_package()))
+            run=subprocess.run([str(self.cli),'prepare',str(base),'--keys',str(keys),'--store',str(prepared)],capture_output=True,text=True,timeout=30)
+            self.assertEqual(run.returncode,0,run.stdout+run.stderr);base_report=json.loads(run.stdout)
+            base_current=prepared/'titles'/'0100123456780000'/'current';base_pointer=base_current.read_bytes()
+            files,cnmt=addon.package(managed=True);source=directory/'addon.nsp';source.write_bytes(fixture.partition(files))
+            run=subprocess.run([str(self.cli),'install-addon',str(source),'--keys',str(keys),'--store',str(prepared),
+                '--application-id','0100123456780000','--base-generation',base_report['generation'],
+                '--addon-id','0100123456781001'],capture_output=True,text=True,timeout=30)
+            self.assertEqual(run.returncode,0,run.stdout+run.stderr);installed=json.loads(run.stdout)
+            self.assertEqual(installed['status'],'ok');self.assertEqual(base_current.read_bytes(),base_pointer)
+            for scenario in ('addons','addons_corrupt'):
+                run=subprocess.run([str(self.probe),scenario,str(directory)],capture_output=True,text=True,timeout=30)
+                self.assertEqual(run.returncode,0,run.stdout+run.stderr);self.assertEqual(run.stderr,'')
+                observed=json.loads(run.stdout);self.assertEqual(observed['status'],'pass')
+                self.assertEqual(len(observed['entries']),1);self.assertEqual(observed['entries'][0]['generationID'],base_report['generation'])
+                if scenario=='addons':
+                    self.assertEqual(len(observed['addOns']),1);row=observed['addOns'][0]
+                    self.assertEqual((row['titleID'],row['applicationID'],row['titleVersion'],row['requiredApplicationVersion']),('0100123456781001','0100123456780000',3,7))
+                    self.assertEqual(row['generationID'],installed['generation']);self.assertEqual(row['cnmtSHA256'],hashlib.sha256(cnmt).hexdigest())
+                    self.assertEqual(row['sourceSHA256'],hashlib.sha256(source.read_bytes()).hexdigest())
+                    self.assertEqual((row['recipeID'],row['preparedKind'],row['mountState']),('canopy-assets-v5','addOn','notActivated'))
+                    self.assertEqual(row['assetCount'],2);self.assertIs(row['integrity']['exefsVerified'],False);self.assertIs(row['integrity']['romfsVerified'],True)
+                    self.assertIs(row['integrity']['signatureVerified'],False)
+                else:self.assertEqual(observed['addOns'],[]);self.assertGreater(len(observed['issues']),0)
+                self.assertEqual(base_current.read_bytes(),base_pointer)
+                for secret in (str(directory),fixture.HEADER.hex(),fixture.AREA.hex(),fixture.TITLEKEK.hex()):self.assertNotIn(secret,run.stdout+run.stderr)
 
 
 if __name__ == '__main__':

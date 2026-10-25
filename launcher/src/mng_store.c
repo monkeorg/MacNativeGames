@@ -606,7 +606,7 @@ static int generation_shape(int dir, const struct asset *assets, size_t count, i
     closedir(entries); return bad ? -1:0;
 }
 static enum mng_prepare_status verify_generation(struct mng_store *s, uint64_t title, const char *gen,
-    struct mng_prepare_result *out, struct mng_store *cancel_store) {
+    struct mng_prepare_result *out, struct mng_store *cancel_store, struct mng_store_verified_assets *verified) {
     if (!s || !out || !hex_valid(gen,64) || !title) return MNG_PREPARE_INVALID;
     int dir=open_generation(s,title,gen); if (dir<0) return MNG_PREPARE_IO;
     struct asset assets[MNG_STORE_MAX_ASSETS]; size_t count=0; struct mng_prepare_result result;
@@ -622,10 +622,19 @@ static enum mng_prepare_status verify_generation(struct mng_store *s, uint64_t t
     if (!bad) { json=manifest(assets,count,&result,gen); bad=!json || matching_file(dir,"manifest.json",json); }
     free(json); close(dir);
     if (bad) return bad==2 ? MNG_PREPARE_CANCELLED:MNG_PREPARE_INTEGRITY;
+    if (verified) {
+        struct mng_store_verified_assets facts={0};facts.preparation=result;
+        for (size_t i=0;i<count;i++) {
+            struct mng_store_asset_identity *identity=!strcmp(assets[i].path,"exefs/main") ? &facts.main:
+                !strcmp(assets[i].path,"romfs.bin") ? &facts.romfs:NULL;
+            if (identity) { identity->present=1;identity->size=assets[i].size;memcpy(identity->sha256,assets[i].sha,32); }
+        }
+        *verified=facts;
+    }
     *out=result; return MNG_PREPARE_OK;
 }
 enum mng_prepare_status mng_store_verify(struct mng_store *s, uint64_t title, const char *gen, struct mng_prepare_result *out) {
-    return verify_generation(s,title,gen,out,s);
+    return verify_generation(s,title,gen,out,s,NULL);
 }
 static int replace_current(struct mng_store *s, int dir, const char *line, int preparation) {
     if (safe_unlink(dir,".current.tmp")) return -1;
@@ -704,7 +713,7 @@ enum mng_prepare_status mng_store_commit(struct mng_store *s, const struct mng_p
     if (rename_exclusive(s->jobs,s->job_id,generations,gen)) {
         if (errno!=EEXIST && errno!=ENOTEMPTY) { close(generations); return MNG_PREPARE_IO; }
         struct mng_prepare_result existing;
-        enum mng_prepare_status status=verify_generation(s,r->title_id,gen,&existing,s);
+        enum mng_prepare_status status=verify_generation(s,r->title_id,gen,&existing,s,NULL);
         if (status!=MNG_PREPARE_OK) { close(generations); return status; }
     } else if (fsync(generations) || fsync(s->jobs)) { close(generations); return MNG_PREPARE_IO; }
     close(generations);
@@ -714,14 +723,20 @@ enum mng_prepare_status mng_store_commit(struct mng_store *s, const struct mng_p
     if (published) return published==-2 ? MNG_PREPARE_CANCELLED:MNG_PREPARE_IO;
     memcpy(out,gen,65); return MNG_PREPARE_OK;
 }
-enum mng_prepare_status mng_store_pin(struct mng_store *s, uint64_t title, const char *gen, int *lease_fd) {
-    if (!lease_fd) return MNG_PREPARE_INVALID;
-    struct mng_prepare_result result; enum mng_prepare_status status=mng_store_verify(s,title,gen,&result);
+enum mng_prepare_status mng_store_pin_verified_assets(struct mng_store *s, uint64_t title, const char *gen,
+    struct mng_store_verified_assets *out, int *lease_fd) {
+    if (!out || !lease_fd) return MNG_PREPARE_INVALID;
+    struct mng_store_verified_assets verified={0};struct mng_prepare_result result;
+    enum mng_prepare_status status=verify_generation(s,title,gen,&result,s,&verified);
     if (status!=MNG_PREPARE_OK) return status;
     int dir=open_generation(s,title,gen); if (dir<0) return MNG_PREPARE_IO;
     int fd=openat(dir,".lease",O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK); close(dir);
     if (fd<0 || regular(fd,0,NULL) || flock(fd,LOCK_SH|LOCK_NB)) { if (fd>=0) close(fd); return MNG_PREPARE_IO; }
-    *lease_fd=fd; return MNG_PREPARE_OK;
+    *out=verified;*lease_fd=fd;return MNG_PREPARE_OK;
+}
+enum mng_prepare_status mng_store_pin(struct mng_store *s, uint64_t title, const char *gen, int *lease_fd) {
+    struct mng_store_verified_assets verified;
+    return mng_store_pin_verified_assets(s,title,gen,&verified,lease_fd);
 }
 static int remove_tree(int parent, const char *name, unsigned depth) {
     if (depth>2) return -1;

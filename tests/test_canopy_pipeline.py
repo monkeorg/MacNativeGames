@@ -28,8 +28,10 @@ class CanopyPipelineTests(unittest.TestCase):
                    'launcher/src/mng_file.c', 'launcher/src/mng_crypto.c',
                    'launcher/src/mng_keys.c', 'launcher/src/mng_prepare.c',
                    'launcher/src/mng_store.c', 'launcher/src/mng_content.c', 'launcher/src/mng_bktr.c',
-                   'launcher/src/mng_folder.c', 'launcher/src/mng_romfs.c']
-        command = ['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
+                   'launcher/src/mng_folder.c', 'launcher/src/mng_romfs.c',
+                   'launcher/src/mng_install.c', 'launcher/src/mng_addon.c', 'launcher/src/mng_romfs_runtime.c']
+        command = ['cc', '-std=c11', '-O2', '-pthread', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
+                   '-fsanitize=undefined', '-fno-sanitize-recover=all',
                    '-I', str(ROOT / 'launcher/include'), *[str(ROOT / p) for p in sources],
                    '-o', str(cls.cli)]
         if sys.platform != 'darwin':
@@ -40,17 +42,50 @@ class CanopyPipelineTests(unittest.TestCase):
         # Deliver a real SIGINT after one real store asset completes. Intercept
         # only the CLI's preparation call; the native preparer/store stay intact.
         instrumented = Path(cls.build.name) / 'interrupt-main.c'
-        instrumented.write_text('#define mng_prepare_fd pipeline_prepare\n#define mng_prepare_folder_fd pipeline_folder\n#define mng_store_commit pipeline_commit\n#include "' +
+        instrumented.write_text('#define mng_prepare_fd pipeline_prepare\n#define mng_prepare_folder_fd pipeline_folder\n#define mng_store_commit pipeline_commit\n#define mng_install_addon_fd pipeline_install\n#include "' +
                                 str(ROOT / 'launcher/cli/main.c') + '"\n')
         wrapper = Path(cls.build.name) / 'interrupt-prepare.c'
-        wrapper.write_text(r'''#include "mng_prepare.h"
+        wrapper.write_text(r'''#define _POSIX_C_SOURCE 200809L
+#include "mng_prepare.h"
 #include "mng_store.h"
 #include "mng_folder.h"
 #include "mng_crypto.h"
+#include "mng_install.h"
+#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-static int committing,signal_sent;
+static int committing,signal_sent,after_current;
+int pipeline_store_renameat(int from,const char *source,int to,const char *destination) {
+    int rc=renameat(from,source,to,destination);
+    if(!rc && !strcmp(destination,"current") && getenv("PIPELINE_ADDON_CURRENT"))after_current=1;
+    return rc;
+}
+int pipeline_store_fsync(int fd) {
+    if(after_current) {
+        after_current=0;const char *mode=getenv("PIPELINE_ADDON_CURRENT");
+        if(mode && !strcmp(mode,"io")){errno=EIO;return -1;}
+        if(mode && !strcmp(mode,"signal"))raise(SIGINT);
+    }
+    return fsync(fd);
+}
+struct install_forward { const struct mng_install_control *control; };
+static int install_cancel(void *context) {
+    struct install_forward *forward=context;
+    return forward->control && forward->control->cancelled && forward->control->cancelled(forward->control->context);
+}
+static void install_progress(void *context,const char *phase,uint64_t done,uint64_t total) {
+    struct install_forward *forward=context;
+    if(forward->control && forward->control->progress)forward->control->progress(forward->control->context,phase,done,total);
+    if(!signal_sent && getenv("PIPELINE_ADDON_CANCEL") && !strcmp(phase,"hash-addon-source") && !done) {signal_sent=1;raise(SIGINT);}
+}
+enum mng_prepare_status pipeline_install(int root,int source,const struct mng_key_provider *keys,uint64_t application,
+    const char *base,uint64_t addon,const char *job,const struct mng_install_control *control,struct mng_install_report *report) {
+    struct install_forward forward={control};struct mng_install_control wrapped={&forward,install_cancel,install_progress,NULL};
+    return mng_install_addon_fd(root,source,keys,application,base,addon,job,&wrapped,report);
+}
 struct forwarding { const struct mng_asset_sink *sink; int sent; };
 static int begin(void *p,const char *n,uint64_t z) {struct forwarding *f=p;return f->sink->begin(f->sink->context,n,z);}
 static int write_bytes(void *p,const void *b,size_t n) {struct forwarding *f=p;return f->sink->write(f->sink->context,b,n);}
@@ -92,7 +127,9 @@ enum mng_prepare_status pipeline_commit(struct mng_store *store,const struct mng
         store_source = Path(cls.build.name) / 'interrupt-store.c'
         store_source.write_text('#define _GNU_SOURCE\n#define _DARWIN_C_SOURCE\n'
                                 '#define _POSIX_C_SOURCE 200809L\n'
-                                '#include "mng_crypto.h"\n'
+                                '#include <stdio.h>\n#include <unistd.h>\n#include "mng_crypto.h"\n'
+                                'int pipeline_store_fsync(int);\nint pipeline_store_renameat(int,const char *,int,const char *);\n'
+                                '#define fsync pipeline_store_fsync\n#define renameat pipeline_store_renameat\n'
                                 'int pipeline_store_sha_update(struct mng_sha256 *,const void *,size_t);\n'
                                 '#define mng_sha256_update pipeline_store_sha_update\n#include "' +
                                 str(ROOT / 'launcher/src/mng_store.c') + '"\n')
@@ -440,6 +477,107 @@ enum mng_prepare_status pipeline_commit(struct mng_store *store,const struct mng
                 self.assertEqual(current.read_bytes(),current_after)
                 late=self.run_folder_command(command,env={**os.environ,'PIPELINE_SIGNAL':'published'})
                 self.assertEqual(late['generation'],resumed['generation'])
+
+    def addon_inputs(self, **options):
+        from test_canopy_prepare import CanopyPrepareTests
+        from test_canopy_addon_prepare import CanopyAddonPrepareTests
+        import test_canopy_content
+        from cryptography.hazmat.primitives.ciphers import modes
+        from extract_exefs import decrypt
+        helper=CanopyPrepareTests();helper.fixture=self.fixture;helper.content_fixture=test_canopy_content
+        helper.modes=modes;helper.decrypt=decrypt
+        self.source.write_bytes(self.fixture.partition(helper.identified_package()))
+        base=self.prepare()
+        addon=CanopyAddonPrepareTests();addon.f=self.fixture;addon.cf=test_canopy_content;addon.helper=helper
+        files,cnmt=addon.package(**options);source=self.directory/'addon.nsp';source.write_bytes(self.fixture.partition(files))
+        return base,source,cnmt
+
+    def addon_command(self,base,source,extra=(),cli=None):
+        return [str(cli or self.cli),'install-addon',str(source),'--keys',str(self.keys),'--store',str(self.store),
+                '--application-id','0100123456780000','--base-generation',base['generation'],
+                '--addon-id','0100123456781001',*extra]
+
+    def run_addon(self,command,status=0,env=None):
+        run=subprocess.run(command,capture_output=True,text=True,timeout=30,env={**os.environ,**(env or {})})
+        self.assertEqual(run.returncode,status,run.stdout+run.stderr);self.assertEqual(run.stderr,'')
+        for private in (str(self.directory),self.fixture.HEADER.hex(),self.fixture.AREA.hex(),self.fixture.CONTENT.hex(),self.fixture.TITLEKEK.hex()):
+            self.assertNotIn(private,run.stdout+run.stderr)
+        result=json.loads(run.stdout);self.assertIs(result['execution_verified'],False)
+        self.assertIs(result['signature_verified'],False);self.assertIs(result['activation_verified'],False)
+        return result
+
+    def test_install_addon_cli_publishes_typed_v5_exact_base_metadata_and_index(self):
+        base,source,cnmt=self.addon_inputs();base_current=(self.generation(base).parent.parent/'current')
+        before=base_current.read_bytes();original=source.read_bytes()
+        result=self.run_addon(self.addon_command(base,source));self.assertEqual(result['status'],'ok')
+        self.assertEqual(result['prepared_kind'],'addOn');self.assertEqual(result['verified_base_version'],7)
+        self.assertIs(result['commit_attempted'],True);self.assertIs(result['publication_uncertain'],False)
+        self.assertIs(result['reload_required'],False);self.assertEqual(result['currentObserved'],result['generation'])
+        addon=result['addon'];self.assertEqual((addon['application_id'],addon['title_id']),('0100123456780000','0100123456781001'))
+        self.assertEqual((addon['version'],addon['required_application_version']),(3,7))
+        self.assertEqual(addon['source_sha256'],hashlib.sha256(original).hexdigest());self.assertEqual(addon['cnmt_sha256'],hashlib.sha256(cnmt).hexdigest())
+        root=self.store/'titles'/addon['title_id']/'generations'/result['generation']
+        self.assertEqual((root/'receipt.bin').read_bytes()[:8],b'CNPYST05')
+        self.assertEqual((root/'romfs.bin').read_bytes(),self.fixture.romfs())
+        index=(root/'runtime-index.bin').read_bytes();self.assertEqual(result['index']['sha256'],hashlib.sha256(index).hexdigest())
+        self.assertEqual(result['index']['size'],len(index));self.assertEqual(base_current.read_bytes(),before);self.assertEqual(source.read_bytes(),original)
+        inode=(root/'romfs.bin').stat().st_ino;again=self.run_addon(self.addon_command(base,source))
+        self.assertEqual(again['generation'],result['generation']);self.assertEqual((root/'romfs.bin').stat().st_ino,inode)
+
+    def test_install_addon_cli_empty_volume_and_exact_base_required(self):
+        from test_canopy_romfs import romfs
+        image,_=romfs([]);base,source,_=self.addon_inputs(image=image)
+        result=self.run_addon(self.addon_command(base,source));self.assertEqual(result['index']['file_count'],0)
+        self.assertEqual(result['index']['size'],24)
+        missing=dict(base,generation='a'*64)
+        failure=self.run_addon(self.addon_command(missing,source),4)
+        self.assertNotEqual(failure['status'],'ok');self.assertIs(failure['commit_attempted'],False)
+        self.assertIsNone(failure['verified_base_version']);self.assertIsNone(failure['addon'])
+
+    def test_install_addon_cli_wrong_owner_version_and_key_refuse_without_base_change(self):
+        for options,wanted in (({'owner':0x0100123456780002},'integrity'),({'required':8},'unsupported')):
+            base,source,_=self.addon_inputs(**options);current=self.generation(base).parent.parent/'current';before=current.read_bytes()
+            result=self.run_addon(self.addon_command(base,source),4);self.assertEqual(result['status'],wanted)
+            self.assertEqual(current.read_bytes(),before);self.assertFalse((self.store/'titles'/'0100123456781001'/'current').exists())
+        base,source,_=self.addon_inputs();self.keys.write_text('header_key = '+self.fixture.HEADER.hex()+'\n')
+        self.assertEqual(self.run_addon(self.addon_command(base,source),4)['status'],'key')
+
+    def test_install_addon_cli_strict_identifiers_duplicates_and_job(self):
+        base,source,_=self.addon_inputs();command=self.addon_command(base,source)
+        for option,value in (('--application-id','0x0100123456780000'),('--application-id','0000000000000000'),
+                             ('--addon-id','010012345678100A'),('--base-generation','../bad'),('--base-generation','a'*63),('--job','Z'*32)):
+            invalid=command.copy()
+            if option in invalid:invalid[invalid.index(option)+1]=value
+            else:invalid.extend((option,value))
+            run=subprocess.run(invalid,capture_output=True,text=True,timeout=10)
+            self.assertEqual(run.returncode,2);self.assertEqual(run.stdout,'');self.assertEqual(json.loads(run.stderr)['error'],'usage')
+        run=subprocess.run(command+['--keys',str(self.keys)],capture_output=True,text=True,timeout=10)
+        self.assertEqual(run.returncode,2)
+
+    def test_install_addon_cli_real_sigint_resume_reuses_romfs_inode(self):
+        base,source,_=self.addon_inputs();job='c1'*16
+        command=self.addon_command(base,source,('--job',job),cli=self.interrupt_cli)
+        canceled=self.run_addon(command,130,{'PIPELINE_ADDON_CANCEL':'1'})
+        self.assertEqual(canceled['status'],'cancelled');self.assertIs(canceled['commit_attempted'],False)
+        staged=self.store/'jobs'/job/'romfs.bin';inode=staged.stat().st_ino
+        result=self.run_addon(self.addon_command(base,source,('--job',job)))
+        target=self.store/'titles'/'0100123456781001'/'generations'/result['generation']/'romfs.bin'
+        self.assertEqual(target.stat().st_ino,inode)
+
+    def test_install_addon_cli_post_rename_io_reports_uncertain_current_observation(self):
+        base,source,_=self.addon_inputs()
+        result=self.run_addon(self.addon_command(base,source,cli=self.interrupt_cli),4,{'PIPELINE_ADDON_CURRENT':'io'})
+        self.assertEqual(result['status'],'io');self.assertIs(result['commit_attempted'],True)
+        self.assertIs(result['publication_uncertain'],True);self.assertIs(result['reload_required'],True)
+        self.assertEqual(result['generation'],'');self.assertIs(result['current_readable'],True)
+        current=(self.store/'titles'/'0100123456781001'/'current').read_text().strip()
+        self.assertEqual(result['currentObserved'],current);self.assertEqual(len(current),64)
+
+    def test_install_addon_cli_late_sigint_keeps_authoritative_success(self):
+        base,source,_=self.addon_inputs()
+        result=self.run_addon(self.addon_command(base,source,cli=self.interrupt_cli),0,{'PIPELINE_ADDON_CURRENT':'signal'})
+        self.assertEqual(result['status'],'ok');self.assertIs(result['publication_uncertain'],False)
+        self.assertEqual((self.store/'titles'/'0100123456781001'/'current').read_text().strip(),result['generation'])
 
     def test_inspection_command_stays_available(self):
         run = subprocess.run([str(self.cli), 'inspect', str(self.source)], capture_output=True, text=True, timeout=10)

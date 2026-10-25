@@ -9,6 +9,7 @@
 #include "mng_keys.h"
 #include "mng_store.h"
 #include "mng_folder.h"
+#include "mng_install.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -254,7 +255,82 @@ static int prepare_command(int argc,char **argv) {
     if(cancelled_result || (!publication_attempted && interrupted))return error("cancelled",130);
     return result ? error(failure,result):0;
 }
+static int fixed_hex(const char *value,size_t length) {
+    if(!value || strlen(value)!=length)return 0;
+    for(size_t i=0;i<length;i++)if(!((value[i]>='0'&&value[i]<='9')||(value[i]>='a'&&value[i]<='f')))return 0;
+    return 1;
+}
+static int parse_title_id(const char *text,uint64_t *out) {
+    if(!fixed_hex(text,16))return -1;
+    uint64_t value=0;
+    for(unsigned i=0;i<16;i++)value=(value<<4)|(unsigned)(text[i]<='9'?text[i]-'0':text[i]-'a'+10);
+    if(!value)return -1;
+    *out=value;return 0;
+}
+static void install_report(enum mng_prepare_status status,const struct mng_install_report *report,
+    uint64_t application,uint64_t addon,const char *base_generation) {
+    char source[65],cnmt[65],image[65],index[65];
+    printf("{\"operation\":\"install-addon\",\"status\":\"%s\",\"requested_application_id\":\"%016" PRIx64
+        "\",\"requested_addon_id\":\"%016" PRIx64 "\",\"base_generation\":\"%s\",\"job\":\"%s\",\"generation\":\"%s\","
+        "\"commit_attempted\":%s,\"publication_uncertain\":%s,\"reload_required\":%s,\"current_readable\":%s,\"currentObserved\":",
+        mng_prepare_status_name(status),application,addon,base_generation,report->job_id,report->generation_id,
+        report->commit_attempted?"true":"false",report->publication_uncertain?"true":"false",
+        report->reload_required?"true":"false",report->current_readable?"true":"false");
+    if(report->current_readable)json_string(report->current_generation_id);else fputs("null",stdout);
+    if(report->addon.title_id) {
+        digest_hex(report->addon.source_sha256,32,source);digest_hex(report->addon.cnmt_sha256,32,cnmt);digest_hex(report->addon.romfs_sha256,32,image);
+        printf(",\"prepared_kind\":\"addOn\",\"verified_base_version\":%" PRIu32 ",\"addon\":{\"application_id\":\"%016" PRIx64
+            "\",\"title_id\":\"%016" PRIx64 "\",\"version\":%" PRIu32 ",\"required_application_version\":%" PRIu32
+            ",\"source_size\":%" PRIu64 ",\"source_sha256\":\"%s\",\"cnmt_sha256\":\"%s\",\"romfs_size\":%" PRIu64
+            ",\"romfs_sha256\":\"%s\",\"romfs_verified\":%s}",report->verified_base_version,report->addon.application_id,
+            report->addon.title_id,report->addon.version,report->addon.required_application_version,report->addon.source_size,source,cnmt,
+            report->addon.romfs_size,image,report->addon.romfs_verified?"true":"false");
+    } else fputs(",\"verified_base_version\":null,\"addon\":null",stdout);
+    if(report->index.index_size) {
+        digest_hex(report->index.index_sha256,32,index);
+        printf(",\"index\":{\"file_count\":%" PRIu64 ",\"size\":%" PRIu64 ",\"sha256\":\"%s\"}",
+            report->index.file_count,report->index.index_size,index);
+    } else fputs(",\"index\":null",stdout);
+    puts(",\"execution_verified\":false,\"signature_verified\":false,\"activation_verified\":false}");
+}
+static int install_addon_command(int argc,char **argv) {
+    const char *key_path=NULL,*store_path=NULL,*application_text=NULL,*base_generation=NULL,*addon_text=NULL,*job=NULL;
+    uint64_t application=0,addon=0;int input=-1,root=-1;struct mng_keys *keys=NULL;
+    const char *failure="install_failed";int result=4;
+    if((argc!=13 && argc!=15))return error("usage",2);
+    for(int i=3;i<argc;i+=2) {
+        if(!strcmp(argv[i],"--keys")&&!key_path)key_path=argv[i+1];
+        else if(!strcmp(argv[i],"--store")&&!store_path)store_path=argv[i+1];
+        else if(!strcmp(argv[i],"--application-id")&&!application_text)application_text=argv[i+1];
+        else if(!strcmp(argv[i],"--base-generation")&&!base_generation)base_generation=argv[i+1];
+        else if(!strcmp(argv[i],"--addon-id")&&!addon_text)addon_text=argv[i+1];
+        else if(!strcmp(argv[i],"--job")&&!job)job=argv[i+1];
+        else return error("usage",2);
+    }
+    if(!key_path || !store_path || parse_title_id(application_text,&application) || parse_title_id(addon_text,&addon) ||
+        application==addon || !fixed_hex(base_generation,64) || (job&&!job_valid(job)))return error("usage",2);
+    struct sigaction action={0};action.sa_handler=interrupt_handler;sigemptyset(&action.sa_mask);
+    if(sigaction(SIGINT,&action,NULL))return error("signal_failed",4);
+    input=open(argv[2],O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);struct stat info;
+    if(input<0){failure="open_failed";goto done;}
+    if(fstat(input,&info)||!S_ISREG(info.st_mode)){failure="invalid_source";goto done;}
+    if(read_keys(key_path,&keys)){failure=interrupted?"cancelled":"keys_invalid";result=interrupted?130:4;goto done;}
+    root=open(store_path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    if(root<0||fstat(root,&info)||info.st_uid!=geteuid()||(info.st_mode&077)){failure="store_open_failed";goto done;}
+    struct mng_key_provider provider=mng_keys_provider(keys);
+    struct mng_install_control control={NULL,interrupt_requested,NULL,NULL};struct mng_install_report report={0};
+    enum mng_prepare_status status=mng_install_addon_fd(root,input,&provider,application,base_generation,addon,job,&control,&report);
+    // The install/store publication cutoff is authoritative. A late SIGINT or
+    // commit IO must not be rewritten into an assertion that nothing published.
+    install_report(status,&report,application,addon,base_generation);
+    mng_keys_free(keys);close(input);close(root);
+    if(ferror(stdout))return 5;
+    return status==MNG_PREPARE_OK?0:status==MNG_PREPARE_CANCELLED?130:4;
+ done:
+    mng_keys_free(keys);if(input>=0)close(input);if(root>=0)close(root);return error(failure,result);
+}
 int main(int argc,char **argv) {
     if(argc>=2 && !strcmp(argv[1],"prepare"))return prepare_command(argc,argv);
+    if(argc>=2 && !strcmp(argv[1],"install-addon"))return install_addon_command(argc,argv);
     return inspect_command(argc,argv);
 }

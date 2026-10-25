@@ -19,19 +19,22 @@ class CanopyControllers(unittest.TestCase):
         cls.addClassCleanup(cls.directory.cleanup)
         cls.probe = Path(cls.directory.name) / 'controllers'
         sources = ROOT / 'launcher/apple/Sources'
-        players = Path(cls.directory.name) / 'players.o'
-        core = subprocess.run([
-            'xcrun', 'clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
-            '-I', str(ROOT / 'launcher/include'), '-c',
-            str(ROOT / 'launcher/src/mng_players.c'), '-o', str(players),
-        ], capture_output=True, text=True, timeout=120)
-        if core.returncode:
-            raise AssertionError(core.stdout + core.stderr)
+        objects = []
+        for module in ('mng_players', 'mng_input'):
+            output = Path(cls.directory.name) / (module + '.o')
+            core = subprocess.run([
+                'xcrun', 'clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
+                '-I', str(ROOT / 'launcher/include'), '-c',
+                str(ROOT / ('launcher/src/' + module + '.c')), '-o', str(output),
+            ], capture_output=True, text=True, timeout=120)
+            if core.returncode:
+                raise AssertionError(core.stdout + core.stderr)
+            objects.append(str(output))
         result = subprocess.run([
             'xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
             '-I', str(sources), '-I', str(ROOT / 'launcher/include'),
             str(ROOT / 'tests/canopy_controllers_probe.m'),
-            str(sources / 'CanopyControllers.m'), str(players),
+            str(sources / 'CanopyControllers.m'), *objects,
             '-framework', 'Foundation', '-framework', 'GameController', '-o', str(cls.probe),
         ], capture_output=True, text=True, timeout=120)
         if result.returncode:
@@ -66,6 +69,12 @@ class CanopyControllers(unittest.TestCase):
 
     def test_home_commands_survive_capture_without_replaying_held_buttons(self):
         self.scenario('commands')
+
+    def test_real_mapping_updates_clear_affected_epochs_and_leave_other_seats(self):
+        self.scenario('mapping')
+
+    def test_short_taps_are_consumed_once_and_focus_drops_pending_edges(self):
+        self.scenario('taps')
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #include "mng_players.h"
+#include "mng_input.h"
 
 NS_ASSUME_NONNULL_BEGIN
 /// Main-thread owner of the app's GameController handlers and portable routing.
@@ -22,7 +23,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// state survives guest focus changes so resuming cannot replay held Home.
 /// Commands are separate from guest snapshots; consume them before guest input.
 - (uint64_t)consumeUICommandEdges;
+/// Per-player physical layout. Mapping values use existing Default/None or
+/// target strings; defaults preserve position-based Xbox/PlayStation controls.
+/// A changed configuration clears that device's held/pending input and epoch.
+- (BOOL)configurePlayer:(unsigned)player controllerType:(NSString *)type
+        buttonMappings:(NSDictionary<NSString *, NSString *> *)mappings error:(NSError **)error;
+/// Apply the title's common layout to all four isolated player configurations.
+- (BOOL)applySettings:(NSDictionary<NSString *, id> *)settings error:(NSError **)error;
 - (enum mng_player_status)readPlayer:(unsigned)player deviceID:(uint64_t *)identifier
                              input:(struct mng_input *)input;
+/// Gameplay consumer: polls timed mapping modes and drains short-tap edges once.
+- (enum mng_player_status)consumePlayer:(unsigned)player deviceID:(uint64_t *)identifier
+                                input:(struct mng_input *)input;
 @end
 NS_ASSUME_NONNULL_END

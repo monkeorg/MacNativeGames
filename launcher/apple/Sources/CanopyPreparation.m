@@ -4,6 +4,7 @@
 #include "mng_crypto.h"
 #include "mng_keys.h"
 #include "mng_folder.h"
+#include "mng_install.h"
 #include <stdatomic.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,7 +52,7 @@ static int CPEnd(void *opaque, const unsigned char digest[32]) {
     struct preparation_context *c = opaque;
     return CPStopped(c) ? -1 : c->sink.end(c->sink.context, digest);
 }
-static void CPProgress(void *opaque, const char *phase, uint64_t done, uint64_t total) {
+static void CPReportProgress(void *opaque, const char *phase, uint64_t done, uint64_t total) {
     struct preparation_context *c = opaque;
     struct timespec now = {0};
     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -65,7 +66,14 @@ static void CPProgress(void *opaque, const char *phase, uint64_t done, uint64_t 
         // Ordinary progress is throttled, avoiding a main-queue task per chunk.
         [c->owner reportPhase:label done:done total:total epoch:c->epoch];
     }
-    (void)CPStopped(c);
+}
+static void CPProgress(void *opaque, const char *phase, uint64_t done, uint64_t total) {
+    CPReportProgress(opaque,phase,done,total);
+    (void)CPStopped(opaque);
+}
+static int CPInstallStopped(void *opaque) {
+    struct preparation_context *c=opaque;
+    return [c->owner cancellationRequested] ? 1 : 0;
 }
 static BOOL CPStable(const struct stat *a, const struct stat *b) {
     return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_size == b->st_size &&
@@ -80,6 +88,10 @@ static NSString *CPHex(const unsigned char *bytes, size_t count) {
     for (size_t i = 0; i < count; ++i) { output[2*i] = digits[bytes[i] >> 4]; output[2*i+1] = digits[bytes[i] & 15]; }
     output[2*count] = 0;
     return [NSString stringWithUTF8String:output];
+}
+static BOOL CPIdentifier(id identifier,NSUInteger length) {
+    return [identifier isKindOfClass:NSString.class] && [identifier length]==length &&
+        [identifier rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location==NSNotFound;
 }
 static BOOL CPJobID(NSString *identifier) {
     if (identifier.length != 32) return NO;
@@ -194,6 +206,90 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
     if (scoped) [url stopAccessingSecurityScopedResource];
     if (error || [self cancellationRequested]) { mng_keys_free(keys); keys = NULL; *status = [self cancellationRequested] ? MNG_PREPARE_CANCELLED : MNG_PREPARE_IO; }
     return keys;
+}
+- (BOOL)startAddonURL:(NSURL *)source keysURL:(NSURL *)keysURL
+       applicationID:(NSString *)applicationID baseGenerationID:(NSString *)baseGenerationID
+        addonTitleID:(NSString *)addonTitleID jobIdentifier:(NSString *)identifier
+          completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion {
+    NSAssert(NSThread.isMainThread,@"Canopy preparation is owned by the main thread");
+    if (_busy || !completion || !source.isFileURL || !keysURL.isFileURL ||
+        !CPIdentifier(applicationID,16) || !CPIdentifier(addonTitleID,16) || !CPIdentifier(baseGenerationID,64) ||
+        [applicationID isEqual:@"0000000000000000"] || [addonTitleID isEqual:@"0000000000000000"] ||
+        [applicationID isEqual:addonTitleID] || (identifier && !CPIdentifier(identifier,32))) return NO;
+    NSString *application=[applicationID copy],*baseGeneration=[baseGenerationID copy],*addon=[addonTitleID copy];
+    _busy=YES;++_epoch;NSUInteger epoch=_epoch;
+    _jobIdentifier=identifier ? [identifier copy] : [[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
+    NSString *job=[_jobIdentifier copy];atomic_store(&_cancelled,0);
+    dispatch_async(_queue,^{@autoreleasepool {
+        enum mng_prepare_status initial=MNG_PREPARE_KEY;
+        struct mng_keys *keys=[self readKeys:keysURL status:&initial];
+        __block enum mng_prepare_status operation=initial;
+        __block struct mng_install_report installed={0};
+        __block BOOL installerInvoked=NO;
+        if (keys && ![self cancellationRequested]) {
+            NSError *directoryError=nil;
+            if (![NSFileManager.defaultManager createDirectoryAtURL:self->_directory withIntermediateDirectories:YES
+                attributes:@{NSFilePosixPermissions:@0700} error:&directoryError]) operation=MNG_PREPARE_IO;
+            else {
+                // The installer alone opens/locks the store. Cancellation reads
+                // this owner's atomic flag; no second native store handle exists.
+                BOOL scoped=[source startAccessingSecurityScopedResource];
+                NSFileCoordinator *coordinator=[[NSFileCoordinator alloc] initWithFilePresenter:nil];
+                [self useCoordinator:coordinator];NSError *coordinationError=nil;
+                if (![self cancellationRequested]) [coordinator coordinateReadingItemAtURL:source options:0 error:&coordinationError byAccessor:^(NSURL *readURL) {
+                    int fd=open(readURL.fileSystemRepresentation,O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK);
+                    int root=open(self->_directory.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+                    if (fd<0 || root<0) operation=MNG_PREPARE_IO;
+                    else {
+                        struct preparation_context context={self,NULL,{0},epoch,0,{0}};
+                        struct mng_install_control control={&context,CPInstallStopped,CPReportProgress,CPFolderCanonical};
+                        struct mng_key_provider provider=mng_keys_provider(keys);
+                        installerInvoked=YES;
+                        operation=mng_install_addon_fd(root,fd,&provider,strtoull(application.UTF8String,NULL,16),
+                            baseGeneration.UTF8String,strtoull(addon.UTF8String,NULL,16),job.UTF8String,&control,&installed);
+                    }
+                    if(root>=0)close(root);
+                    if(fd>=0)close(fd);
+                }];
+                if(scoped)[source stopAccessingSecurityScopedResource];
+                [self useCoordinator:nil];
+                // Native commit status is authoritative after publication starts.
+                // Provider cancellation/errors after it cannot relabel success.
+                if(!installed.commit_attempted) {
+                    if(!installerInvoked && operation==MNG_PREPARE_OK)operation=MNG_PREPARE_IO;
+                    if(coordinationError)operation=MNG_PREPARE_IO;
+                    if([self cancellationRequested])operation=MNG_PREPARE_CANCELLED;
+                }
+            }
+        } else if([self cancellationRequested]) operation=MNG_PREPARE_CANCELLED;
+        mng_keys_free(keys);[self useCoordinator:nil];
+        NSDictionary *result=nil;
+        if(operation==MNG_PREPARE_OK)result=@{
+            @"preparedKind":@"addOn",@"recipeID":@MNG_STORE_RECIPE_V5,@"titleID":addon,@"applicationID":application,
+            @"baseGenerationID":baseGeneration,@"verifiedBaseVersion":@(installed.verified_base_version),
+            @"generationID":[NSString stringWithUTF8String:installed.generation_id],@"jobID":job,
+            @"titleVersion":@(installed.addon.version),@"versionIdentified":@YES,@"contentRole":@130,
+            @"requiredApplicationVersion":@(installed.addon.required_application_version),
+            @"sourceSHA256":CPHex(installed.addon.source_sha256,32),@"sourceSize":@(installed.addon.source_size),
+            @"cnmtSHA256":CPHex(installed.addon.cnmt_sha256,32),@"romfsSHA256":CPHex(installed.addon.romfs_sha256,32),
+            @"indexSHA256":CPHex(installed.index.index_sha256,32),@"indexSize":@(installed.index.index_size),
+            @"indexFileCount":@(installed.index.file_count),@"assetCount":@2,
+            @"assetBytes":@(installed.addon.romfs_size+installed.index.index_size),
+            @"exefsVerified":@NO,@"romfsVerified":@YES,@"romfsStructureVerified":@YES,
+            @"signatureVerified":@NO,@"executionVerified":@NO};
+        NSError *failure=nil;
+        if(operation!=MNG_PREPARE_OK) {
+            NSError *native=CPError(operation,installed.publication_uncertain!=0);
+            NSMutableDictionary *info=[native.userInfo mutableCopy];
+            info[@"jobID"]=job;info[@"commitAttempted"]=installed.commit_attempted ? @YES : @NO;
+            info[@"publicationUncertain"]=installed.publication_uncertain ? @YES : @NO;
+            info[@"reloadRequired"]=installed.reload_required ? @YES : @NO;info[@"currentReadable"]=installed.current_readable ? @YES : @NO;
+            if(installed.current_readable)info[@"currentGenerationID"]=[NSString stringWithUTF8String:installed.current_generation_id];
+            failure=[NSError errorWithDomain:native.domain code:native.code userInfo:info];
+        }
+        dispatch_async(dispatch_get_main_queue(),^{if(self->_epoch!=epoch)return;self->_busy=NO;completion(result,failure);});
+    }});
+    return YES;
 }
 - (BOOL)startSourceURL:(NSURL *)source keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
     return [self startSourceURL:source updateURL:nil keysURL:keysURL jobIdentifier:identifier completion:completion];

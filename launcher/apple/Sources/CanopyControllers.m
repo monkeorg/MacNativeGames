@@ -1,5 +1,41 @@
 #import "CanopyControllers.h"
 #import <GameController/GameController.h>
+#include <time.h>
+#include <string.h>
+
+@interface CanopyMappedDevice : NSObject {
+@public
+    struct mng_input_mapping mapping;
+    struct mng_input_mapper mapper;
+    struct mng_physical_input physical;
+    uint64_t token, sequence;
+    int type;
+}
+@end
+@implementation CanopyMappedDevice
+@end
+
+static BOOL ControllerError(NSError **error, NSString *message) {
+    if (error) *error = [NSError errorWithDomain:@"CanopyControllers" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
+    return NO;
+}
+static BOOL ControllerConfiguration(NSString *type, NSDictionary *bindings, int *parsedType, struct mng_input_mapping *mapping, NSError **error) {
+    if (![type isKindOfClass:NSString.class] || type.length > 32 ||
+        ![bindings isKindOfClass:NSDictionary.class] || bindings.count > MNG_PHYSICAL_BUTTONS) return ControllerError(error,@"Invalid controller layout preferences.");
+    int parsed = mng_input_controller_type(type.UTF8String);
+    if (parsed < 0) return ControllerError(error,@"Unknown controller type.");
+    NSArray *buttons = @[@"south",@"east",@"west",@"north",@"l3",@"r3",@"l1",@"r1",@"l2",@"r2",@"menu",@"view",@"left",@"up",@"right",@"down",@"touchpad",@"mouse_left",@"mouse_right",@"mouse_middle",@"mouse4",@"mouse5"];
+    NSArray *targets = @[@"default",@"none",@"a",@"b",@"x",@"y",@"lstick",@"rstick",@"l",@"r",@"zl",@"zr",@"plus",@"minus",@"left",@"up",@"right",@"down"];
+    for (id button in bindings) if (![button isKindOfClass:NSString.class] || ![buttons containsObject:button] || ![targets containsObject:bindings[button]]) return ControllerError(error,@"Unknown controller button or target.");
+    NSMutableString *text = [NSMutableString string];
+    for (NSString *button in [bindings.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSString *target = bindings[button];
+        if (![target isEqual:@"default"]) [text appendFormat:@"%@ = %@\n",button,target];
+    }
+    NSData *bytes = [text dataUsingEncoding:NSUTF8StringEncoding];
+    if (mng_input_mapping_parse(bytes.bytes,bytes.length,mapping,NULL) != MNG_INPUT_OK) return ControllerError(error,@"Controller mappings could not be validated.");
+    *parsedType = parsed; return YES;
+}
 
 @implementation CanopyControllers {
     struct mng_players _players;
@@ -7,6 +43,9 @@
     NSMutableDictionary<NSNumber *, id> *_handlers;
     NSMutableDictionary<NSNumber *, NSNumber *> *_tokens;
     NSMutableDictionary<NSNumber *, NSNumber *> *_commandHeld;
+    NSMutableDictionary<NSNumber *, CanopyMappedDevice *> *_mappedDevices;
+    struct mng_input_mapping _mappings[MNG_PLAYER_COUNT];
+    int _controllerTypes[MNG_PLAYER_COUNT];
     NSMutableArray<id> *_observers;
     uint64_t _nextIdentifier;
     uint64_t _commandEdges;
@@ -19,6 +58,8 @@
         _handlers = [NSMutableDictionary dictionary];
         _tokens = [NSMutableDictionary dictionary];
         _commandHeld = [NSMutableDictionary dictionary];
+        _mappedDevices = [NSMutableDictionary dictionary];
+        for (unsigned i = 0; i < MNG_PLAYER_COUNT; i++) mng_input_mapping_default(&_mappings[i]);
         _observers = [NSMutableArray array];
         __weak CanopyControllers *weakSelf = self;
         NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
@@ -39,6 +80,7 @@
     if ((id)pad.valueChangedHandler == _handlers[key]) pad.valueChangedHandler = nil;
     [_handlers removeObjectForKey:key];
     [_tokens removeObjectForKey:key];
+    [_mappedDevices removeObjectForKey:key];
 }
 - (void)dealloc {
     for (id observer in _observers) [NSNotificationCenter.defaultCenter removeObserver:observer];
@@ -83,12 +125,17 @@
     if (_handlers[key] && _tokens[key].unsignedLongLongValue == token &&
         (id)pad.valueChangedHandler == _handlers[key]) return;
     [self clearHandler:key];
+    CanopyMappedDevice *mapped = [CanopyMappedDevice new]; mapped->token = token;
+    mng_input_mapping_default(&mapped->mapping);
+    for (unsigned player = 0; player < MNG_PLAYER_COUNT; player++) if (_players.seats[player] == identifier) {
+        mapped->mapping = _mappings[player]; mapped->type = _controllerTypes[player]; break;
+    }
+    _mappedDevices[key] = mapped;
     __weak CanopyControllers *weakSelf = self;
-    __block uint64_t sequence = 0;
     GCExtendedGamepadValueChangedHandler handler = ^(GCExtendedGamepad *gamepad, GCControllerElement *element) {
         (void)element;
         CanopyControllers *owner = weakSelf;
-        if (!owner || !NSThread.isMainThread || sequence == UINT64_MAX) return;
+        if (!owner || !NSThread.isMainThread || mapped->sequence == UINT64_MAX) return;
         uint64_t currentToken = 0;
         if (mng_players_token(&owner->_players, identifier, &currentToken) != MNG_PLAYER_OK || currentToken != token) return;
         uint64_t command = gamepad.buttonHome.isPressed ? UINT64_C(1) << 16 : 0;
@@ -96,24 +143,38 @@
         uint64_t edges = command & ~previousCommand;
         owner->_commandHeld[key] = @(command);
         owner->_commandEdges |= edges;
-        struct mng_input input = {0};
-        GCControllerButtonInput *buttons[] = {gamepad.buttonA, gamepad.buttonB, gamepad.buttonX, gamepad.buttonY,
-            gamepad.leftShoulder, gamepad.rightShoulder, gamepad.leftTrigger, gamepad.rightTrigger,
-            gamepad.buttonMenu, gamepad.buttonOptions, gamepad.leftThumbstickButton, gamepad.rightThumbstickButton,
-            gamepad.dpad.up, gamepad.dpad.down, gamepad.dpad.left, gamepad.dpad.right,
-            gamepad.buttonHome};
-        for (unsigned i=0; i<sizeof(buttons)/sizeof(buttons[0]); i++) if (buttons[i].isPressed) input.buttons |= UINT64_C(1)<<i;
-        input.sticks[0]=gamepad.leftThumbstick.xAxis.value;
-        input.sticks[1]=gamepad.leftThumbstick.yAxis.value;
-        input.sticks[2]=gamepad.rightThumbstick.xAxis.value;
-        input.sticks[3]=gamepad.rightThumbstick.yAxis.value;
-        input.triggers[0]=gamepad.leftTrigger.value;
-        input.triggers[1]=gamepad.rightTrigger.value;
-        if (mng_players_update(&owner->_players, identifier, token, ++sequence, &input) == MNG_PLAYER_OK || edges) [owner changed];
+        GCController *controller = owner->_controllers[key];
+        struct mng_physical_input physical = {0};
+        physical.buttons = mng_input_face_positions(mapped->type,controller.productCategory.UTF8String,controller.vendorName.UTF8String,
+            gamepad.buttonA.isPressed,gamepad.buttonB.isPressed,gamepad.buttonX.isPressed,gamepad.buttonY.isPressed);
+        GCControllerButtonInput *buttons[] = {gamepad.leftThumbstickButton,gamepad.rightThumbstickButton,
+            gamepad.leftShoulder,gamepad.rightShoulder,gamepad.leftTrigger,gamepad.rightTrigger,
+            gamepad.buttonMenu,gamepad.buttonOptions,gamepad.dpad.left,gamepad.dpad.up,gamepad.dpad.right,gamepad.dpad.down};
+        for (unsigned i = 0; i < sizeof(buttons)/sizeof(buttons[0]); i++) if (buttons[i].isPressed) physical.buttons |= UINT32_C(1) << (i+4);
+        if ([gamepad isKindOfClass:GCDualSenseGamepad.class] && ((GCDualSenseGamepad *)gamepad).touchpadButton.isPressed) physical.buttons |= UINT32_C(1)<<16;
+        if ([gamepad isKindOfClass:GCDualShockGamepad.class] && ((GCDualShockGamepad *)gamepad).touchpadButton.isPressed) physical.buttons |= UINT32_C(1)<<16;
+        physical.sticks[0]=gamepad.leftThumbstick.xAxis.value; physical.sticks[1]=gamepad.leftThumbstick.yAxis.value;
+        physical.sticks[2]=gamepad.rightThumbstick.xAxis.value; physical.sticks[3]=gamepad.rightThumbstick.yAxis.value;
+        physical.triggers[0]=gamepad.leftTrigger.value; physical.triggers[1]=gamepad.rightTrigger.value;
+        if ([owner deliverPhysical:&physical identifier:identifier mapped:mapped] == MNG_PLAYER_OK || edges) [owner changed];
     };
     _handlers[key] = [handler copy];
     _tokens[key] = @(token);
     pad.valueChangedHandler = handler;
+}
+- (enum mng_player_status)deliverPhysical:(const struct mng_physical_input *)physical identifier:(uint64_t)identifier mapped:(CanopyMappedDevice *)mapped {
+    if (mapped->sequence == UINT64_MAX) return MNG_PLAYER_LIMIT;
+    uint64_t current = 0;
+    if (mng_players_token(&_players,identifier,&current) != MNG_PLAYER_OK || current != mapped->token) return MNG_PLAYER_STALE;
+    struct timespec clock;
+    if (clock_gettime(CLOCK_MONOTONIC,&clock) != 0) return MNG_PLAYER_INVALID;
+    uint64_t now = (uint64_t)clock.tv_sec * UINT64_C(1000000000) + (uint64_t)clock.tv_nsec;
+    struct mng_input_mapper next = mapped->mapper; struct mng_input input;
+    enum mng_input_status status = mng_input_map(&next,&mapped->mapping,physical,now,&input);
+    if (status != MNG_INPUT_OK) return status == MNG_INPUT_STALE ? MNG_PLAYER_STALE : MNG_PLAYER_INVALID;
+    enum mng_player_status result = mng_players_update(&_players,identifier,current,mapped->sequence+1,&input);
+    if (result == MNG_PLAYER_OK) { mapped->mapper = next; mapped->physical = *physical; mapped->sequence++; }
+    return result;
 }
 - (void)refreshHandlers {
     // Capture the new token in a new block; queued old blocks keep old tokens.
@@ -157,9 +218,50 @@
     if (status == MNG_PLAYER_OK || status == MNG_PLAYER_LIMIT) [self refreshHandlers];
     return status;
 }
+- (BOOL)installConfiguration:(const struct mng_input_mapping *)mapping type:(int)type player:(unsigned)player error:(NSError **)error {
+    if (_controllerTypes[player] == type && !memcmp(&_mappings[player],mapping,sizeof(*mapping))) return YES;
+    uint64_t identifier = _players.seats[player];
+    if (identifier && mng_players_reset_device(&_players,identifier) != MNG_PLAYER_OK) return ControllerError(error,@"The controller input epoch could not be reset.");
+    _mappings[player] = *mapping; _controllerTypes[player] = type;
+    if (identifier) [self installHandler:@(identifier)];
+    return YES;
+}
+- (BOOL)configurePlayer:(unsigned)player controllerType:(NSString *)type buttonMappings:(NSDictionary *)mappings error:(NSError **)error {
+    NSAssert(NSThread.isMainThread,@"Controller configuration belongs on main thread");
+    if (player >= MNG_PLAYER_COUNT) return ControllerError(error,@"Invalid player seat.");
+    struct mng_input_mapping mapping; int parsedType;
+    if (!ControllerConfiguration(type,mappings,&parsedType,&mapping,error)) return NO;
+    BOOL okay = [self installConfiguration:&mapping type:parsedType player:player error:error];
+    if (okay) [self changed];
+    return okay;
+}
+- (BOOL)applySettings:(NSDictionary *)settings error:(NSError **)error {
+    NSAssert(NSThread.isMainThread,@"Controller configuration belongs on main thread");
+    if (![settings isKindOfClass:NSDictionary.class]) return ControllerError(error,@"Invalid controller settings.");
+    struct mng_input_mapping mapping; int type;
+    if (!ControllerConfiguration(settings[@"controllerType"],settings[@"buttonMappings"],&type,&mapping,error)) return NO;
+    unsigned resets = 0;
+    for (unsigned player = 0; player < MNG_PLAYER_COUNT; player++) if (_players.seats[player] &&
+        (_controllerTypes[player] != type || memcmp(&_mappings[player],&mapping,sizeof(mapping)))) resets++;
+    if (resets > UINT64_MAX - _players.next_token) return ControllerError(error,@"Controller input epochs are exhausted; restart this app.");
+    for (unsigned player = 0; player < MNG_PLAYER_COUNT; player++) if (![self installConfiguration:&mapping type:type player:player error:error]) return NO;
+    [self changed]; return YES;
+}
 - (enum mng_player_status)readPlayer:(unsigned)player deviceID:(uint64_t *)identifier input:(struct mng_input *)input {
     if (!NSThread.isMainThread) return MNG_PLAYER_INVALID;
     return mng_players_read(&_players, player, identifier, input);
+}
+- (enum mng_player_status)consumePlayer:(unsigned)player deviceID:(uint64_t *)identifier input:(struct mng_input *)input {
+    if (!NSThread.isMainThread || player >= MNG_PLAYER_COUNT || !identifier || !input) return MNG_PLAYER_INVALID;
+    uint64_t device = _players.seats[player]; CanopyMappedDevice *mapped = _mappedDevices[@(device)];
+    if (_players.focused && mapped) {
+        enum mng_player_status status = [self deliverPhysical:&mapped->physical identifier:device mapped:mapped];
+        if (status != MNG_PLAYER_OK) return status;
+    }
+    struct mng_input routed;
+    enum mng_player_status status = mng_players_consume(&_players,player,identifier,&routed);
+    if (status != MNG_PLAYER_OK) return status;
+    return mng_input_mix(&routed,1,input) == MNG_INPUT_OK ? MNG_PLAYER_OK : MNG_PLAYER_INVALID;
 }
 - (uint64_t)consumeUICommandEdges {
     NSAssert(NSThread.isMainThread, @"CanopyControllers belongs on the main thread");
