@@ -109,6 +109,10 @@ class CanopyCLI(unittest.TestCase):
         adapter = cls.root / 'adapter.o'
         flags = ['-std=c11', '-Wall', '-Wextra', '-Werror', '-pedantic',
                  '-I', str(ROOT / 'launcher/include')]
+        if sys.platform == 'darwin':
+            # Both generated translation units include system headers before
+            # the adapter source; expose Darwin stat fields from the outset.
+            flags.append('-D_DARWIN_C_SOURCE')
         # Instrument adapter, parser, and harness when the compiler supports it.
         sanitizer = cls.root / 'sanitizer'
         supported = subprocess.run([compiler, '-x', 'c', '-', '-fsanitize=undefined',
