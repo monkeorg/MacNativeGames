@@ -1,0 +1,29 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -17505,6 +17505,7 @@
+ 
+ bool CompilerGLSL::type_can_zero_initialize(const SPIRType &type) const
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	if (type.pointer)
+ 		return false;
+ 
+@@ -17512,12 +17513,18 @@
+ 		return false;
+ 
+ 	for (auto &literal : type.array_size_literal)
++	{
++		canopy_cross_budget::step();
+ 		if (!literal)
+ 			return false;
++	}
+ 
+ 	for (auto &memb : type.member_types)
++	{
++		canopy_cross_budget::step();
+ 		if (!type_can_zero_initialize(get<SPIRType>(memb)))
+ 			return false;
++	}
+ 
+ 	return true;
+ }

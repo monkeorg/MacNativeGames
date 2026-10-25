@@ -434,6 +434,16 @@
       },
       "patch": "0038-flattened-member-path-bounds.patch",
       "sha256": "7b9eacd45987977cdd005e2273e486533404ec82580b04e424b2a78cb5cd4b17"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "4d1d9475781499d97928fb5ad99ddc4fd6e664fa13e11e468a3e4f6d722cd2a9"
+      },
+      "before": {
+        "spirv_glsl.cpp": "12750626485ef2835a27869cac3f58facd04f13c2a0038bf1b60c8bc73740d63"
+      },
+      "patch": "0039-zero-initialization-query-depth-work.patch",
+      "sha256": "2805b5923c0df3b1987d1059fb4c889d1a9af42eccfec0317577a674b9cc5ee2"
     }
   ],
   "schemaVersion": 1
