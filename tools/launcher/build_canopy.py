@@ -45,7 +45,12 @@ SOURCES = ('launcher/apple/Sources/CanopyApp.m',
            'launcher/src/mng_folder.c',
            'launcher/src/mng_romfs.c', 'launcher/src/mng_romfs_runtime.c',
            'launcher/src/mng_players.c', 'launcher/src/mng_session.c')
-SOURCES += ('launcher/src/mng_addon.c', 'launcher/src/mng_install.c', 'launcher/src/mng_multiplayer.c')
+SOURCES += ('launcher/src/mng_addon.c', 'launcher/src/mng_install.c', 'launcher/src/mng_multiplayer.c',
+            'launcher/src/mng_input.c', 'launcher/src/mng_keyboard.c',
+            'launcher/src/mng_pointer.c', 'launcher/src/mng_touch.c',
+            'launcher/apple/Sources/CanopyInputController.m',
+            'launcher/apple/Sources/CanopyTouchPad.m',
+            'launcher/apple/Sources/CanopyAddonsController.m')
 HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
            'launcher/apple/Sources/CanopyCatalog.h',
            'launcher/apple/Sources/CanopySettings.h',
@@ -70,7 +75,15 @@ HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
            'launcher/include/mng_folder.h', 'launcher/src/mng_prepare_internal.h',
            'launcher/include/mng_romfs.h', 'launcher/include/mng_romfs_runtime.h',
            'launcher/include/mng_players.h', 'launcher/include/mng_session.h')
-HEADERS += ('launcher/include/mng_addon.h', 'launcher/include/mng_install.h', 'launcher/include/mng_multiplayer.h')
+HEADERS += ('launcher/include/mng_addon.h', 'launcher/include/mng_install.h', 'launcher/include/mng_multiplayer.h',
+            'launcher/include/mng_input.h', 'launcher/include/mng_keyboard.h',
+            'launcher/include/mng_pointer.h', 'launcher/include/mng_touch.h',
+            'launcher/apple/Sources/CanopyInputController.h',
+            'launcher/apple/Sources/CanopyTouchPad.h',
+            'launcher/apple/Sources/CanopyAddonsController.h',
+            'games/totk/runtime/controller_map.h', 'games/totk/runtime/gamepad_layout.h',
+            'games/totk/runtime/mouse_look.h', 'games/totk/ios/Sources/keyboard_state.h',
+            'games/totk/ios/Sources/mouse_capture.h')
 INPUTS = SOURCES + HEADERS + (BRAND,)
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 
