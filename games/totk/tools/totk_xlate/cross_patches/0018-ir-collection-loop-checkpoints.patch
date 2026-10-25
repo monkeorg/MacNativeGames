@@ -1,0 +1,95 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -2109,8 +2109,11 @@
+ 			{
+ 				if (handler.enable_result_types)
+ 					for (auto &arg : func.arguments)
++					{
++						canopy_cross_budget::step();
+ 						if (!arg.alias_global_variable)
+ 							handler.result_types[arg.id] = arg.type;
++					}
+ 
+ 				if (!handler.begin_function_scope(ops, i.length))
+ 					return false;
+@@ -2948,7 +2951,10 @@
+ 	// which variables they actually bind to in this scope.
+ 	unordered_map<uint32_t, uint32_t> remapping;
+ 	for (uint32_t i = 0; i < length; i++)
++	{
++		canopy_cross_budget::step();
+ 		remapping[func.arguments[i].id] = remap_parameter(args[i]);
++	}
+ 	parameter_remapping.push(std::move(remapping));
+ }
+ 
+@@ -4140,7 +4146,10 @@
+ 			// The write needs to happen in the dominating block.
+ 			DominatorBuilder builder(cfg);
+ 			for (auto &block : blocks)
++			{
++				canopy_cross_budget::step();
+ 				builder.add_block(block);
++			}
+ 			uint32_t dominator = builder.get_dominator();
+ 
+ 			// The complete write happened in a branch or similar, cannot deduce static expression.
+@@ -4797,7 +4806,10 @@
+ 		uint32_t count = length - 2;
+ 		args += 2;
+ 		for (uint32_t i = 0; i < count; i += 2)
++		{
++			canopy_cross_budget::step();
+ 			add_if_builtin(args[i]);
++		}
+ 		break;
+ 	}
+ 
+@@ -4809,7 +4821,10 @@
+ 		uint32_t count = length - 3;
+ 		args += 3;
+ 		for (uint32_t i = 0; i < count; i++)
++		{
++			canopy_cross_budget::step();
+ 			add_if_builtin(args[i]);
++		}
+ 		break;
+ 	}
+ 
+@@ -4944,8 +4959,11 @@
+ 
+ 	// Forward information from separate images and samplers into combined image samplers.
+ 	for (auto &combined : combined_image_samplers)
++	{
++		canopy_cross_budget::step();
+ 		if (comparison_ids.count(combined.sampler_id))
+ 			comparison_ids.insert(combined.combined_id);
++	}
+ }
+ 
+ bool Compiler::CombinedImageSamplerDrefHandler::handle(Op opcode, const uint32_t *args, uint32_t)
+@@ -5647,7 +5665,10 @@
+ 
+ 	physical_storage_non_block_pointer_types.reserve(handler.non_block_types.size());
+ 	for (auto type : handler.non_block_types)
++	{
++		canopy_cross_budget::step();
+ 		physical_storage_non_block_pointer_types.push_back(type);
++	}
+ 	sort(begin(physical_storage_non_block_pointer_types), end(physical_storage_non_block_pointer_types));
+ 	physical_storage_type_to_alignment = std::move(handler.physical_block_type_meta);
+ }
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -2039,8 +2039,11 @@
+ 	// Local vars that are declared in the main function and accessed directly by a function
+ 	auto &entry_func = get<SPIRFunction>(ir.default_entry_point);
+ 	for (auto &var : entry_func.local_variables)
++	{
++		canopy_cross_budget::step();
+ 		if (get<SPIRVariable>(var).storage != StorageClassFunction)
+ 			global_var_ids.insert(var);
++	}
+ 
+ 	std::set<uint32_t> added_arg_ids;
+ 	unordered_set<uint32_t> processed_func_ids;
