@@ -7,6 +7,25 @@ on `feat/canopy-shader-removal-recovery`.
 Source review, Apple compilation and physical acceptance are separate. The current
 `/goal` runs no new tests or probes; the results below are recorded evidence.
 
+**Later compiler source:** dependent drafts [#102](https://github.com/monkeorg/MacNativeGames/pull/102)–[#109](https://github.com/monkeorg/MacNativeGames/pull/109)
+extend the same pinned compiler with loop quotas and recursion guards. At
+[`2408740`](https://github.com/monkeorg/MacNativeGames/commit/2408740f8546a7f8a0ccd8a3d284db10e3f619c4),
+Cross has 429 loop checkpoints (72 formerly unbraced); 90 raw loop sites remain (10 fixed, 80
+input-dependent or unproven). Each slice has two independent source reviews.
+These are unbuilt, untested source changes; runtime translation remains disabled.
+The app feature snapshot and recorded CI below still refer to their exact revisions.
+
+**Library correction:** [#110 / `73bb8db`](https://github.com/monkeorg/MacNativeGames/pull/110)
+keeps the friendly game name visible after the first settings change. Other
+custom names retain priority; an exact title-ID name uses the default fallback
+because legacy metadata has no name-origin flag. No metadata is rewritten.
+Independently source-reviewed; unbuilt and untested.
+
+[#111 / `c6f1502`](https://github.com/monkeorg/MacNativeGames/pull/111) then charges
+seven traversal-wrapper loops whose recursive callees already have depth guards:
+436 checkpoints,79 formerly unbraced,83 raw sites (10 fixed/73 pending).
+Two independent source reviews; no tests, probes or builds; runtime stays off.
+
 | Area | Current source | Remaining acceptance / work |
 |---|---|---|
 | 📚 Library & preparation | Multiple titles, versions, NSP/XCI and supported folders; updates/add-ons; selected-title verified reuse | Real private inputs, provider failures and large-library/device checks; preparation grants no execution capability |
@@ -62,7 +81,8 @@ bound to installed app metadata and a verified complete seed, has no cancellatio
 API, and grants no Canopy trust bypass. Both routes need their own Apple/device
 results. Neither removal fix has rerun evidence; the recorded red failure is
 not relabeled green. Bounded compiler source assessment continues across the
-113 remaining loop inventory entries, raw recursion and noexcept boundaries.
+73 input-dependent or unproven loop sites (83 raw including 10 fixed), other
+recursion and noexcept boundaries at #111.
 This identifies coverage work, not a newly demonstrated broken app flow; it is
 not a claim that all cloud work is complete. There is no
 registered BOTW provider, active-save Apply or actual TOTK restart mechanism.

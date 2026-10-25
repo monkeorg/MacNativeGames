@@ -1,5 +1,12 @@
 # Canopy executable development backlog
 
+Live cursor after the app snapshot below: source drafts #102–#109/#111 add reviewed
+compiler controls (436 checkpoints,79 formerly unbraced,83 raw=10 fixed+73 pending).
+#110 / `73bb8db` corrects the settings-first friendly-title fallback without
+metadata writes. All are source-only, unbuilt/untested, runtime translator off.
+See state.md for current author/reviewer ownership and the next bounded slice;
+historical checklist/counts below are not latest-head validation. Goal ACTIVE.
+
 Authority: docs/canopy-development-roadmap.md. This is the item-status source;
 state.md links here rather than duplicating the checklist. Baseline inspector,
 CLI, artifact audit and probes exist. They do not close the tasks below.
