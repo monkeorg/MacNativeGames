@@ -82,7 +82,7 @@ def build(fixture, output, bundle_id='org.macnativegames.executionfixture'):
         '-isysroot', sdk, '-fobjc-arc', '-O2', '-Wall', '-Wextra', '-Wl,-no_adhoc_codesign',
         '-Wno-deprecated-declarations', '-I'+str(COMPAT), '-I'+str(fixture/'generated'),
         str(Path(__file__).with_name('apple_probe.m')), str(fixture/'generated/embed.S'),
-        '-framework', 'UIKit', '-framework', 'Foundation',
+        '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'CoreGraphics',
         *shlex.split((fixture/'generated/linker-flags.txt').read_text()),
         '-o', str(output/'ExecutionFixture')]
     subprocess.run(command, check=True)

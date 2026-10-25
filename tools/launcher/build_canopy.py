@@ -99,7 +99,8 @@ def commands(source_root, work, sdk):
         result.append(base + language + ['-c', str(source_root / name), '-o', str(obj)])
     result.append(['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64-apple-ios16.0',
                    '-isysroot', sdk, *objects, '-framework', 'UIKit', '-framework', 'Foundation',
-                   '-framework', 'UniformTypeIdentifiers', '-Wl,-no_adhoc_codesign',
+                   '-framework', 'UniformTypeIdentifiers', '-framework', 'CoreFoundation',
+                   '-Wl,-no_adhoc_codesign',
                    '-o', str(work / 'Canopy.app/Canopy')])
     return result
 
