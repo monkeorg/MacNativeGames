@@ -23,6 +23,10 @@ struct mng_romfs_callbacks {
      * aliases. Missing callback refuses non-ASCII with UNSUPPORTED. All names
      * must be valid UTF-8; output component bytes remain the original UTF-8. */
     int (*canonical_name)(void *context, const char *utf8, char *canonical, size_t capacity);
+    /* Optional directory index, including empty directories, excluding root.
+     * Invoked after complete metadata validation. Extraction invokes it after
+     * creating each directory; callback failure leaves unpublished staging. */
+    int (*directory)(void *context, const char *path);
 };
 /* directories counts materialized subdirectories, excluding the output root. */
 struct mng_romfs_result { uint64_t files, directories, bytes; };

@@ -13,6 +13,7 @@
 static const char *mode;
 static int image_fd=-1;
 static unsigned reads,stats,entries,progress_calls;
+static unsigned directory_entries;
 static uint64_t last_done;
 static uint64_t data_boundary;
 ssize_t romfs_probe_pread(int fd,void *out,size_t length,off_t at) {
@@ -60,6 +61,12 @@ static int entry(void *context,const char *path,uint64_t offset,uint64_t size) {
     printf(",\"offset\":%llu,\"size\":%llu}",(unsigned long long)offset,(unsigned long long)size);
     return !strcmp(mode,"callbackfail");
 }
+static int directory(void *context,const char *path) {
+    (void)context;
+    if (!path || !*path) _exit(91);
+    directory_entries++;
+    return !strcmp(mode,"directoryfail");
+}
 static int cancelled(void *context) {
     (void)context;
     return !strcmp(mode,"cancelinitial") ||
@@ -86,7 +93,7 @@ int main(int argc,char **argv) {
     if (image_fd<0 || lseek(image_fd,7,SEEK_SET)!=7) return 3;
     unsigned char boundary[8];
     if (pread(image_fd,boundary,8,72)==8) for (unsigned i=0;i<8;i++) data_boundary|=(uint64_t)boundary[i]<<(i*8);
-    struct mng_romfs_callbacks callbacks={NULL,entry,cancelled,progress,NULL};
+    struct mng_romfs_callbacks callbacks={NULL,entry,cancelled,progress,NULL,directory};
     if (!strcmp(mode,"unicode")) callbacks.canonical_name=canonical;
     struct mng_romfs_result result={0};
     printf("{\"entries\":[");
@@ -102,8 +109,8 @@ int main(int argc,char **argv) {
     preserved=preserved && !fstat(image_fd,&st);
     close(image_fd);if (output>=0) close(output);
     printf("],\"status\":\"%s\",\"files\":%llu,\"directories\":%llu,\"bytes\":%llu,"
-           "\"descriptor_preserved\":%s,\"progress_calls\":%u}\n",mng_romfs_status_name(status),
+           "\"descriptor_preserved\":%s,\"progress_calls\":%u,\"directory_entries\":%u}\n",mng_romfs_status_name(status),
            (unsigned long long)result.files,(unsigned long long)result.directories,
-           (unsigned long long)result.bytes,preserved ? "true":"false",progress_calls);
+           (unsigned long long)result.bytes,preserved ? "true":"false",progress_calls,directory_entries);
     return 0;
 }

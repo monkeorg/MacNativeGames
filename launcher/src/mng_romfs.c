@@ -314,6 +314,8 @@ static int materialize(struct context *c,int root) {
         if (parent<0) return -1;
         int result=mkdirat(parent,leaf,0700); close(parent);
         if (result) return fail(c,MNG_ROMFS_IO);
+        if (c->callbacks.directory && c->callbacks.directory(c->callbacks.context,item->path))
+            return fail(c,MNG_ROMFS_IO);
     }
     unsigned char buffer[65536];
     progress(c);
@@ -374,6 +376,9 @@ static enum mng_romfs_status process(int image,int destination,int extract,
     else for (size_t i=0;i<c.item_count;i++) {
         if (cancelled(&c)) goto done;
         struct item *item=c.items+i;
+        if (item->directory && c.callbacks.directory && c.callbacks.directory(c.callbacks.context,item->path)) {
+            fail(&c,MNG_ROMFS_IO);goto done;
+        }
         if (!item->directory && c.callbacks.entry && c.callbacks.entry(c.callbacks.context,item->path,item->offset,item->size)) {
             fail(&c,MNG_ROMFS_IO);goto done;
         }

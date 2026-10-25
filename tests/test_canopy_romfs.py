@@ -130,6 +130,7 @@ class CanopyRomfsTests(unittest.TestCase):
         self.assertEqual(list(indexed.iterdir()), [])
         self.assertEqual(index['files'], len(files))
         self.assertEqual(index['directories'], 4)
+        self.assertEqual(index['directory_entries'], 4)
         self.assertEqual(index['bytes'], sum(len(data) for _, data in files))
         self.assertEqual({entry['path'] for entry in index['entries']}, {path for path, _ in files})
         for entry in index['entries']:
@@ -140,6 +141,7 @@ class CanopyRomfsTests(unittest.TestCase):
             self.assertEqual((output/path).stat().st_nlink, 1)
         self.assertTrue((output/'empty-directory').is_dir())
         self.assertGreater(report['progress_calls'], 1)
+        self.assertEqual(report['directory_entries'], 4)
 
     def test_empty_image_and_existing_python_fixture(self):
         image, _ = romfs()
@@ -284,6 +286,12 @@ class CanopyRomfsTests(unittest.TestCase):
         self.assertEqual(report['status'], 'limit')
         self.assertEqual((report['files'], report['directories'], report['bytes']), (0,0,0))
         self.assertEqual(list(output.iterdir()), [])
+
+    def test_directory_callback_failure_leaves_zero_result(self):
+        image, _ = romfs([('nested/file', b'x')], ['empty'])
+        for operation in ('index','extract'):
+            with self.subTest(operation=operation):
+                self.run_image(image, operation, 'directoryfail', 'io')
 
 
 if __name__ == '__main__':
