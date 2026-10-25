@@ -89,7 +89,7 @@ These tests require the updated app. Build and sign the small runner locally, th
 | `test01bDisplayPreferencesPersistWhenSupported` | Capability gate, 720/1080 choice, 16:9/full-display choice, persisted 1080/full display | Relaunch |
 | `test06aExistingGameMenuOpenCloseRestoresHitTesting` | Full settings rows, mapping navigation, disabled save transfers, input shield, Resume restores touch hit testing | Activate existing game |
 | `test06bExistingGameMenuLiveHUDPersistence` | Full/FPS-only/Off action sheets, native HUD action sheet, retained values and screenshots after menu reopen | Activate existing game |
-| `test06cExistingGameNextLaunchControlPreference` | Restart badge/prompt, same-value/cancel behavior, pending state across menu reopen, revert clears pending state | Activate existing game |
+| `test06cExistingGameNextLaunchControlPreference` | Single restart footer/prompt, same-value/popover-cancel behavior, pending state across menu reopen, revert clears pending state | Activate existing game |
 | `test06dExistingGameOutsideDismissalProtectsModal` | Outside tap closes settings, active modal keeps input shield, dismissal restores hit testing | Activate existing game |
 | `test07ExistingGameSnapshot` | Screenshot and accessibility tree without input or game relaunch | Activate existing app |
 
@@ -109,12 +109,15 @@ Stable accessibility identifiers required by the tests:
 - `TOTKGameMenuCard` on the live navigation container.
 - `Close game menu` as the live settings close button accessibility label.
 - `TOTKTouchControls` on the touch-control view.
-- `TOTKSettingTiming.<row title>` on an accessible Live/Restart/Restart required badge.
+- `TOTKRestartFooter` on the single live-settings summary or pending-restart footer.
 
-These shared-overlay regression tests have not run on a device yet. They do not import, export, back up, or restore saves.
+The live-menu tests do not import, export, back up, or restore saves.
 
-The restart tests require the badge/prompt implementation. Do not run them against the older installed build.
-Only the snapshot test has passed on the current game process; the new live/restart and outside-dismissal checks remain unexecuted.
+Candidate fa4e94b: tests 06a and 06b passed physically, including screenshots with the native HUD off and on.
+Test 06c stopped because its old script expected a Cancel button that UIKit omits in iPad popovers.
+No changed preference had executed at that failure. Tests 06d and 06e did not run.
+The revised script dismisses that popover with an outside tap and requires settings to retain the input shield.
+The current candidate uses one restart footer rather than repeated row badges. These revised checks need fresh physical acceptance.
 
 `test03fImportPostGSIFixture` skips unless the runner environment explicitly supplies `TOTK_TEST_POST_GSI_FOLDER`.
 For the reviewed public fixture, stage `PostGSI-ParagliderGear` in the app's local Documents folder and supply that exact name.
@@ -125,6 +128,9 @@ Verify the staged fixture against its private provenance manifest before this te
 `test03gOpenEditorAndCancelBeforePlay` opens original slot_00 in the web editor and waits up to 45 seconds for readable Rupees content.
 It closes without Apply and requires Play to remain enabled. Visible web content alone does not prove correct save prefill.
 Compare the original active save hashes independently after this test. Run it before post-GSI import when the original 1.4.3 save is required.
-`test06eKeyboardMappingsApplyLive` checks default WASD/arrow mappings, Live badges, conflicting A disabled, and reserved keys absent.
+`test06eKeyboardMappingsApplyLive` checks default WASD/arrow mappings, no pending restart, conflicting A disabled, and reserved keys absent.
 It changes Move forward to the unbound R key and restores W without a restart alert. It sends no game key input.
 The Play runner accepts `TOTK_TEST_TIMINGS_FILE` for a candidate-specific diagnostic filename; the default remains milestone-1-timings.tsv.
+
+Set `TOTK_TEST_RESTORE_BACKUP_NAME` to restore one exact backup captured before fixture import.
+When omitted, the restore regression still selects the newest backup. Never infer that newest means the original after later imports or editor applies.

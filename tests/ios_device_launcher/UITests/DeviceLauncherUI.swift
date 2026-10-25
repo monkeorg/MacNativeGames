@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class DeviceLauncherUI: XCTestCase {
     private var app: XCUIApplication!
@@ -80,14 +81,34 @@ final class DeviceLauncherUI: XCTestCase {
         XCTAssertFalse(app.navigationBars["Settings"].exists)
     }
 
-    private func timingBadge(for row: String) -> XCUIElement {
-        _ = cell(row)
-        let badge = app.staticTexts["TOTKSettingTiming." + row]
-        XCTAssertTrue(badge.waitForExistence(timeout: 5))
-        return badge
+    private func expectRestartPending(_ pending: Bool) {
+        let footer = app.staticTexts["TOTKRestartFooter"]
+        for _ in 0..<8 {
+            if footer.exists && footer.isHittable { break }
+            app.tables.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(footer.exists)
+        XCTAssertEqual(footer.label.hasPrefix("Restart required"), pending)
     }
 
-    private func choose(_ title: String, for row: String, restartRequired: Bool = false) {
+    private func cancelSettingsPopover() {
+        let cancel = app.buttons["Cancel"]
+        if cancel.exists && cancel.isHittable {
+            cancel.tap()
+        } else {
+            // iPad action-sheet popovers omit Cancel. UIKit dismisses them on an outside tap.
+            let window = app.windows.firstMatch
+            let card = app.otherElements["TOTKGameMenuCard"]
+            XCTAssertGreaterThan(card.frame.minX - window.frame.minX, 4)
+            window.coordinate(withNormalizedOffset: CGVector(
+                dx: (card.frame.minX - window.frame.minX) / window.frame.width / 2, dy: 0.5)).tap()
+        }
+        expectHittable(app.buttons["Close game menu"])
+        XCTAssertTrue(app.navigationBars["Settings"].exists)
+        XCTAssertFalse(app.otherElements["TOTKTouchControls"].isHittable)
+    }
+
+    private func choose(_ title: String, for row: String, restartRequired: Bool = false, expectedValue: String? = nil) {
         cell(row).tap()
         let choice = app.buttons[title]
         expectHittable(choice)
@@ -100,7 +121,7 @@ final class DeviceLauncherUI: XCTestCase {
         } else {
             XCTAssertFalse(restart.exists, "Live, same-value, and reverted settings must not require restart confirmation")
         }
-        XCTAssertEqual(cell(row).value as? String, title)
+        XCTAssertEqual(cell(row).value as? String, expectedValue ?? title)
     }
 
     func test00CompactPrelaunchGlass() {
@@ -247,9 +268,16 @@ final class DeviceLauncherUI: XCTestCase {
 
     func test03cRestoreLatestOwnBackup() {
         cell("Restore backup").tap()
-        let backup = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Save-")).firstMatch
+        let specified = ProcessInfo.processInfo.environment["TOTK_TEST_RESTORE_BACKUP_NAME"]
+        let backup: XCUIElement
+        if let name = specified {
+            XCTAssertTrue(name.hasPrefix("Save-") && !name.contains("/") && !name.contains("\\"))
+            backup = app.buttons[name]
+        } else {
+            backup = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Save-")).firstMatch
+        }
         XCTAssertTrue(backup.waitForExistence(timeout: 10))
-        record("Latest own backup chosen for restore")
+        record(specified == nil ? "Latest own backup chosen for restore" : "Exact named backup chosen for restore")
         backup.tap()
         XCTAssertTrue(app.alerts["Restore backup?"].waitForExistence(timeout: 10))
         app.alerts.buttons["Restore"].tap()
@@ -403,8 +431,6 @@ final class DeviceLauncherUI: XCTestCase {
         openGameMenu()
         let close = app.buttons["Close game menu"]
         defer { if close.isHittable { close.tap() } }
-        XCTAssertEqual(timingBadge(for: "Performance overlay").label, "Live")
-        XCTAssertEqual(timingBadge(for: "Apple Metal HUD").label, "Live")
         for title in ["Full", "FPS only", "Off"] {
             choose(title, for: "Performance overlay")
             closeGameMenu()
@@ -432,7 +458,7 @@ final class DeviceLauncherUI: XCTestCase {
         openGameMenu()
         let row = "Invert mouse Y"
         let original = cell(row).value as? String ?? "Off"
-        XCTAssertEqual(timingBadge(for: row).label, "Restart", "Start with the current session preference unchanged")
+        expectRestartPending(false)
         defer {
             if app.alerts["Restart required"].exists { app.alerts["Restart required"].buttons["Keep playing"].tap() }
             if !app.buttons["Close game menu"].isHittable { openGameMenu() }
@@ -440,21 +466,23 @@ final class DeviceLauncherUI: XCTestCase {
             closeGameMenu()
         }
         choose(original, for: row)
-        XCTAssertEqual(timingBadge(for: row).label, "Restart")
+        expectRestartPending(false)
         cell(row).tap()
-        app.buttons["Cancel"].tap()
+        expectHittable(app.buttons["On"])
+        cancelSettingsPopover()
+        XCTAssertFalse(app.buttons["On"].exists)
         XCTAssertEqual(cell(row).value as? String, original)
         XCTAssertFalse(app.alerts["Restart required"].exists)
         let changed = original == "On" ? "Off" : "On"
         choose(changed, for: row, restartRequired: true)
-        XCTAssertEqual(timingBadge(for: row).label, "Restart required")
+        expectRestartPending(true)
         choose(changed, for: row)
         closeGameMenu()
         openGameMenu()
         XCTAssertEqual(cell(row).value as? String, changed)
-        XCTAssertEqual(timingBadge(for: row).label, "Restart required")
+        expectRestartPending(true)
         choose(original, for: row)
-        XCTAssertEqual(timingBadge(for: row).label, "Restart")
+        expectRestartPending(false)
         record("Reverted preference clears pending restart without a prompt")
     }
 
@@ -493,7 +521,7 @@ final class DeviceLauncherUI: XCTestCase {
 
     func test06eKeyboardMappingsApplyLive() {
         openGameMenu()
-        XCTAssertEqual(timingBadge(for: "Keyboard mappings").label, "Live")
+        expectRestartPending(false)
         cell("Keyboard mappings").tap()
         let mappings = app.navigationBars["Keyboard mappings"]
         XCTAssertTrue(mappings.waitForExistence(timeout: 5))
@@ -510,7 +538,6 @@ final class DeviceLauncherUI: XCTestCase {
         for (action, key) in [("Move forward", "W"), ("Move left", "A"), ("Move backward", "S"), ("Move right", "D"),
                               ("Camera up", "Up arrow"), ("Camera left", "Left arrow"), ("Camera down", "Down arrow"), ("Camera right", "Right arrow")] {
             XCTAssertEqual(cell(action).value as? String, key)
-            XCTAssertEqual(timingBadge(for: action).label, "Live")
         }
         cell("Move forward").tap()
         XCTAssertTrue(app.buttons["A"].exists)
@@ -523,7 +550,6 @@ final class DeviceLauncherUI: XCTestCase {
         remapped = true
         XCTAssertFalse(app.alerts["Restart required"].exists)
         XCTAssertEqual(cell("Move forward").value as? String, "R")
-        XCTAssertEqual(timingBadge(for: "Move forward").label, "Live")
         XCTAssertFalse(app.otherElements["TOTKTouchControls"].isHittable)
         record("Live keyboard mapping changed without game key input")
         cell("Move forward").tap()
@@ -532,9 +558,86 @@ final class DeviceLauncherUI: XCTestCase {
         XCTAssertEqual(cell("Move forward").value as? String, "W")
         XCTAssertFalse(app.alerts["Restart required"].exists)
         mappings.buttons["Settings"].tap()
-        XCTAssertEqual(timingBadge(for: "Keyboard mappings").label, "Live")
+        expectRestartPending(false)
         closeGameMenu()
         record("Keyboard defaults restored after live mapping test")
+    }
+
+    func test06fExistingGameGraphicsAndTouchApplyLive() throws {
+        openGameMenu()
+        let fpsRow = "Target frame rate"
+        let taaRow = "Anti-aliasing (TAA)"
+        guard cell(fpsRow).isEnabled else {
+            closeGameMenu()
+            throw XCTSkip("The installed game lacks the supported real-time frame-cap profile")
+        }
+        let taaSupported = cell(taaRow).isEnabled
+        let originalTAA = (cell(taaRow).value as? String)?.hasPrefix("On") == true ? "On" : "Off"
+        defer {
+            if app.alerts["Hide touch controls?"].exists { app.alerts["Hide touch controls?"].buttons["Cancel"].tap() }
+            if app.buttons["30 FPS"].isHittable || app.buttons["On"].isHittable { cancelSettingsPopover() }
+            if !app.buttons["Close game menu"].isHittable { openGameMenu() }
+            choose("60 FPS", for: fpsRow)
+            if taaSupported {
+                choose(originalTAA, for: taaRow, expectedValue: originalTAA == "On" ? "On (requested)" : "Off")
+            }
+            choose("Automatic", for: "Touch controls")
+            closeGameMenu()
+        }
+
+        cell(fpsRow).tap()
+        expectHittable(app.buttons["30 FPS"])
+        XCTAssertTrue(app.buttons["60 FPS"].isEnabled)
+        let offers40 = app.buttons["40 FPS"].exists
+        let maximumRefresh = UIScreen.main.maximumFramesPerSecond
+        XCTAssertEqual(offers40, maximumRefresh > 0 && maximumRefresh % 40 == 0,
+                       "40 FPS requires a display whose maximum refresh is divisible by 40")
+        cancelSettingsPopover()
+        for rate in offers40 ? ["30 FPS", "40 FPS", "60 FPS"] : ["30 FPS", "60 FPS"] {
+            choose(rate, for: fpsRow)
+        }
+        record("Supported live target frame-rate choices retained")
+
+        if taaSupported {
+            let changed = originalTAA == "On" ? "Off" : "On"
+            choose(changed, for: taaRow, expectedValue: changed == "On" ? "On (requested)" : "Off")
+            closeGameMenu()
+            openGameMenu()
+            XCTAssertEqual(cell(taaRow).value as? String, changed == "On" ? "On (requested)" : "Off")
+            XCTAssertFalse(app.alerts["Restart required"].exists)
+            choose(originalTAA, for: taaRow, expectedValue: originalTAA == "On" ? "On (requested)" : "Off")
+        } else {
+            XCTAssertEqual(cell(taaRow).value as? String, "Unavailable")
+        }
+
+        cell("Touch controls").tap()
+        expectHittable(app.buttons["Off"])
+        app.buttons["Off"].tap()
+        let hide = app.alerts["Hide touch controls?"]
+        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        hide.buttons["Hide controls"].tap()
+        XCTAssertEqual(cell("Touch controls").value as? String, "Off")
+        XCTAssertFalse(app.alerts["Restart required"].exists)
+        XCTAssertFalse(app.otherElements["TOTKTouchControls"].exists)
+        let window = app.windows.firstMatch
+        let card = app.otherElements["TOTKGameMenuCard"]
+        XCTAssertGreaterThan(card.frame.minX - window.frame.minX, 4)
+        let outside = window.coordinate(withNormalizedOffset: CGVector(
+            dx: (card.frame.minX - window.frame.minX) / window.frame.width / 2, dy: 0.5))
+        outside.tap()
+        expectHittable(app.buttons["Game menu"])
+        XCTAssertFalse(app.otherElements["TOTKTouchControls"].exists)
+        record("Touch controls removed live while bottom-left menu stays available")
+
+        openGameMenu()
+        XCTAssertEqual(cell("Touch controls").value as? String, "Off")
+        choose("Automatic", for: "Touch controls")
+        XCTAssertTrue(app.otherElements["TOTKTouchControls"].exists)
+        XCTAssertFalse(app.otherElements["TOTKTouchControls"].isHittable)
+        outside.tap()
+        expectHittable(app.buttons["Game menu"])
+        expectHittable(app.otherElements["TOTKTouchControls"])
+        record("Automatic touch controls restored after outside dismissal")
     }
 
     func test07ExistingGameSnapshot() {
