@@ -498,6 +498,16 @@
       },
       "patch": "0044-parser-declaration-constant-operand-admission.patch",
       "sha256": "f8ae8c5d93f70acc1693b911e036f9383524d2c0eff5f27059ef093441e2aa0c"
+    },
+    {
+      "after": {
+        "spirv_cross_parsed_ir.cpp": "8528aafcda39886870fb4a00c5e1ed9a4c949368435cca7a8b27181a69a23af6"
+      },
+      "before": {
+        "spirv_cross_parsed_ir.cpp": "89f98c0bd29bab23e33326d57a706653f243f35563c5ac88ab9c4404b81fe7cc"
+      },
+      "patch": "0045-array-length-dependency-depth-bounds.patch",
+      "sha256": "e27a0abfd7a34cd104b00afe0f887e3614746e855db001f4009824031539ac57"
     }
   ],
   "schemaVersion": 1

@@ -1,0 +1,80 @@
+--- a/spirv_cross_parsed_ir.cpp
++++ b/spirv_cross_parsed_ir.cpp
+@@ -588,6 +588,9 @@
+ // as an array length. The id must be a constant instruction (SPIRConstant or SPIRConstantOp).
+ void ParsedIR::mark_used_as_array_length(ID id)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
++	if (id >= ids.size())
++		SPIRV_CROSS_THROW("Array-length dependency ID exceeds the IR bound.");
+ 	switch (ids[id].get_type())
+ 	{
+ 	case TypeConstant:
+@@ -597,19 +600,31 @@
+ 
+ 		// Mark composite dependencies as well.
+ 		for (auto &sub_id: c.m.id)
++		{
++			canopy_cross_budget::step();
+ 			if (sub_id)
+ 				mark_used_as_array_length(sub_id);
+-
++		}
++
++		if (c.m.columns > 4)
++			SPIRV_CROSS_THROW("Array-length constant exceeds fixed column storage.");
+ 		for (uint32_t col = 0; col < c.m.columns; col++)
+ 		{
++			canopy_cross_budget::step();
+ 			for (auto &sub_id : c.m.c[col].id)
++			{
++				canopy_cross_budget::step();
+ 				if (sub_id)
+ 					mark_used_as_array_length(sub_id);
++			}
+ 		}
+ 
+ 		for (auto &sub_id : c.subconstants)
++		{
++			canopy_cross_budget::step();
+ 			if (sub_id)
+ 				mark_used_as_array_length(sub_id);
++		}
+ 		break;
+ 	}
+ 
+@@ -617,15 +632,34 @@
+ 	{
+ 		auto &cop = get<SPIRConstantOp>(id);
+ 		if (cop.opcode == OpCompositeExtract)
++		{
++			if (cop.arguments.empty())
++				SPIRV_CROSS_THROW("Array-length composite extract lacks its dependency.");
+ 			mark_used_as_array_length(cop.arguments[0]);
++		}
+ 		else if (cop.opcode == OpCompositeInsert)
+ 		{
++			if (cop.arguments.size() < 2)
++				SPIRV_CROSS_THROW("Array-length composite insert lacks its dependencies.");
+ 			mark_used_as_array_length(cop.arguments[0]);
+ 			mark_used_as_array_length(cop.arguments[1]);
+ 		}
++		else if (cop.opcode == OpVectorShuffle)
++		{
++			if (cop.arguments.size() < 2)
++				SPIRV_CROSS_THROW("Array-length vector shuffle lacks its dependencies.");
++			// Remaining operands are literal selectors, not IDs.
++			mark_used_as_array_length(cop.arguments[0]);
++			mark_used_as_array_length(cop.arguments[1]);
++		}
+ 		else
++		{
+ 			for (uint32_t arg_id : cop.arguments)
++			{
++				canopy_cross_budget::step();
+ 				mark_used_as_array_length(arg_id);
++			}
++		}
+ 		break;
+ 	}
+ 
