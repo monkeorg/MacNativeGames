@@ -100,11 +100,61 @@ def file_hash(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def compile_one(profile, defines, source, output, toolchain):
+def save_report(path, report):
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(report, indent=2) + "\n")
+    temporary.replace(path)
+
+
+def project_input_snapshot():
+    """Snapshot public source/header candidates before any compiler starts."""
+    result = subprocess.run(["git", "ls-files", "--cached", "-z"],
+                            cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    if result.returncode:
+        raise RuntimeError("Cannot enumerate project source/header inputs")
+    suffixes = {".h", ".hh", ".hpp", ".hxx", ".inc", ".def", ".m", ".mm", ".c", ".cc", ".cpp"}
+    snapshot = {}
+    for name in result.stdout.split(b"\0"):
+        if not name:
+            continue
+        path = (ROOT / os.fsdecode(name)).resolve()
+        if path.is_relative_to(ROOT) and path.suffix in suffixes and path.is_file():
+            snapshot[str(path.relative_to(ROOT))] = file_hash(path)
+    return snapshot
+
+
+def project_dependencies(depfile):
+    """Read clang's single -MT unit rule; discard SDK/external dependency paths."""
+    text = re.sub(r"\\\r?\n", "", depfile.read_text())
+    if not text.startswith("unit:"):
+        raise RuntimeError("Compiler dependency rule is missing")
+    words, word, escaped = [], [], False
+    for char in text[len("unit:"):]:
+        if escaped:
+            word.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char.isspace():
+            if word:
+                words.append("".join(word).replace("$$", "$"))
+                word = []
+        else:
+            word.append(char)
+    if escaped:
+        raise RuntimeError("Compiler dependency rule has a trailing escape")
+    if word:
+        words.append("".join(word).replace("$$", "$"))
+    paths = {(ROOT / name).resolve() for name in words}
+    return sorted(str(path.relative_to(ROOT)) for path in paths if path.is_relative_to(ROOT))
+
+
+def compile_one(profile, defines, source, output, toolchain, snapshot):
     relative = source.relative_to(ROOT)
     object_file = output / profile / relative.with_suffix(".o")
     object_file.parent.mkdir(parents=True, exist_ok=True)
     log_file = object_file.with_suffix(".log")
+    depfile = object_file.with_suffix(".d")
     command = [
         toolchain["clang"], "-target", "arm64-apple-ios26.0", "-isysroot", toolchain["sdk"],
         "-std=gnu11", "-fobjc-arc", "-fblocks", "-fmodules",
@@ -114,7 +164,8 @@ def compile_one(profile, defines, source, output, toolchain):
         "-I", str(TOTK / "third_party/d2r_gfx/gfx/nvn"),
         "-I", str(TOTK / "third_party/d2r_gfx/gfx/nvn/include"),
         "-I", str(TOTK / "ios/Sources"),
-        *defines, "-c", str(source), "-o", str(object_file),
+        *defines, "-MMD", "-MF", str(depfile), "-MT", "unit",
+        "-c", str(source), "-o", str(object_file),
     ]
     env = dict(os.environ, DEVELOPER_DIR=toolchain["developer_dir"])
     started = time.monotonic()
@@ -129,13 +180,32 @@ def compile_one(profile, defines, source, output, toolchain):
         except OSError as error:
             log.write(f"\nCannot invoke compiler: {error}\n")
     record = {
-        "profile": profile, "source": str(relative), "source_sha256": file_hash(source),
+        "profile": profile, "source": str(relative), "source_sha256": snapshot.get(str(relative)),
         "command": command, "returncode": status, "seconds": round(time.monotonic() - started, 3),
         "log": str(log_file.relative_to(output)), "success": status == 0,
     }
-    if status == 0:
-        record.update(object=str(object_file.relative_to(output)), object_sha256=file_hash(object_file),
-                      object_bytes=object_file.stat().st_size)
+    try:
+        if status == 0:
+            dependencies = project_dependencies(depfile)
+            if str(relative) not in dependencies:
+                raise RuntimeError("Compiler dependency rule omits the translation unit")
+            record["project_dependencies"] = [
+                {"path": name, "sha256_before": snapshot.get(name),
+                 "sha256_after": file_hash(ROOT / name) if name in snapshot else None}
+                for name in dependencies
+            ]
+            record["inputs_unchanged"] = all(item["sha256_before"] is not None and
+                item["sha256_before"] == item["sha256_after"] for item in record["project_dependencies"])
+            record["success"] = record["inputs_unchanged"]
+            if not record["inputs_unchanged"]:
+                record["evidence_error"] = "Project inputs changed or were not snapshotted before compilation"
+            record.update(object=str(object_file.relative_to(output)), object_sha256=file_hash(object_file),
+                          object_bytes=object_file.stat().st_size)
+    except (OSError, RuntimeError) as error:
+        record.update(success=False, evidence_error=str(error))
+    finally:
+        # Raw depfiles can contain SDK/external paths. Keep only project-relative hashes in the report.
+        depfile.unlink(missing_ok=True)
     return record
 
 
@@ -147,8 +217,6 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.jobs <= 8:
         parser.error("--jobs must be from 1 through 8")
-    if sys.platform != "darwin":
-        parser.error("iPhoneOS object compilation requires macOS and installed Xcode 26+; no simulator or SDK download is used")
     output = args.output.resolve()
     if output.exists() and (not output.is_dir() or any(output.iterdir())):
         parser.error("--output must be a new or empty directory; existing build outputs are not reused")
@@ -158,36 +226,51 @@ def main():
     report = {"kind": "iphoneos-object-compilation", "full_app_build": False,
               "linked": False, "signed": False, "executed": False,
               "tests_run": False, "simulator_used": False, "generated_header_stubs": False,
-              "target": "arm64-apple-ios26.0", "jobs": args.jobs, "results": []}
+              "target": "arm64-apple-ios26.0", "jobs": args.jobs, "results": [],
+              "success": False, "compiled_object_count": 0,
+              "phase": "preflight",
+              "expected_object_count": len(PROFILES) * len(SOURCES)}
     report_path = output / "report.json"
+    save_report(report_path, report)
     try:
         report["revision"] = capture(["git", "rev-parse", "HEAD"])
         status_lines = capture(["git", "status", "--porcelain=v1"]).splitlines()
         report["tracked_dirty"] = any(not line.startswith("??") for line in status_lines)
         report["untracked_present"] = any(line.startswith("??") for line in status_lines)
         report["working_tree_clean"] = not status_lines
+        if sys.platform != "darwin":
+            raise RuntimeError("iPhoneOS object compilation requires macOS and installed Xcode 26+; no simulator or SDK download is used")
         toolchain = apple_toolchain(args.developer_dir)
         report["toolchain"] = toolchain
         print(f"{toolchain['xcode']}\niPhoneOS SDK {toolchain['sdk_version']}\nRevision {report['revision']}", flush=True)
         work = [(profile, defines, source) for profile, defines in PROFILES.items() for source in SOURCES]
-        report["expected_object_count"] = len(work)
+        snapshot = project_input_snapshot()
+        report["phase"] = "compilation"
+        save_report(report_path, report)
         with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-            futures = [executor.submit(compile_one, profile, defines, source, output, toolchain)
+            futures = [executor.submit(compile_one, profile, defines, source, output, toolchain, snapshot)
                        for profile, defines, source in work]
             for future in as_completed(futures):
                 result = future.result()
                 report["results"].append(result)
+                report["compiled_object_count"] += result["returncode"] == 0
+                save_report(report_path, report)
                 print(f"{'COMPILED' if result['success'] else 'FAILED'} {result['profile']} {result['source']}", flush=True)
                 if not result["success"]:
                     print((output / result["log"]).read_text(), flush=True)
+                    if result.get("evidence_error"):
+                        print(result["evidence_error"], flush=True)
         report["results"].sort(key=lambda result: (result["profile"], result["source"]))
-        report["compiled_object_count"] = sum(result["success"] for result in report["results"])
-        report["success"] = bool(work) and report["compiled_object_count"] == len(work)
+        report["compiled_object_count"] = sum(result["returncode"] == 0 for result in report["results"])
+        used = {item["path"] for result in report["results"] for item in result.get("project_dependencies", [])}
+        report["inputs_unchanged_at_completion"] = all(name in snapshot and file_hash(ROOT / name) == snapshot[name] for name in used)
+        report["success"] = bool(work) and all(result["success"] for result in report["results"]) and report["inputs_unchanged_at_completion"]
+        report["phase"] = "completed"
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
-        report.update(success=False, error=str(error))
+        report.update(success=False, phase="failed", error=str(error))
         print(str(error), file=sys.stderr)
     finally:
-        report_path.write_text(json.dumps(report, indent=2) + "\n")
+        save_report(report_path, report)
     print(f"Object-build report: {report_path}", flush=True)
     return 0 if report["success"] else 1
 
