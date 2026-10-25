@@ -80,6 +80,16 @@
       },
       "patch": "0006-phi-classification-loop-checkpoints.patch",
       "sha256": "c862be9e25c2c3a11280ea60130edfd2dc69073dd326b4dc375ed9e3d579ab72"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "3984c941cf4dad17e4fe62237d0db2812fc6358342b68ecd7e5b3776f86bb119"
+      },
+      "before": {
+        "spirv_cross.cpp": "f30dd1e9f23dbf85ebf32e6623f80fbd02861bb90b32fd5ab9d37ea13142fae1"
+      },
+      "patch": "0007-readonly-ir-query-loop-checkpoints.patch",
+      "sha256": "7ed8e4c3c3a097035d6dc2a735fd52cbf638cdfc4d8a8b8e689a03d2f33a715e"
     }
   ],
   "schemaVersion": 1

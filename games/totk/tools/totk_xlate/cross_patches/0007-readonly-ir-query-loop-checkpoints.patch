@@ -1,0 +1,62 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -780,8 +780,11 @@
+ 	// We can have builtin structs as well. If one member of a struct is builtin, the struct must also be builtin.
+ 	if (type_meta)
+ 		for (auto &m : type_meta->members)
++		{
++			canopy_cross_budget::step();
+ 			if (m.builtin)
+ 				return true;
++		}
+ 
+ 	return false;
+ }
+@@ -1308,8 +1311,11 @@
+ 	{
+ 		// Block-like types may have Offset decorations.
+ 		for (uint32_t i = 0; i < uint32_t(type.member_types.size()); i++)
++		{
++			canopy_cross_budget::step();
+ 			if (has_member_decoration(type.self, i, DecorationOffset))
+ 				return true;
++		}
+ 	}
+ 
+ 	return false;
+@@ -4547,8 +4553,11 @@
+ 
+ 			uint32_t count = op.length - 2;
+ 			for (uint32_t i = 0; i < count; i += 2)
++			{
++				canopy_cross_budget::step();
+ 				if (ops[i + 2] == var)
+ 					return true;
++			}
+ 			break;
+ 		}
+ 
+@@ -4568,8 +4577,11 @@
+ 			// May read before writing.
+ 			uint32_t count = op.length - 3;
+ 			for (uint32_t i = 0; i < count; i++)
++			{
++				canopy_cross_budget::step();
+ 				if (ops[i + 3] == var)
+ 					return true;
++			}
+ 			break;
+ 		}
+ 
+@@ -6258,8 +6270,11 @@
+ {
+ 	auto &child = get<SPIRBlock>(to);
+ 	for (auto &phi : child.phi_variables)
++	{
++		canopy_cross_budget::step();
+ 		if (phi.parent == from)
+ 			return true;
++	}
+ 	return false;
+ }
+ 
