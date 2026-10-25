@@ -56,13 +56,6 @@ static NSString *PreparationAnnouncement(NSString *phase) {
     if([phase isEqual:@"verify-and-publish"])return @"Preparation: verifying and publishing the generation.";
     return nil;
 }
-// Units come from the exact native callback sites, not a guessed overall %.
-static NSString *PreparationProgressUnit(NSString *phase) {
-    if([@[@"hash-source",@"hash-base-source",@"hash-update-source",@"hash-addon-source",@"hash-content-nca",@"write-private-asset",@"copy-plaintext-assets",@"fingerprint-folder-members"] containsObject:phase])return @"bytes";
-    if([@[@"verify-exefs",@"verify-base-exefs",@"verify-metadata",@"verify-ivfc"] containsObject:phase])return @"blocks";
-    if([@[@"bktr-relocations",@"bktr-subsections"] containsObject:phase])return @"records";
-    return @"unspecified";
-}
 static NSString *PreparationIOSummary(NSDictionary *metrics) {
     if(![metrics isKindOfClass:NSDictionary.class] || ![metrics[@"scope"] isEqual:@"logicalPayloadIO"])return nil;
     NSArray *keys=@[@"streamedBytes",@"writtenBytes",@"clonedLogicalBytes",@"comparedEqualBytes"];
@@ -1179,7 +1172,7 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     sources.preparedEntry=^NSDictionary<NSString *,id> * _Nullable {CanopyGamesController *owner=weakSelf;return owner ? owner->_lastPreparationResult ?: (owner->_preparation.busy ? nil : owner->_entries.firstObject) : nil;};
     sources.metrics=^NSDictionary<NSString *,id> * _Nullable {CanopyGamesController *owner=weakSelf;
         if(!owner)return nil;
-        if(owner->_preparation.busy)return owner->_observedPhase ? @{@"phaseDone":@(owner->_phaseDone),@"phaseTotal":@(owner->_phaseTotal),@"phaseUnit":PreparationProgressUnit(owner->_observedPhase)} : nil;
+        if(owner->_preparation.busy)return owner->_observedPhase ? @{@"phaseDone":@(owner->_phaseDone),@"phaseTotal":@(owner->_phaseTotal),@"phaseUnit":[CanopyDiagnostics progressUnitForNativePhase:owner->_observedPhase]} : nil;
         // Completion/error counters remain actual attempt observations even if
         // publication was uncertain. Backend redaction admits only closed keys.
         NSMutableDictionary *metrics=[NSMutableDictionary new];

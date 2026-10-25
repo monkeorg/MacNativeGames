@@ -3,6 +3,7 @@
 #import "CanopyPreparation.h"
 #import "CanopySessionController.h"
 #import "CanopyStorageController.h"
+#import "CanopyDiagnosticsController.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static BOOL CAHex(id value,NSUInteger length) {
@@ -18,6 +19,12 @@ static NSString *CAText(id value) {return !value||value==NSNull.null?@"Unavailab
     NSDictionary *_base;
     NSURL *_prepared,*_cache,*_source;
     CanopyPreparation *_preparation;
+    CanopyDiagnostics *_diagnostics;
+    NSDictionary *_lastPreparationResult,*_lastPreparationMetrics;
+    NSString *_observedPhase;
+    uint64_t _phaseDone,_phaseTotal;
+    CanopyDiagnosticsError _lastPreparationError;
+    BOOL _hasCompletedAttempt;
     __weak UIDocumentPickerViewController *_picker;
     dispatch_queue_t _catalogQueue;
     NSArray<NSDictionary *> *_rows;
@@ -39,9 +46,13 @@ static NSString *CAText(id value) {return !value||value==NSNull.null?@"Unavailab
         _status=@"Prepared add-ons are not activated by this screen.";
         _catalogQueue=dispatch_queue_create("org.monkeorg.canopy.addons.catalog",DISPATCH_QUEUE_SERIAL);
         _preparation=[[CanopyPreparation alloc] initWithPreparedRootURL:prepared];
+        _diagnostics=[CanopyDiagnostics new];
         __weak CanopyAddonsController *weakSelf=self;
         _preparation.progress=^(NSString *phase,uint64_t done,uint64_t total){
-            (void)phase;CanopyAddonsController *owner=weakSelf;if(!owner||!owner->_preparation.busy)return;
+            CanopyAddonsController *owner=weakSelf;if(!owner||!owner->_preparation.busy)return;
+            BOOL changed=![owner->_observedPhase isEqual:phase];
+            owner->_observedPhase=[phase copy];owner->_phaseDone=done;owner->_phaseTotal=total;
+            if(changed && owner->_diagnostics.enabled)(void)[[owner diagnosticSources] snapshotWithDiagnostics:owner->_diagnostics recordIfEnabled:YES];
             owner->_progressText=[NSString stringWithFormat:@"Preparation progress: %llu / %llu",(unsigned long long)done,(unsigned long long)total];[owner refresh];
         };
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];
@@ -49,6 +60,28 @@ static NSString *CAText(id value) {return !value||value==NSNull.null?@"Unavailab
     return self;
 }
 - (void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];}
+- (CanopyDiagnosticsSources *)diagnosticSources {
+    CanopyDiagnosticsSources *sources=[CanopyDiagnosticsSources new];
+    __weak CanopyAddonsController *weakSelf=self;
+    sources.preparedEntry=^NSDictionary * {CanopyAddonsController *owner=weakSelf;return owner ? owner->_lastPreparationResult : nil;};
+    sources.metrics=^NSDictionary * {CanopyAddonsController *owner=weakSelf;if(!owner)return nil;
+        if(owner->_preparation.busy)return owner->_observedPhase ? @{@"phaseDone":@(owner->_phaseDone),@"phaseTotal":@(owner->_phaseTotal),@"phaseUnit":[CanopyDiagnostics progressUnitForNativePhase:owner->_observedPhase]} : nil;
+        return owner->_lastPreparationMetrics;};
+    sources.phase=^CanopyDiagnosticsPhase {CanopyAddonsController *owner=weakSelf;if(!owner)return CanopyDiagnosticsPhaseUnknown;
+        if(owner->_preparation.busy)return owner->_cancelRequested?CanopyDiagnosticsPhaseCancelling:CanopyDiagnosticsPhasePreparing;
+        if(owner->_hasCompletedAttempt)return owner->_lastPreparationResult?CanopyDiagnosticsPhasePrepared:CanopyDiagnosticsPhaseFailed;
+        return owner->_reloading?CanopyDiagnosticsPhaseVerifying:CanopyDiagnosticsPhaseIdle;};
+    sources.errorCode=^CanopyDiagnosticsError {CanopyAddonsController *owner=weakSelf;
+        return owner && !owner->_preparation.busy ? owner->_lastPreparationError : CanopyDiagnosticsErrorNone;};
+    return sources;
+}
+- (void)showDiagnostics {
+    UIWindow *window=self.viewIfLoaded.window;
+    if([self working] || self.presentedViewController || self.navigationController.topViewController!=self ||
+        !window.isKeyWindow || window.windowScene.activationState!=UISceneActivationStateForegroundActive ||
+        UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
+    [self.navigationController pushViewController:CanopyMakeDiagnosticsController(_diagnostics,[self diagnosticSources]) animated:YES];
+}
 - (BOOL)working {return _reloading||_preparation.busy||_stage!=0;}
 - (BOOL)canMutate {return ![CanopySessionController nativeSessionOwnsProcess]&&(!self.mutationAllowed||self.mutationAllowed());}
 - (BOOL)validBase {return CATitle(_base[@"titleID"])&&CAHex(_base[@"generationID"],64)&&![_base[@"preparedKind"] isEqual:@"addOn"];}
@@ -97,7 +130,8 @@ static NSString *CAText(id value) {return !value||value==NSNull.null?@"Unavailab
 }
 - (void)clearSelection {_selectionEpoch++;_stage=0;_source=nil;_selectedAddon=nil;_resuming=NO;_picker=nil;}
 - (void)cancelCurrent {
-    if(_preparation.busy){if(!_cancelRequested){_cancelRequested=YES;[_preparation cancel];_status=@"Cancellation requested. Waiting for the authoritative result; publication may already have completed.";}}
+    if(_preparation.busy){if(!_cancelRequested){_cancelRequested=YES;[_preparation cancel];_status=@"Cancellation requested. Waiting for the authoritative result; publication may already have completed.";
+        if(_diagnostics.enabled)(void)[[self diagnosticSources] snapshotWithDiagnostics:_diagnostics recordIfEnabled:YES];}}
     else if(_stage){[self clearSelection];[self dismissViewControllerAnimated:YES completion:nil];_status=@"Selection canceled. No selected source or key URL was retained.";}
     [self refresh];
 }
@@ -171,17 +205,22 @@ static NSString *CAText(id value) {return !value||value==NSNull.null?@"Unavailab
     _stage=0;_selectedAddon=nil;_resuming=NO;_cancelRequested=NO;_progressText=nil;
     BOOL accepted=[_preparation startAddonURL:source keysURL:keys applicationID:_base[@"titleID"] baseGenerationID:_base[@"generationID"] addonTitleID:addon jobIdentifier:job completion:^(NSDictionary *result,NSError *error){
         self->_cancelRequested=NO;self->_progressText=nil;
+        self->_lastPreparationResult=[result copy];
+        self->_lastPreparationMetrics=[CanopyDiagnostics preparationMetricsForResult:result error:error];
+        self->_lastPreparationError=[CanopyDiagnostics errorForError:error];self->_hasCompletedAttempt=YES;
+        if(self->_diagnostics.enabled)(void)[[self diagnosticSources] snapshotWithDiagnostics:self->_diagnostics recordIfEnabled:YES];
         if(result){self->_resumeJob=nil;self->_resumeAddon=nil;self->_status=@"Add-on assets prepared. They are not activated. The catalog will verify current data.";}
         else if([error.userInfo[@"publicationUncertain"] boolValue])self->_status=@"Publication could not be confirmed and current data may have changed. Review the reloaded list before resuming; prepared does not mean activated.";
         else self->_status=error.code==6?@"Preparation canceled before confirmed completion. The retained job can be resumed with the same inputs.":@"Preparation did not complete. Review the reloaded catalog and Storage before retrying the retained job.";
         [self reloadCatalog];[self refresh];
     }];
-    if(accepted){_resumeJob=[job copy];_resumeAddon=[addon copy];_status=@"Preparing the selected add-on against the exact verified base generation…";}
+    if(accepted){_observedPhase=nil;_phaseDone=0;_phaseTotal=0;_lastPreparationResult=nil;_lastPreparationMetrics=nil;_lastPreparationError=CanopyDiagnosticsErrorNone;_hasCompletedAttempt=NO;
+        _resumeJob=[job copy];_resumeAddon=[addon copy];_status=@"Preparing the selected add-on against the exact verified base generation…";}
     else _status=@"The preparation job could not start. Select your inputs again after other operations finish.";
     [self refresh];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {(void)tableView;return 2;}
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {(void)tableView;return section==0?MAX((NSInteger)_rows.count,1):3;}
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {(void)tableView;return section==0?MAX((NSInteger)_rows.count,1):4;}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {(void)tableView;return section==0?@"Prepared add-ons for this application":@"Local preparation and storage";}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
@@ -199,15 +238,15 @@ static NSString *CAText(id value) {return !value||value==NSNull.null?@"Unavailab
         NSDictionary *entry=_rows[(NSUInteger)path.row];cell.textLabel.text=[NSString stringWithFormat:@"%@ • Prepared, not activated",CAText(entry[@"titleID"])];
         cell.detailTextLabel.text=[NSString stringWithFormat:@"Version %@ • requires application version %@\nGeneration %@\nLogical assets: %@",CAText(entry[@"titleVersion"]),CAText(entry[@"requiredApplicationVersion"]),CAText(entry[@"generationID"]),[NSByteCountFormatter stringFromByteCount:[entry[@"assetBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]];
     } else {
-        cell.textLabel.text=@[@"Prepare add-on from local container",@"Resume retained preparation",@"Manage prepared storage"][(NSUInteger)path.row];
-        cell.detailTextLabel.text=path.row==0?@"Choose source, exact add-on title ID, then your local keys":path.row==1?(_resumeJob?[NSString stringWithFormat:@"Job %@\nAdd-on %@",_resumeJob,_resumeAddon]:@"No unfinished job is retained by this screen"):@"Verify, select or remove through existing protected storage controls";
+        cell.textLabel.text=@[@"Prepare add-on from local container",@"Resume retained preparation",@"Manage prepared storage",@"Diagnostics"][(NSUInteger)path.row];
+        cell.detailTextLabel.text=path.row==0?@"Choose source, exact add-on title ID, then your local keys":path.row==1?(_resumeJob?[NSString stringWithFormat:@"Job %@\nAdd-on %@",_resumeJob,_resumeAddon]:@"No unfinished job is retained by this screen"):path.row==2?@"Verify, select or remove through existing protected storage controls":@"Screen-local collection defaults Off. Inspect or share a redacted snapshot of the actual attempt.";
         if(path.row!=1||_resumeJob){cell.accessoryType=UITableViewCellAccessoryDisclosureIndicator;cell.selectionStyle=UITableViewCellSelectionStyleDefault;}
     }
     return cell;
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];if(path.section!=1||[self working])return;
-    if(path.row==0)[self chooseNew];else if(path.row==1)[self beginSelectionResuming:YES];else {
+    if(path.row==0)[self chooseNew];else if(path.row==1)[self beginSelectionResuming:YES];else if(path.row==3)[self showDiagnostics];else {
         CanopyStorageController *storage=CanopyMakeStorageController(_prepared,_cache);__weak CanopyAddonsController *weakSelf=self;
         storage.mutationAllowed=^BOOL {CanopyAddonsController *owner=weakSelf;return owner&&![owner working]&&[owner canMutate];};
         [self.navigationController pushViewController:storage animated:YES];

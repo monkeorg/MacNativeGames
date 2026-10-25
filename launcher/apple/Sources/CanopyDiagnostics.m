@@ -185,6 +185,22 @@ static NSDictionary *CDSample(NSDictionary *entry,CanopyDiagnosticsPhase phase,C
     NSNumber *phase=[state isKindOfClass:NSString.class]?phases[state]:nil;
     return phase ? (CanopyDiagnosticsPhase)phase.integerValue:CanopyDiagnosticsPhaseUnknown;
 }
++ (NSString *)progressUnitForNativePhase:(NSString *)phase {
+    if(![phase isKindOfClass:NSString.class])return @"unspecified";
+    if([@[@"hash-source",@"hash-base-source",@"hash-update-source",@"hash-addon-source",@"hash-content-nca",@"write-private-asset",@"copy-plaintext-assets",@"fingerprint-folder-members",@"write-addon-index"] containsObject:phase])return @"bytes";
+    if([@[@"verify-exefs",@"verify-base-exefs",@"verify-metadata",@"verify-ivfc"] containsObject:phase])return @"blocks";
+    if([@[@"bktr-relocations",@"bktr-subsections"] containsObject:phase])return @"records";
+    return @"unspecified";
+}
++ (NSDictionary *)preparationMetricsForResult:(NSDictionary *)result error:(NSError *)error {
+    NSMutableDictionary *metrics=[NSMutableDictionary new];
+    id io=result[@"ioMetrics"] ?: error.userInfo[@"ioMetrics"];
+    if([io isKindOfClass:NSDictionary.class])metrics[@"preparationIO"]=io;
+    if(result)metrics[@"preparationPublished"]=@YES;
+    id uncertain=error.userInfo[@"publicationUncertain"] ?: error.userInfo[@"publishedGenerationMayExist"];
+    if(uncertain)metrics[@"preparationPublicationMayHaveCompleted"]=uncertain;
+    return CDMetrics(metrics);
+}
 + (CanopyDiagnosticsError)errorForError:(NSError *)error {
     if(!error)return CanopyDiagnosticsErrorNone;
     if(![error isKindOfClass:NSError.class])return CanopyDiagnosticsErrorUnknown;
