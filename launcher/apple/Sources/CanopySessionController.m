@@ -3,6 +3,7 @@
 #import "CanopyOverlay.h"
 #import "CanopyGames.h"
 #import "CanopyDiagnosticsController.h"
+#import "CanopyInputController.h"
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #include <time.h>
@@ -27,6 +28,8 @@ static CanopySessionController *ConsumedNativeSession;
     NSURL *_cache;
     CanopyRuntime *_runtime;
     CanopyOverlay *_overlay;
+    CanopyInputController *_frontend;
+    NSDictionary *_frontendSettingStates;
     CanopyDiagnostics *_diagnostics;
     CADisplayLink *_displayLink;
     NSString *_seal;
@@ -68,6 +71,7 @@ static CanopySessionController *ConsumedNativeSession;
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Diagnostics" style:UIBarButtonItemStylePlain target:self action:@selector(showDiagnostics)];
     CAMetalLayer *layer = (CAMetalLayer *)self.view.layer;
     layer.device = MTLCreateSystemDefaultDevice(); layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    _frontend=[[CanopyInputController alloc] initWithHostController:self hostView:self.view controllers:_controllers localPlayer:0];
     _startupStatus = [UILabel new]; _startupStatus.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     _startupStatus.adjustsFontForContentSizeCategory = YES; _startupStatus.numberOfLines = 0;
     _startupStatus.textColor = UIColor.whiteColor; _startupStatus.textAlignment = NSTextAlignmentCenter;
@@ -80,10 +84,11 @@ static CanopySessionController *ConsumedNativeSession;
     [NSLayoutConstraint activateConstraints:@[[startup.centerYAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerYAnchor],[startup.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:24],[startup.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-24]]];
     __weak CanopySessionController *weakSelf = self;
     UIViewController *content = CanopyMakeSettingsController(_entry,_settings,
-        ^NSDictionary *(NSDictionary *desired) { CanopySessionController *owner = weakSelf; return owner ? [owner->_runtime applyDesiredSettings:desired] : @{}; },
-        ^NSDictionary *{ CanopySessionController *owner = weakSelf; return owner ? owner->_runtime.settingStates : @{}; },_controllers);
+        ^NSDictionary *(NSDictionary *desired) { return [weakSelf applySessionSettings:desired] ?: @{}; },
+        ^NSDictionary *{ return [weakSelf sessionSettingStates] ?: @{}; },_controllers);
     _overlay = [[CanopyOverlay alloc] initWithContentController:content captureInput:^BOOL(NSError **error) {
         CanopySessionController *owner = weakSelf; if (!owner) return NO;
+        [owner->_frontend setCaptured:YES];
         (void)[owner->_controllers setFocused:NO];
         BOOL okay = [owner->_runtime captureInput:error];
         [owner setNeedsUpdateOfPrefersPointerLocked];
@@ -92,12 +97,14 @@ static CanopySessionController *ConsumedNativeSession;
     } restoreInput:^BOOL(NSError **error) {
         CanopySessionController *owner = weakSelf; if (!owner) return NO;
         if (!owner->_active || owner->_diagnosticsModalOwnsInput || owner.presentedViewController ||
-            UIApplication.sharedApplication.applicationState != UIApplicationStateActive || !owner.view.window.isKeyWindow) {
+            UIApplication.sharedApplication.applicationState != UIApplicationStateActive || !owner.view.window.isKeyWindow ||
+            owner.view.window.windowScene.activationState!=UISceneActivationStateForegroundActive) {
             if (error) *error = [NSError errorWithDomain:@"CanopySessionController" code:2 userInfo:@{NSLocalizedDescriptionKey:@"Return to the active game window before restoring gameplay input."}];
             return NO;
         }
         if (![owner->_runtime restoreInput:error]) return NO;
         (void)[owner->_controllers setFocused:YES]; (void)[owner->_controllers consumeUICommandEdges];
+        [owner->_frontend setCaptured:NO];
         [owner becomeFirstResponder]; [owner setNeedsUpdateOfPrefersPointerLocked]; return YES;
     }];
     _overlay.stateDidChange = ^(BOOL expanded) {
@@ -112,6 +119,23 @@ static CanopySessionController *ConsumedNativeSession;
     _overlay.view.hidden = YES;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(lostFocus:) name:UIApplicationWillResignActiveNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowResigned:) name:UIWindowDidResignKeyNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(sceneResigned:) name:UISceneWillDeactivateNotification object:nil];
+}
+- (NSDictionary *)sessionSettingStates {
+    NSMutableDictionary *states=[_runtime.settingStates mutableCopy] ?: [NSMutableDictionary dictionary];
+    [states addEntriesFromDictionary:_frontendSettingStates ?: @{}];return [states copy];
+}
+- (NSDictionary *)applySessionSettings:(NSDictionary *)desired {
+    _frontendSettingStates=[_frontend applySettings:desired];
+    if([CanopySettings areValidOptions:desired]) {
+        NSMutableDictionary *states=[_frontendSettingStates mutableCopy];
+        BOOL enabled=[desired[@"metalHUD"] boolValue];
+        ((CAMetalLayer *)self.view.layer).developerHUDProperties=@{@"mode":enabled?@"default":@"disabled"};
+        states[@"metalHUD"]=@{@"state":@"applied",@"desiredValue":@(enabled),@"effectiveValue":@(enabled),@"message":@"Configured on this session's Metal layer. This HUD is a system diagnostic display, not a gameplay FPS measurement."};
+        _frontendSettingStates=[states copy];
+        (void)[_runtime applyDesiredSettings:desired];
+    }
+    return [self sessionSettingStates];
 }
 - (CanopyDiagnosticsSources *)diagnosticSources {
     CanopyDiagnosticsSources *sources=[CanopyDiagnosticsSources new];
@@ -159,7 +183,7 @@ static CanopySessionController *ConsumedNativeSession;
     [self becomeFirstResponder];
     if (!_attempted) [self startSession];
 }
-- (BOOL)prefersPointerLocked { return _active && !_overlay.expanded && !_diagnosticsModalOwnsInput && !self.presentedViewController && UIApplication.sharedApplication.applicationState == UIApplicationStateActive && self.view.window.isKeyWindow; }
+- (BOOL)prefersPointerLocked { return _active && !_overlay.expanded && !_diagnosticsModalOwnsInput && !self.presentedViewController && [_frontend wantsPointerLock]; }
 - (BOOL)canBecomeFirstResponder { return YES; }
 - (NSArray<UIKeyCommand *> *)keyCommands {
     UIKeyCommand *escape = [UIKeyCommand keyCommandWithInput:UIKeyInputEscape modifierFlags:0 action:@selector(toggleSettings)];
@@ -170,12 +194,24 @@ static CanopySessionController *ConsumedNativeSession;
     if (_starting) [self endSession];
     else if (_active) { if (_overlay.expanded) [_overlay close]; else [_overlay open]; }
 }
-- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event { if (!_overlay.expanded) [super pressesBegan:presses withEvent:event]; }
-- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event { if (!_overlay.expanded) [super pressesEnded:presses withEvent:event]; }
-- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event { if (!_overlay.expanded) [super pressesCancelled:presses withEvent:event]; }
+- (NSSet<UIPress *> *)unhandledPresses:(NSSet<UIPress *> *)presses down:(BOOL)down {
+    NSMutableSet *unhandled=[NSMutableSet set];
+    for(UIPress *press in presses)if(![_frontend handlePress:press down:down])[unhandled addObject:press];
+    return unhandled;
+}
+- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    NSSet *unhandled=[self unhandledPresses:presses down:YES];if(unhandled.count)[super pressesBegan:unhandled withEvent:event];
+}
+- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    NSSet *unhandled=[self unhandledPresses:presses down:NO];if(unhandled.count)[super pressesEnded:unhandled withEvent:event];
+}
+- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    NSSet *unhandled=[self unhandledPresses:presses down:NO];if(unhandled.count)[super pressesCancelled:unhandled withEvent:event];
+}
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
     (void)[_controllers setFocused:NO];
+    [_frontend setCaptured:YES];
     if (_starting) [self endSession];
     if (_runtime.nativeEntryInvoked) { NSError *error = nil; (void)[_runtime captureInput:&error]; }
     [self setNeedsUpdateOfPrefersPointerLocked];
@@ -199,6 +235,10 @@ static CanopySessionController *ConsumedNativeSession;
             NSError *settingsError = nil;
             NSDictionary *desired = [self->_settings settingsForTitleID:self->_entry[@"titleID"] error:&settingsError];
             if (!desired) { [self failedBeforeEntry:settingsError]; return; }
+            [self applySessionSettings:desired];
+            for(NSDictionary *state in self->_frontendSettingStates.allValues)if([state[@"state"] isEqual:@"rejected"]) {
+                [self failedBeforeEntry:[NSError errorWithDomain:@"CanopySessionController" code:4 userInfo:@{NSLocalizedDescriptionKey:state[@"message"] ?: @"The input frontend refused this session configuration."}]];return;
+            }
             self.navigationItem.prompt = @"Verifying the private native host and prepared generation…";
             NSError *startError = nil;
             BOOL accepted = [self->_runtime startTitleID:self->_entry[@"titleID"] generationID:self->_entry[@"generationID"]
@@ -218,9 +258,10 @@ static CanopySessionController *ConsumedNativeSession;
                 self.navigationItem.prompt = @"Native host active • single use until this app closes";
                 self->_displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
                 [self->_displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-                if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive && self.view.window.isKeyWindow) {
+                if (UIApplication.sharedApplication.applicationState == UIApplicationStateActive && self.view.window.isKeyWindow &&
+                    self.view.window.windowScene.activationState==UISceneActivationStateForegroundActive) {
                     NSError *focusError = nil;
-                    if ([self->_runtime captureInput:&focusError] && [self->_runtime restoreInput:&focusError]) { (void)[self->_controllers setFocused:YES]; (void)[self->_controllers consumeUICommandEdges]; }
+                    if ([self->_runtime captureInput:&focusError] && [self->_runtime restoreInput:&focusError]) { (void)[self->_controllers setFocused:YES]; (void)[self->_controllers consumeUICommandEdges]; [self->_frontend setCaptured:NO]; }
                     else { [self->_overlay open]; [self->_overlay showStatus:focusError.localizedDescription]; }
                 } else [self->_overlay open];
                 [self setNeedsUpdateOfPrefersPointerLocked];
@@ -256,7 +297,8 @@ static CanopySessionController *ConsumedNativeSession;
     (void)link;
     uint64_t commands = [_controllers consumeUICommandEdges];
     if(_diagnosticsModalOwnsInput || self.presentedViewController)return;
-    if (!_active || UIApplication.sharedApplication.applicationState != UIApplicationStateActive || !self.view.window.isKeyWindow) return;
+    if (!_active || UIApplication.sharedApplication.applicationState != UIApplicationStateActive || !self.view.window.isKeyWindow ||
+        self.view.window.windowScene.activationState!=UISceneActivationStateForegroundActive) return;
     if (commands & (UINT64_C(1) << 16)) { if (_overlay.expanded) [_overlay close]; else [_overlay open]; return; }
     if (_overlay.expanded) return;
     struct mng_session_input input = {0};
@@ -265,9 +307,19 @@ static CanopySessionController *ConsumedNativeSession;
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC,&now) != 0) { [_overlay open]; [_overlay showStatus:@"The monotonic input clock is unavailable. Input remains captured."]; return; }
     input.timestamp_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
-    for (unsigned i = 0; i < MNG_PLAYER_COUNT; ++i) {
+    unsigned players=MIN(MNG_PLAYER_COUNT,[_profile[@"maxPlayers"] unsignedIntValue]);
+    for (unsigned i = 0; i < players; ++i) {
         uint64_t identifier = 0; struct mng_input state = {0};
-        if ([_controllers readPlayer:i deviceID:&identifier input:&state] != MNG_PLAYER_OK) continue;
+        if ([_controllers consumePlayer:i deviceID:&identifier input:&state] != MNG_PLAYER_OK) continue;
+        if(i==_frontend.localPlayer) {
+            struct mng_input local={0},mixed;
+            if(![_frontend consumeInput:&local now:input.timestamp_ns]) { [_overlay open];[_overlay showStatus:@"Local input could not be sampled safely."];return; }
+            struct mng_input sources[2]={state,local};
+            if(mng_input_mix(sources,2,&mixed)!=MNG_INPUT_OK){[_overlay open];return;}
+            state=mixed;
+            // Synthetic logical seat marker, never a physical-device identity.
+            if(!identifier && _frontend.hasLocalInput)identifier=UINT64_MAX-i;
+        }
         input.players[i].device_id = identifier; input.players[i].connected = identifier != 0;
         // Home belongs to the host menu; Capture is a host/system command, not
         // a supported guest Npad bit. Neither is forwarded to the native host.
@@ -278,8 +330,9 @@ static CanopySessionController *ConsumedNativeSession;
     NSError *error = nil;
     if (![_runtime submitInput:&input error:&error] || ![_runtime tick:&error]) { [_overlay open]; [_overlay showStatus:error.localizedDescription]; }
 }
-- (void)lostFocus:(NSNotification *)notification { (void)notification; (void)[_controllers setFocused:NO]; if (_starting) [self endSession]; else if (_active) [_overlay open]; [self setNeedsUpdateOfPrefersPointerLocked]; }
+- (void)lostFocus:(NSNotification *)notification { (void)notification; [_frontend setCaptured:YES]; (void)[_controllers setFocused:NO]; if (_starting) [self endSession]; else if (_active) [_overlay open]; [self setNeedsUpdateOfPrefersPointerLocked]; }
 - (void)windowResigned:(NSNotification *)notification { if (notification.object == self.view.window) [self lostFocus:notification]; }
+- (void)sceneResigned:(NSNotification *)notification { if (notification.object == self.view.window.windowScene) [self lostFocus:notification]; }
 - (void)endSession {
     if (_returning) return;
     if (_starting) {
@@ -305,6 +358,7 @@ static CanopySessionController *ConsumedNativeSession;
     });
 }
 - (void)returnToLibrary {
+    [_frontend setCaptured:YES];
     _returning = YES; (void)[_controllers setFocused:NO];
     self.navigationController.interactivePopGestureRecognizer.delegate = _previousPopDelegate;
     self.navigationController.interactivePopGestureRecognizer.enabled = _previousPopEnabled;

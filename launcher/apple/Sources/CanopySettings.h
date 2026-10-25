@@ -7,6 +7,12 @@ NS_ASSUME_NONNULL_BEGIN
 @interface CanopySettings : NSObject
 @property(nonatomic, readonly) BOOL recoveryRequired;
 + (NSDictionary<NSString *, id> *)defaults;
+/// Validate a complete or partial options dictionary without persistence.
++ (BOOL)areValidOptions:(NSDictionary *)options;
++ (NSArray<NSString *> *)keyboardActions;
++ (NSArray<NSNumber *> *)keyboardSupportedKeys;
++ (NSString *)keyboardKeyTitle:(unsigned)usage;
++ (unsigned)keyboardBindingForAction:(NSString *)action settings:(NSDictionary *)settings;
 + (BOOL)isValidTitleID:(NSString *)titleID;
 - (instancetype)initWithDirectoryURL:(NSURL *)directory;
 - (BOOL)load:(NSError **)error;

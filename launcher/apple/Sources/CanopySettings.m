@@ -5,6 +5,7 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "mng_keyboard.h"
 
 static const NSUInteger CanopySettingsLimit = 1024 * 1024;
 static const NSUInteger CanopyTitleLimit = 500;
@@ -25,7 +26,20 @@ static BOOL IsName(id value) {
     return [value isKindOfClass:NSString.class] && [value length] > 0 && [value length] <= 200 &&
         [value rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location == NSNotFound;
 }
+static BOOL KeyboardBindingsValid(id value) {
+    if (![value isKindOfClass:NSDictionary.class] || [value count] > MNG_KEY_ACTIONS) return NO;
+    unsigned short bindings[MNG_KEY_ACTIONS]; mng_keyboard_defaults(bindings);
+    for (id action in value) {
+        if (![action isKindOfClass:NSString.class] || !IsInteger(value[action],0,255)) return NO;
+        unsigned index = 0;
+        while (index < MNG_KEY_ACTIONS && ![action isEqualToString:[NSString stringWithUTF8String:mng_keyboard_action_name(index)]]) index++;
+        if (index == MNG_KEY_ACTIONS) return NO;
+        bindings[index] = [value[action] unsignedShortValue];
+    }
+    return mng_keyboard_bindings_valid(bindings) != 0;
+}
 static BOOL ValidOption(NSString *key, id value) {
+    if ([key isEqual:@"keyboardBindings"]) return KeyboardBindingsValid(value);
     if ([@[@"metalHUD", @"taa", @"touch", @"mouseInvertY"] containsObject:key]) return IsBoolean(value);
     if ([key isEqual:@"fpsLimit"]) return IsInteger(value, 30, 60) && [@[@30,@40,@60] containsObject:value];
     if ([key isEqual:@"renderHeight"]) return IsInteger(value, 720, 1080) && [@[@720,@1080] containsObject:value];
@@ -54,10 +68,34 @@ static BOOL ValidSettings(id value) {
     NSDictionary *_titles;
     BOOL _recoveryRequired;
 }
++ (BOOL)areValidOptions:(NSDictionary *)options { return ValidSettings(options); }
 + (NSDictionary *)defaults {
     return @{@"fpsLimit":@60, @"renderHeight":@720, @"aspect":@"16:9", @"hud":@1,
         @"metalHUD":@NO, @"taa":@NO, @"touch":@YES, @"mouseSensitivity":@50,
-        @"mouseInvertY":@NO, @"controllerType":@"auto", @"language":@"", @"buttonMappings":@{}};
+        @"mouseInvertY":@NO, @"controllerType":@"auto", @"language":@"", @"buttonMappings":@{}, @"keyboardBindings":@{}};
+}
++ (NSArray *)keyboardActions {
+    NSMutableArray *actions = [NSMutableArray array];
+    for (unsigned i = 0; i < MNG_KEY_ACTIONS; i++) [actions addObject:[NSString stringWithUTF8String:mng_keyboard_action_name(i)]];
+    return [actions copy];
+}
++ (NSArray *)keyboardSupportedKeys {
+    NSMutableArray *keys = [NSMutableArray array];
+    for (unsigned i = 0; i < 256; i++) if (mng_keyboard_key_supported(i)) [keys addObject:@(i)];
+    return [keys copy];
+}
++ (NSString *)keyboardKeyTitle:(unsigned)key {
+    if (!key) return @"None";
+    if (key >= 4 && key <= 29) return [NSString stringWithFormat:@"%c",'A' + key - 4];
+    if (key >= 30 && key <= 39) return [NSString stringWithFormat:@"%u",(key - 29) % 10];
+    return @{@40:@"Return",@42:@"Backspace",@43:@"Tab",@44:@"Space",@79:@"Right arrow",@80:@"Left arrow",@81:@"Down arrow",@82:@"Up arrow",@225:@"Left Shift",@226:@"Left Option",@229:@"Right Shift",@230:@"Right Option"}[@(key)] ?: @"Unsupported";
+}
++ (unsigned)keyboardBindingForAction:(NSString *)action settings:(NSDictionary *)settings {
+    unsigned index = 0;
+    while (index < MNG_KEY_ACTIONS && ![action isEqualToString:[NSString stringWithUTF8String:mng_keyboard_action_name(index)]]) index++;
+    if (index == MNG_KEY_ACTIONS) return 0;
+    id override = settings[@"keyboardBindings"][action];
+    return override ? [override unsignedIntValue] : totk_key_defaults[index];
 }
 + (BOOL)isValidTitleID:(NSString *)titleID {
     return [titleID isKindOfClass:NSString.class] && titleID.length == 16 &&
