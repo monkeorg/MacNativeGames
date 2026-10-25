@@ -120,17 +120,15 @@
     __weak TOTKResolutionSettings *weakSelf = self;
     _statusTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {
         (void)timer;
-        [weakSelf.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:1 inSection:2]] withRowAnimation:UITableViewRowAnimationNone];
+        TOTKResolutionSettings *owner = weakSelf;
+        NSUInteger row = [owner.statusRows indexOfObject:@"MetalFX activity"];
+        if (owner && row != NSNotFound)
+            [owner.tableView reloadRowsAtIndexPaths:@[[NSIndexPath indexPathForRow:row inSection:2]] withRowAnimation:UITableViewRowAnimationNone];
     }];
 }
 - (void)viewWillDisappear:(BOOL)animated {
     [_statusTimer invalidate]; _statusTimer = nil;
     [super viewWillDisappear:animated];
-}
-- (void)viewDidLayoutSubviews {
-    [super viewDidLayoutSubviews];
-    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:2]];
-    cell.detailTextLabel.text = [self summary];
 }
 - (NSArray<NSString *> *)configurationRows {
     NSString *mode = TOTKLauncherResolutionMode(NSUserDefaults.standardUserDefaults);
@@ -157,16 +155,13 @@
     return TOTKLauncherGraphicsPlan(NSUserDefaults.standardUserDefaults,NSBundle.mainBundle.infoDictionary,
         MAX(size.width,size.height),MIN(size.width,size.height),screen.nativeScale,plan);
 }
-- (NSString *)summary {
+- (NSArray<NSString *> *)statusRows {
     TOTKGraphicsPlan plan;
-    if (![self graphicsPlan:&plan]) return @"Invalid resolution plan";
-    double fit = fmin((double)plan.displayWidth / plan.canvasWidth,(double)plan.displayHeight / plan.canvasHeight);
-    unsigned width = (unsigned)(2 * round(plan.canvasWidth * fit / 2));
-    unsigned height = (unsigned)(2 * round(plan.canvasHeight * fit / 2));
-    if (plan.inputWidth == plan.canvasWidth && plan.inputHeight == plan.canvasHeight)
-        return [NSString stringWithFormat:@"Input   %u × %u\nOutput  %u × %u",plan.inputWidth,plan.inputHeight,width,height];
-    return [NSString stringWithFormat:@"Input   %u × %u\nCanvas  %u × %u\nOutput  %u × %u",
-        plan.inputWidth,plan.inputHeight,plan.canvasWidth,plan.canvasHeight,width,height];
+    NSMutableArray *rows = [NSMutableArray arrayWithObject:@"Input size"];
+    if ([self graphicsPlan:&plan] && (plan.inputWidth != plan.canvasWidth || plan.inputHeight != plan.canvasHeight))
+        [rows addObject:@"Game canvas"];
+    [rows addObjectsFromArray:@[@"Output size",@"Effective multiplier",@"MetalFX activity"]];
+    return rows;
 }
 - (NSString *)activity {
     unsigned activity = runtime_ios_upscaling_activity();
@@ -174,7 +169,7 @@
     if (activity & 1) [passes addObject:@"scene"];
     if (activity & 2) [passes addObject:@"docked scene"];
     if (activity & 4) [passes addObject:@"final output"];
-    return passes.count ? [@"Recent MetalFX activity: " stringByAppendingString:[passes componentsJoinedByString:@" / "]] : @"No recent MetalFX frames";
+    return passes.count ? [passes componentsJoinedByString:@" / "] : @"None recently";
 }
 - (NSString *)effectiveMultiplier {
     TOTKGraphicsPlan plan;
@@ -211,7 +206,7 @@
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView;
     if (section==1) return self.configurationRows.count;
-    return section==2 && [TOTKLauncherResolutionMode(NSUserDefaults.standardUserDefaults) isEqual:@"input-output"] ? 3 : 2;
+    return section==2 ? self.statusRows.count : 2;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return (@[@"Setup",@"Resolution",@"Status"])[section];
@@ -219,14 +214,17 @@
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section == 1) return @"Input is the render size. Output is the final picture size. Native matches the iPad’s pixels.";
-    if (section == 2) return [[self summary] isEqual:@"Invalid resolution plan"]
-        ? @"Adjust output, multiplier, or game canvas. Input must fit 1920 × 1080. Game canvas must be at least the input height."
-        : @"Configured values apply at the next game start. Activity reports MetalFX encodes from the last two seconds.";
+    if (section == 2) {
+        TOTKGraphicsPlan plan;
+        return [self graphicsPlan:&plan]
+            ? @"Sizes apply at the next game start. MetalFX activity covers the last two seconds."
+            : @"Adjust output, multiplier, or game canvas. Input must fit 1920 × 1080. Game canvas must be at least the input height.";
+    }
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     (void)tableView;
-    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:path.section == 2 ? UITableViewCellStyleSubtitle : UITableViewCellStyleValue1 reuseIdentifier:nil];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     cell.accessoryType = path.section == 2 ? UITableViewCellAccessoryNone : UITableViewCellAccessoryDisclosureIndicator;
     cell.selectionStyle = path.section == 2 ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
@@ -250,18 +248,24 @@
         else cell.detailTextLabel.text = runtime_ios_spatial_upscaling_supported()
             ? [self scalerTitle:TOTKLauncherScalerStage(defaults)] : @"Game scaling · MetalFX unavailable";
     } else {
-        cell.textLabel.text = (@[@"Configured",@"Activity",@"Configured multiplier"])[path.row];
-        cell.detailTextLabel.text = path.row == 0 ? self.summary : path.row == 1 ? self.activity : self.effectiveMultiplier;
+        NSString *row = self.statusRows[path.row];
+        cell.textLabel.text = row;
+        TOTKGraphicsPlan plan;
+        BOOL valid = [self graphicsPlan:&plan];
+        if ([row isEqual:@"MetalFX activity"]) cell.detailTextLabel.text = self.activity;
+        else if ([row isEqual:@"Effective multiplier"]) cell.detailTextLabel.text = self.effectiveMultiplier;
+        else if (!valid) cell.detailTextLabel.text = @"Invalid plan";
+        else if ([row isEqual:@"Input size"]) cell.detailTextLabel.text = [NSString stringWithFormat:@"%u × %u",plan.inputWidth,plan.inputHeight];
+        else if ([row isEqual:@"Game canvas"]) cell.detailTextLabel.text = [NSString stringWithFormat:@"%u × %u",plan.canvasWidth,plan.canvasHeight];
+        else {
+            double fit = fmin((double)plan.displayWidth/plan.canvasWidth,(double)plan.displayHeight/plan.canvasHeight);
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%u × %u",(unsigned)(2*round(plan.canvasWidth*fit/2)),(unsigned)(2*round(plan.canvasHeight*fit/2))];
+        }
     }
     NSDictionary *symbols = @{@"Mode":@"slider.horizontal.3",@"Aspect":@"aspectratio",@"Input":@"arrow.down.square",
-        @"Output":@"display",@"Game canvas":@"rectangle.on.rectangle",@"Multiplier":@"multiply",@"Configured multiplier":@"multiply",@"Scaler":@"sparkles",@"Configured":@"rectangle.on.rectangle",@"Activity":@"waveform.path"};
+        @"Output":@"display",@"Game canvas":@"rectangle.on.rectangle",@"Multiplier":@"multiply",@"Effective multiplier":@"multiply",@"Scaler":@"sparkles",@"Input size":@"arrow.down.square",@"Output size":@"display",@"MetalFX activity":@"waveform.path"};
     cell.accessibilityIdentifier = [@"resolution." stringByAppendingString:cell.textLabel.text.lowercaseString];
     TOTKStyleSettingsCell(cell,symbols[cell.textLabel.text]);
-    if (path.section == 2) {
-        cell.detailTextLabel.textAlignment = NSTextAlignmentLeft;
-        if (path.row == 0) cell.detailTextLabel.font = [UIFontMetrics.defaultMetrics scaledFontForFont:
-            [UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightRegular]];
-    }
     return cell;
 }
 - (void)save:(void (^)(NSUserDefaults *))update resetScene:(BOOL)resetScene {
