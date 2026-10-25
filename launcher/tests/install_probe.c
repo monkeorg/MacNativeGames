@@ -75,9 +75,12 @@ int main(int argc,char **argv){
                 check(!mng_addon_close(volume,handle));read_ok=1;}
             mng_addon_unmount(volume);
         }
-        printf("{\"status\":%d,\"job\":\"%s\",\"generation\":\"%s\",\"current\":\"%s\",\"currentReadable\":%d,\"commitAttempted\":%d,\"uncertain\":%d,\"reload\":%d,\"baseVersion\":%u,\"version\":%u,\"indexFiles\":%llu,\"mounted\":%d,\"read\":%d,\"progress\":%u,\"positionsPreserved\":%d}\n",
+        printf("{\"status\":%d,\"job\":\"%s\",\"generation\":\"%s\",\"current\":\"%s\",\"currentReadable\":%d,\"commitAttempted\":%d,\"uncertain\":%d,\"reload\":%d,\"baseVersion\":%u,\"version\":%u,\"indexFiles\":%llu,\"mounted\":%d,\"read\":%d,\"progress\":%u,\"positionsPreserved\":%d,\"streamedBytes\":%llu,\"writtenBytes\":%llu,\"clonedLogicalBytes\":%llu,\"comparedEqualBytes\":%llu,\"resumedBytes\":%llu,\"clonedAssets\":%llu}\n",
             status,report.job_id,report.generation_id,report.current_generation_id,report.current_readable,report.commit_attempted,report.publication_uncertain,report.reload_required,
-            report.verified_base_version,report.addon.version,(unsigned long long)report.index.file_count,mounted,read_ok,progress_calls,lseek(source,0,SEEK_CUR)==7&&lseek(root,0,SEEK_CUR)==root_position);
+            report.verified_base_version,report.addon.version,(unsigned long long)report.index.file_count,mounted,read_ok,progress_calls,lseek(source,0,SEEK_CUR)==7&&lseek(root,0,SEEK_CUR)==root_position,
+            (unsigned long long)report.io_metrics.streamed_bytes,(unsigned long long)report.io_metrics.written_bytes,
+            (unsigned long long)report.io_metrics.cloned_logical_bytes,(unsigned long long)report.io_metrics.compared_equal_bytes,
+            (unsigned long long)report.io_metrics.resumed_bytes,(unsigned long long)report.io_metrics.cloned_assets);
     }
     close(source);close(root);return 0;
 }

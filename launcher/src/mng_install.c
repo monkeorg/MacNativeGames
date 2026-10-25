@@ -8,7 +8,9 @@
 #include "mng_crypto.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -23,6 +25,16 @@ static void progress(void *context,const char *phase,uint64_t done,uint64_t tota
 static void index_progress(void *context,uint64_t done,uint64_t total){progress(context,"index-addon-romfs",done,total);}
 static int canonical(void *context,const char *name,char *out,size_t capacity){struct installation *i=context;return i->control->canonical_name(i->control->context,name,out,capacity);}
 static int private_fd(int fd,int directory,struct stat *st){return fd>=0&&!fstat(fd,st)&&(directory?S_ISDIR(st->st_mode):S_ISREG(st->st_mode))&&st->st_uid==geteuid()&&!(st->st_mode&077)&&(directory||st->st_nlink==1);}
+/* Only a genuine missing title/current is optional. Malformed references or
+ * linked/unreadable directories are never treated as a first installation. */
+static int current_missing(int root,uint64_t title) {
+    int titles=openat(root,"titles",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);struct stat st;
+    if(!private_fd(titles,1,&st)){if(titles>=0)close(titles);return 0;}
+    char name[17];(void)snprintf(name,sizeof(name),"%016" PRIx64,title);
+    int dir=openat(titles,name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC),missing=dir<0&&errno==ENOENT;close(titles);
+    if(dir>=0){missing=private_fd(dir,1,&st)&&fstatat(dir,"current",&st,AT_SYMLINK_NOFOLLOW)&&errno==ENOENT;close(dir);}
+    return missing;
+}
 static int same(const struct stat *a,const struct stat *b){
 #ifdef __APPLE__
     const struct timespec am=a->st_mtimespec,bm=b->st_mtimespec,ac=a->st_ctimespec,bc=b->st_ctimespec;
@@ -74,6 +86,12 @@ enum mng_prepare_status mng_install_addon_fd(int root,int source,const struct mn
     if(base.title_id!=application||base.application_id!=application||base.version_identified!=1||base.source_kind||
         (base.content_role!=0x80&&base.content_role!=0x81)||base.exefs_verified!=1||base.romfs_verified!=1){status=MNG_PREPARE_UNSUPPORTED;goto done;}
     report->verified_base_version=base.title_version;
+    char candidate[65];
+    status=mng_store_current(store,addon,candidate);
+    if(status==MNG_PREPARE_OK){struct mng_prepare_result previous;
+        status=mng_store_set_reuse_generation(store,addon,candidate,&previous);if(status)goto done;
+        if(previous.content_role!=0x82||previous.application_id!=application){status=MNG_PREPARE_INTEGRITY;goto done;}}
+    else if(!current_missing(root,addon)){status=MNG_PREPARE_INTEGRITY;goto done;}
     status=mng_store_begin(store,report->job_id);if(status)goto done;context.sink=mng_store_sink(store);
     struct mng_asset_sink sink={&context,begin,write_asset,end,stopped,progress};
     struct mng_addon_base owner={application,base.title_version,1};
@@ -111,5 +129,6 @@ done:
     if(image>=0)close(image);
     if(stage>=0)close(stage);
     if(jobs>=0)close(jobs);
+    mng_store_get_io_metrics(store,&report->io_metrics);
     mng_store_close(store);return status;
 }

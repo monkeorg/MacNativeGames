@@ -2,6 +2,7 @@
 #define MNG_INSTALL_H
 #include "mng_addon.h"
 #include "mng_romfs_runtime.h"
+#include "mng_store.h"
 struct mng_install_control {
     void *context;
     /* Normal worker context, nonreentrant; never mutate inputs/store. */
@@ -16,12 +17,17 @@ struct mng_install_report {
     int commit_attempted,publication_uncertain,reload_required,current_readable;
     struct mng_addon_result addon;
     struct mng_romfs_runtime_result index;
+    struct mng_store_io_metrics io_metrics;
 };
 /* Synchronous real installer, no extra publication authority. Under the existing
  * native store lock, verifies EXACT base generation + derives its version, then
  * invokes actual full-install DLC preparation, indexes its staged RomFS and
  * streams index through the same store sink before existing V5 commit.
  * Base must be identified full base/composed update (not folder/add-on/legacy).
+ * Existing current for THIS add-on is fully verified and leased as an optional
+ * same-size COW source. A genuinely missing current is a normal first install;
+ * an existing invalid/unreadable candidate aborts, never downgrades integrity.
+ * Metrics report logical payload I/O only, never physical disk savings.
  * Optional job is exact lowercase32hex; NULL creates a random ID for resumption.
  * Root/source/key provider stay caller-owned, positions preserved. Keys remain
  * transient; no source paths or key values are returned/stored. Isolated jobs
