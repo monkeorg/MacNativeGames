@@ -139,20 +139,34 @@ static void digest_hex(const unsigned char *bytes,size_t size,char *out) {
     for(size_t i=0;i<size;i++){out[2*i]=digits[bytes[i]>>4];out[2*i+1]=digits[bytes[i]&15];}out[size*2]=0;
 }
 static int prepare_command(int argc,char **argv) {
-    const char *key_path=NULL,*store_path=NULL,*job=NULL;
+    const char *key_path=NULL,*store_path=NULL,*job=NULL,*update_path=NULL,*version=NULL;
     struct mng_keys *keys=NULL;struct mng_store *store=NULL;
     struct mng_prepare_result prepared={0};
-    int input=-1,root=-1,result=4,publication_attempted=0,cancelled_result=0;const char *failure="prepare_failed";
+    int input=-1,update=-1,root=-1,result=4,publication_attempted=0,cancelled_result=0;const char *failure="prepare_failed";
     enum mng_prepare_status status;
     char generated_job[33],generation[65],source_hash[65];
-    if(argc!=7 && argc!=9)return error("usage",2);
+    if(argc<7 || argc>13 || !(argc&1))return error("usage",2);
     for(int i=3;i<argc;i+=2) {
         if(!strcmp(argv[i],"--keys") && !key_path)key_path=argv[i+1];
         else if(!strcmp(argv[i],"--store") && !store_path)store_path=argv[i+1];
         else if(!strcmp(argv[i],"--job") && !job)job=argv[i+1];
+        else if(!strcmp(argv[i],"--update") && !update_path)update_path=argv[i+1];
+        else if(!strcmp(argv[i],"--version") && !version)version=argv[i+1];
         else return error("usage",2);
     }
-    if(!key_path || !store_path || (job && !job_valid(job)))return error("usage",2);
+    if(!key_path || !store_path || (job && !job_valid(job)) || (version && !update_path))return error("usage",2);
+    uint32_t target_version=0;
+    int exact_version=version && strcmp(version,"latest");
+    if(exact_version) {
+        uint64_t parsed=0;size_t length=strlen(version);
+        if(!length || length>10)return error("usage",2);
+        for(size_t i=0;i<length;i++) {
+            if(version[i]<'0' || version[i]>'9')return error("usage",2);
+            parsed=parsed*10+(unsigned)(version[i]-'0');
+            if(parsed>UINT32_MAX)return error("usage",2);
+        }
+        target_version=(uint32_t)parsed;
+    }
     if(!job) {
         unsigned char random[16];
         if(getentropy(random,sizeof(random)))return error("random_failed",4);
@@ -165,6 +179,10 @@ static int prepare_command(int argc,char **argv) {
     if(input<0){failure="open_failed";goto done;}
     struct stat info;
     if(fstat(input,&info) || !S_ISREG(info.st_mode)){failure="invalid_source";goto done;}
+    if(update_path) {
+        update=open(update_path,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+        if(update<0 || fstat(update,&info) || !S_ISREG(info.st_mode)){failure="invalid_update_source";goto done;}
+    }
     if(mkdir(store_path,0700) && errno!=EEXIST){failure="store_open_failed";goto done;}
     root=open(store_path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     if(root<0 || fstat(root,&info) || (info.st_mode&077) || info.st_uid!=geteuid()) {failure="store_open_failed";goto done;}
@@ -176,7 +194,9 @@ static int prepare_command(int argc,char **argv) {
     struct cancel_sink wrapped={mng_store_sink(store),store};
     struct mng_asset_sink sink={&wrapped,asset_begin,asset_write,asset_end,cancelled,progress};
     struct mng_key_provider provider=mng_keys_provider(keys);
-    status=mng_prepare_fd(input,&provider,&sink,&prepared);
+    if(update_path) status=exact_version ? mng_prepare_update_fd(input,update,&provider,&sink,target_version,&prepared):
+        mng_prepare_latest_update_fd(input,update,&provider,&sink,&prepared);
+    else status=mng_prepare_fd(input,&provider,&sink,&prepared);
     if(interrupted)status=MNG_PREPARE_CANCELLED;
     if(status==MNG_PREPARE_OK) {
         /* The store polls cancellation during verification and establishes its
@@ -188,13 +208,23 @@ static int prepare_command(int argc,char **argv) {
     digest_hex(prepared.source_sha256,32,source_hash);
     printf("{\"title_id\":\"%016" PRIx64 "\",\"generation\":\"%s\",\"job\":\"%s\","
            "\"source_sha256\":\"%s\",\"asset_count\":%" PRIu64 ",\"asset_bytes\":%" PRIu64 ","
-           "\"exefs_verified\":%s,\"romfs_verified\":%s,\"signature_verified\":false,\"execution_verified\":false}\n",
+           "\"exefs_verified\":%s,\"romfs_verified\":%s,\"signature_verified\":false,\"execution_verified\":false,"
+           "\"application_id\":\"%016" PRIx64 "\",\"title_version\":%" PRIu32 ",\"version_identified\":%s,\"update_applied\":%s",
            prepared.title_id,generation,job,source_hash,prepared.asset_count,prepared.asset_bytes,
-           prepared.exefs_verified?"true":"false",prepared.romfs_verified?"true":"false");
+           prepared.exefs_verified?"true":"false",prepared.romfs_verified?"true":"false",prepared.application_id,
+           prepared.title_version,prepared.version_identified?"true":"false",prepared.update_applied?"true":"false");
+    if(prepared.update_applied) {
+        char update_hash[65];digest_hex(prepared.update_source_sha256,32,update_hash);
+        printf(",\"base_title_version\":%" PRIu32 ",\"patch_title_id\":\"%016" PRIx64 "\","
+               "\"update_source_sha256\":\"%s\",\"update_source_size\":%" PRIu64,
+               prepared.base_title_version,prepared.patch_title_id,update_hash,prepared.update_source_size);
+    }
+    puts("}");
     result=ferror(stdout)?5:0;
  done:
     mng_keys_free(keys);mng_store_close(store);
     if(input>=0)close(input);
+    if(update>=0)close(update);
     if(root>=0)close(root);
     if(cancelled_result || (!publication_attempted && interrupted))return error("cancelled",130);
     return result ? error(failure,result):0;

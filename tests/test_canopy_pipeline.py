@@ -27,7 +27,7 @@ class CanopyPipelineTests(unittest.TestCase):
         sources = ['launcher/cli/main.c', 'launcher/src/mng_container.c',
                    'launcher/src/mng_file.c', 'launcher/src/mng_crypto.c',
                    'launcher/src/mng_keys.c', 'launcher/src/mng_prepare.c',
-                   'launcher/src/mng_store.c', 'launcher/src/mng_content.c']
+                   'launcher/src/mng_store.c', 'launcher/src/mng_content.c', 'launcher/src/mng_bktr.c']
         command = ['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
                    '-I', str(ROOT / 'launcher/include'), *[str(ROOT / p) for p in sources],
                    '-o', str(cls.cli)]
@@ -142,6 +142,100 @@ enum mng_prepare_status pipeline_commit(struct mng_store *store,const struct mng
         repeated = self.prepare()
         self.assertEqual(repeated['generation'], report['generation'])
         self.assertEqual(before, [(p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes()) for p in paths])
+
+    def update_fixture(self, **options):
+        # Reuse the independent encrypted-format fixture generator, without
+        # executing another test class or replacing the production pipeline.
+        from test_canopy_prepare import CanopyPrepareTests
+        import test_canopy_content
+        from cryptography.hazmat.primitives.ciphers import modes
+        from extract_exefs import decrypt
+        helper = CanopyPrepareTests('test_real_two_source_update_composes_romfs_and_selects_update_exefs')
+        helper.fixture = self.fixture
+        helper.content_fixture = test_canopy_content
+        helper.modes = modes
+        helper.decrypt = decrypt
+        return helper.update_pair(**options)
+
+    def test_update_pipeline_publishes_composed_assets_and_separate_source_provenance(self):
+        base, patch, original, updated = self.update_fixture(shared_control=True, managed_update=True)
+        self.source.write_bytes(self.fixture.partition(base))
+        update = self.directory / 'invented-update.nsp'
+        update.write_bytes(self.fixture.partition(patch))
+        report = self.prepare(('--update', str(update)))
+        self.assertTrue(report['update_applied'])
+        self.assertIs(report['version_identified'], True)
+        self.assertEqual((report['base_title_version'], report['title_version']), (7, 12))
+        self.assertEqual(report['update_source_sha256'], hashlib.sha256(update.read_bytes()).hexdigest())
+        root = self.generation(report)
+        self.assertEqual((root/'romfs.bin').read_bytes(), updated)
+        self.assertNotEqual(updated, original)
+        self.assertEqual((root/'exefs/main').read_bytes(), b'updated native bytes')
+        manifest = json.loads((root/'manifest.json').read_text())
+        self.assertEqual((manifest['schemaVersion'], manifest['recipeID']), (3, 'canopy-assets-v3'))
+        self.assertEqual([entry['role'] for entry in manifest['sources']], ['base', 'update'])
+        self.assertEqual(manifest['sources'][0]['sourceSHA256'], report['source_sha256'])
+        self.assertEqual(manifest['sources'][1]['sourceSHA256'], report['update_source_sha256'])
+        repeated = self.prepare(('--update', str(update)))
+        self.assertEqual(repeated['generation'], report['generation'])
+
+    def test_explicit_update_revision_differs_from_latest_and_bad_input_preserves_current(self):
+        base, lower, _, _ = self.update_fixture(patch_version=12, patch_main=b'lower')
+        _, higher, _, _ = self.update_fixture(patch_version=13, patch_main=b'higher')
+        self.source.write_bytes(self.fixture.partition(base))
+        update = self.directory/'two-updates.nsp'
+        update.write_bytes(self.fixture.partition(lower + [('higher-'+name, data) for name, data in higher]))
+        latest = self.prepare(('--update', str(update), '--version', 'latest'))
+        self.assertEqual(latest['title_version'], 13)
+        self.assertEqual((self.generation(latest)/'exefs/main').read_bytes(), b'higher')
+        exact = self.prepare(('--version', '12', '--update', str(update)))
+        self.assertEqual(exact['title_version'], 12)
+        self.assertEqual((self.generation(exact)/'exefs/main').read_bytes(), b'lower')
+        current = self.generation(exact).parent.parent/'current'
+        before = current.read_bytes()
+        self.prepare(('--update', str(update), '--version', '11'), success=False)
+        broken = bytearray(update.read_bytes())
+        count, names_size = struct.unpack_from('<II', broken, 4)
+        first_nca = 16 + count*24 + names_size + struct.unpack_from('<Q', broken, 16)[0]
+        broken[first_nca + 0xc00 + 3] ^= 1
+        update.write_bytes(broken)
+        self.prepare(('--update', str(update)), success=False)
+        self.assertEqual(current.read_bytes(), before)
+        self.assertEqual((self.generation(exact)/'exefs/main').read_bytes(), b'lower')
+
+    def test_literal_update_revision_boundaries_and_invalid_cli_options(self):
+        update = self.directory/'boundary-update.nsp'
+        for version in (0, 0xffffffff):
+            base, patch, _, _ = self.update_fixture(base_version=0, patch_version=version)
+            self.source.write_bytes(self.fixture.partition(base)); update.write_bytes(self.fixture.partition(patch))
+            self.assertEqual(self.prepare(('--update', str(update), '--version', str(version)))['title_version'], version)
+        for arguments in (('--version', '12'), ('--update', str(update), '--version', '4294967296'),
+                          ('--update', str(update), '--version', '-1'), ('--update', str(update), '--version', '1x')):
+            self.assertEqual(self.prepare(arguments, success=False)['error'], 'usage')
+
+    def test_update_commit_cancellation_resumes_and_late_signal_keeps_success(self):
+        base, patch, _, updated = self.update_fixture()
+        self.source.write_bytes(self.fixture.partition(base))
+        first = self.prepare()
+        current = self.generation(first).parent.parent/'current'
+        before = current.read_bytes()
+        update = self.directory/'cancel-update.nsp'; update.write_bytes(self.fixture.partition(patch))
+        job = 'ea'*16
+        command = [str(self.interrupt_cli), 'prepare', str(self.source), '--keys', str(self.keys),
+                   '--store', str(self.store), '--update', str(update), '--job', job]
+        cancelled = subprocess.run(command, env={**os.environ, 'PIPELINE_SIGNAL': 'verify'},
+                                   capture_output=True, text=True, timeout=20)
+        self.assertEqual(cancelled.returncode, 130, cancelled.stdout+cancelled.stderr)
+        self.assertEqual(current.read_bytes(), before)
+        staged = self.store/'jobs'/job/'exefs/main'
+        inode = staged.stat().st_ino
+        resumed = self.prepare(('--update', str(update), '--job', job))
+        self.assertEqual((self.generation(resumed)/'exefs/main').stat().st_ino, inode)
+        self.assertEqual((self.generation(resumed)/'romfs.bin').read_bytes(), updated)
+        late = subprocess.run(command, env={**os.environ, 'PIPELINE_SIGNAL': 'published'},
+                              capture_output=True, text=True, timeout=20)
+        self.assertEqual(late.returncode, 0, late.stdout+late.stderr)
+        self.assertTrue(json.loads(late.stdout)['update_applied'])
 
     def test_corruption_preserves_current_and_second_title_isolated(self):
         first = self.prepare()
