@@ -265,6 +265,11 @@ def main():
         result = build_plan(repo, args.bundle_id) if args.plan else build(repo, args.out, args.bundle_id)
     except (BuildError, OSError, subprocess.SubprocessError) as exc:
         print(f'Canopy build failed: {exc}', file=sys.stderr)
+        # All compiler inputs are the fixed public snapshot. Preserve bounded
+        # diagnostics so an actual compile/link failure can be corrected in CI.
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            diagnostics = exc.stderr.decode('utf-8', errors='replace') if isinstance(exc.stderr, bytes) else exc.stderr
+            print(diagnostics[-65536:], file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0

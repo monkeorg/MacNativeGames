@@ -23,7 +23,8 @@ class CanopyAddonTests(unittest.TestCase):
                  str(ROOT/'launcher/tests/addon_probe.c')]
         command += [str(ROOT/'launcher/src'/name) for name in ('mng_addon.c','mng_content.c','mng_crypto.c','mng_romfs.c','mng_romfs_runtime.c')]
         if sys.platform!='darwin':command+=['-lcrypto']
-        subprocess.run(command+['-o',str(cls.probe)],check=True,capture_output=True,text=True)
+        compiled=subprocess.run(command+['-o',str(cls.probe)],capture_output=True,text=True)
+        if compiled.returncode:raise AssertionError(compiled.stdout+compiled.stderr)
     def run_case(self,mode='ok',index=None,special=None):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);image=root/'romfs';raw,layout=romfs([] if mode=='empty' else [('nested/data.bin',b'original payload')]);image.write_bytes(raw);image.chmod(0o600)
