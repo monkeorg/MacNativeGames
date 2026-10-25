@@ -374,6 +374,18 @@
       },
       "patch": "0033-fixed-composite-fill-bounds.patch",
       "sha256": "14f68c685befaa9f6c67c1c3ccf5a3f93082e6edf87367d5919b70f04b5d2c58"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "8259e7cdc8d808fae38dabba584f835174739d4912401493f8dcb3ec31709644",
+        "spirv_glsl.cpp": "d18ab68492932e75df49c50e06ea7224e0ecdb6b6a6990db58aa88cd1540dc42"
+      },
+      "before": {
+        "spirv_cross.cpp": "e47622983d6e01e54415952e9e98944bdfe1bccd38658452a2fab80444fe3162",
+        "spirv_glsl.cpp": "4909ab68421c311835b5b8e0d79d04ecff2d86e043d2eaae389684b1db8f28d6"
+      },
+      "patch": "0034-final-collection-loop-checkpoints.patch",
+      "sha256": "3050364f798cc4659b9b1c4584935ce513b3cb173167cbe8b4338764a9faa091"
     }
   ],
   "schemaVersion": 1
