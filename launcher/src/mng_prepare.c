@@ -9,6 +9,7 @@
 #include "mng_content.h"
 #include "mng_bktr.h"
 #include "mng_prepare_internal.h"
+#include "mng_addon.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -257,7 +258,7 @@ static int content_key(struct prep *p,const struct ticket *tickets,size_t count)
 done:
     mng_secure_clear(wrapping,sizeof(wrapping)); return result;
 }
-static int emit_reader(struct prep *p,mng_read_at read,void *reader,uint64_t offset,uint64_t size,const char *path) {
+static int emit_reader_digest(struct prep *p,mng_read_at read,void *reader,uint64_t offset,uint64_t size,const char *path,unsigned char *output_digest) {
     struct mng_sha256 *hash=NULL;
     unsigned char bytes[CHUNK], digest[32]; int result=-1;
     if (p->result.asset_count>=128 || size>MAX_ASSETS-p->result.asset_bytes)
@@ -275,9 +276,13 @@ static int emit_reader(struct prep *p,mng_read_at read,void *reader,uint64_t off
     if (cancelled(p)) goto done;
     if (mng_sha256_final(hash,digest)) { fail(p,MNG_PREPARE_INTEGRITY); goto done; }
     if (p->sink->end(p->sink->context,digest)) { fail(p,MNG_PREPARE_IO); goto done; }
+    if (output_digest) memcpy(output_digest,digest,32);
     p->result.asset_count++; p->result.asset_bytes+=size; result=0;
 done:
     mng_secure_clear(bytes,sizeof(bytes)); mng_sha256_free(hash); return result;
+}
+static int emit_reader(struct prep *p,mng_read_at read,void *reader,uint64_t offset,uint64_t size,const char *path) {
+    return emit_reader_digest(p,read,reader,offset,size,path,NULL);
 }
 static int emit(struct section *s,uint64_t offset,uint64_t size,const char *path) {
     return emit_reader(s->p,section_read,s,offset,size,path);
@@ -355,6 +360,7 @@ struct catalog {
     struct observed_nca *observed;
     struct mng_content_candidate *candidates;
     struct mng_content *metadata[64];
+    unsigned char cnmt_sha256[64][32];
     size_t nca_count,meta_count,metadata_bytes;
     int has_meta;
 };
@@ -374,7 +380,7 @@ static int nca_read(void *context,uint64_t at,void *out,size_t size) {
     return source_read(context,at,out,size);
 }
 static int read_metadata(struct prep *p,const struct ticket *tickets,size_t ticket_count,
-    struct mng_content **out,size_t *metadata_bytes) {
+    struct mng_content **out,size_t *metadata_bytes,unsigned char digest[32]) {
     if (content_key(p,tickets,ticket_count)) return -1;
     struct section section={0};
     for (unsigned i=0;i<4;i++) {
@@ -397,6 +403,9 @@ static int read_metadata(struct prep *p,const struct ticket *tickets,size_t tick
         content_status(p,mng_content_parse(e->name,bytes,(size_t)e->size,out))) goto done;
     if ((*out)->title_id!=u64(p->header+0x210)) {
         mng_content_free(*out);*out=NULL;fail(p,MNG_PREPARE_INTEGRITY);goto done;
+    }
+    if (sha(bytes,(size_t)e->size,digest)) {
+        mng_content_free(*out);*out=NULL;fail(p,MNG_PREPARE_NOMEM);goto done;
     }
     *metadata_bytes+=(size_t)e->size;result=0;
 done:
@@ -438,7 +447,7 @@ static int catalog_read(struct prep *p,const struct mng_inventory *inventory,
         if (c->meta_count==64) return fail(p,MNG_PREPARE_LIMIT);
         if (header_read(p,e,p->header)) return -1;
         p->nca_offset=e->offset;p->nca_size=e->size;
-        if (read_metadata(p,tickets,ticket_count,c->metadata+c->meta_count,&c->metadata_bytes)) return -1;
+        if (read_metadata(p,tickets,ticket_count,c->metadata+c->meta_count,&c->metadata_bytes,c->cnmt_sha256[c->meta_count])) return -1;
         c->meta_count++;
     }
     return 0;
@@ -604,7 +613,8 @@ int mng_prepare_result_empty(const struct mng_prepare_result *result) {
         result->patch_title_id || result->base_title_version || memcmp(result->source_sha256,zero,32) ||
         memcmp(result->update_source_sha256,zero,32) || result->source_kind || result->source_member_bytes ||
         result->source_member_count || result->asset_hashes_verified || result->romfs_structure_verified ||
-        memcmp(result->member_inventory_sha256,zero,32))
+        memcmp(result->member_inventory_sha256,zero,32) || result->addon_required_application_version ||
+        memcmp(result->addon_cnmt_sha256,zero,32))
         return 0;
     return 1;
 }
@@ -658,6 +668,86 @@ enum mng_prepare_status mng_prepare_nca_folder_reader(const struct mng_prepare_r
     enum mng_prepare_status status=p.failure;
     if (status==MNG_PREPARE_OK) *result=p.result;
     mng_secure_clear(&p,sizeof(p));return status;
+}
+/* Full-install add-on preparation shares the actual metadata/key/IVFC core.
+ * A DLC is a separate read-only volume, never an overlay of base game bytes. */
+static int addon_result_empty(const struct mng_addon_result *r) {
+    static const unsigned char zero[32];
+    return r && !r->application_id && !r->title_id && !r->source_size && !r->romfs_size &&
+        !r->version && !r->required_application_version && !r->romfs_verified &&
+        !memcmp(r->source_sha256,zero,32) && !memcmp(r->cnmt_sha256,zero,32) && !memcmp(r->romfs_sha256,zero,32);
+}
+enum mng_prepare_status mng_prepare_addon_fd(int fd,const struct mng_key_provider *keys,
+    const struct mng_asset_sink *sink,const struct mng_addon_base *base,uint64_t title,
+    struct mng_addon_result *out) {
+    if (!addon_result_empty(out) || !keys || !keys->lookup || !sink || !sink->begin || !sink->write || !sink->end ||
+        !base || !base->application_id || base->version_verified!=1 || !title || title==base->application_id)
+        return MNG_PREPARE_INVALID;
+    struct stat before,after;
+    if (fstat(fd,&before)) return MNG_PREPARE_IO;
+    if (!S_ISREG(before.st_mode) || before.st_size<0) return MNG_PREPARE_INVALID;
+    if ((uint64_t)before.st_size>MAX_SOURCE) return MNG_PREPARE_LIMIT;
+    struct prep p={0};p.fd=fd;p.size=(uint64_t)before.st_size;p.keys=keys;p.sink=sink;
+    struct mng_inventory inventory={0};struct catalog c={0};
+    struct ticket tickets[MAX_TICKETS];size_t ticket_count=0;
+    struct mng_addon_result result={0};size_t chosen=SIZE_MAX;
+    if (cancelled(&p) || container_status(&p,mng_container_inspect(source_read,&p,p.size,&inventory)) ||
+        key_lookup(&p,"header_key",p.header_key,32) || tickets_read(&p,&inventory,tickets,&ticket_count) ||
+        catalog_read(&p,&inventory,tickets,ticket_count,&c)) goto done;
+    if (!c.has_meta || !c.meta_count) { fail(&p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    if (bind_metadata(&p,c.metadata,c.meta_count,c.observed,c.candidates,c.nca_count) ||
+        all_declared(&p,c.metadata,c.meta_count,c.candidates,c.nca_count)) goto done;
+    for (size_t i=0;i<c.meta_count;i++) {
+        const struct mng_content *meta=c.metadata[i];
+        if (meta->application_id!=base->application_id) { fail(&p,MNG_PREPARE_INTEGRITY);goto done; }
+        /* This subset cannot attest unrepresented external metadata tuples. */
+        if (meta->dependency_count) { fail(&p,MNG_PREPARE_UNSUPPORTED);goto done; }
+        for (size_t j=0;j<i;j++) if (meta->title_id==c.metadata[j]->title_id &&
+            (meta->type!=c.metadata[j]->type || meta->version==c.metadata[j]->version)) {
+            fail(&p,MNG_PREPARE_INVALID);goto done;
+        }
+        if (meta->type==MNG_CONTENT_ADDON && meta->title_id==title &&
+            (chosen==SIZE_MAX || meta->version>c.metadata[chosen]->version)) chosen=i;
+    }
+    if (chosen==SIZE_MAX) { fail(&p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    const struct mng_content *meta=c.metadata[chosen];
+    if (meta->required_application_version>base->version || meta->content_count!=1 ||
+        meta->contents[0].role!=2 || meta->contents[0].id_offset) { fail(&p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    size_t selected=0;
+    while (selected<c.nca_count && memcmp(meta->contents[0].id,c.observed[selected].candidate.id,16)) selected++;
+    if (selected==c.nca_count) { fail(&p,MNG_PREPARE_INTEGRITY);goto done; }
+    const struct observed_nca *data=c.observed+selected;
+    if ((data->candidate.nca_type!=4 && data->candidate.nca_type!=5) || data->title_id!=title) {
+        fail(&p,MNG_PREPARE_INTEGRITY);goto done;
+    }
+    if (header_read(&p,data->entry,p.header)) goto done;
+    if (u64(p.header+0x210)!=title || (p.header[0x205]!=4 && p.header[0x205]!=5)) { fail(&p,MNG_PREPARE_INTEGRITY);goto done; }
+    p.nca_offset=data->entry->offset;p.nca_size=data->entry->size;
+    if (content_key(&p,tickets,ticket_count)) goto done;
+    struct section rom={0};
+    for (unsigned i=0;i<4;i++) {
+        uint64_t start=(uint64_t)u32(p.header+0x240+i*16)*512;
+        if (!start) continue;
+        const unsigned char *fs=p.header+0x400+i*512;
+        if (rom.p || fs[2]!=0 || fs[3]!=3 || fs[4]!=3) { fail(&p,MNG_PREPARE_UNSUPPORTED);goto done; }
+        rom=(struct section){&p,start,(uint64_t)u32(p.header+0x244+i*16)*512-start,fs};
+    }
+    if (!rom.p) { fail(&p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    uint64_t image_offset=0,image_size=0;
+    if (verify_romfs(&rom,&image_offset,&image_size) ||
+        emit_reader_digest(&p,section_read,&rom,image_offset,image_size,"romfs.bin",result.romfs_sha256)) goto done;
+    p.hash_phase="hash-addon-source";
+    progress(&p,"hash-addon-source",0,p.size);
+    if (hash_range(&p,source_read,&p,0,p.size,p.size,result.source_sha256) || cancelled(&p)) goto done;
+    result.application_id=base->application_id;result.title_id=title;result.version=meta->version;
+    result.required_application_version=meta->required_application_version;result.source_size=p.size;
+    result.romfs_size=image_size;result.romfs_verified=1;memcpy(result.cnmt_sha256,c.cnmt_sha256[chosen],32);
+done:
+    if (fstat(fd,&after) || !stable(&before,&after)) p.failure=MNG_PREPARE_IO;
+    enum mng_prepare_status status=p.failure;
+    if (!status) *out=result;
+    catalog_free(&c);mng_inventory_free(&inventory);mng_secure_clear(tickets,sizeof(tickets));
+    mng_secure_clear(&p,sizeof(p));mng_secure_clear(&result,sizeof(result));return status;
 }
 struct paired_sources {
     struct prep *base,*update;
