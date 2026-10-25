@@ -20,6 +20,13 @@ typedef void (^CanopyStorageCompletion)(NSDictionary<NSString *,id> *snapshot, N
 @property(nonatomic, readonly) NSDictionary<NSString *,id> *snapshot;
 - (instancetype)initWithPreparedRootURL:(NSURL *)prepared cacheRootURL:(NSURL *)cache;
 - (BOOL)reloadWithCompletion:(CanopyStorageCompletion)completion;
+/// Explicit worker resolution, never a list-time full-game hash. Completes on
+/// main after busy clears. Exact native intent and exact identified base are
+/// reverified; no current-generation substitution or imported routing approval.
+/// Route keys: jobIdentifier/applicationID/baseGenerationID/addonTitleID/
+/// verifiedBaseEntry. Missing legacy intent is an error for this typed route.
+- (BOOL)resolveAddonResumeJob:(NSString *)jobIdentifier
+    completion:(void (^)(NSDictionary<NSString *,id> * _Nullable route,NSError * _Nullable error))completion;
 /// Exact lowercase64hex generation/cache IDs or32hex job IDs. Jobs take nil
 /// title; all other actions require exact nonzero16hex title. Existing native
 /// store/cache APIs enforce current/previous/pins/leases at the point of mutation.

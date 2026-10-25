@@ -52,9 +52,17 @@ struct mng_store {
     struct asset reuse_assets[MNG_STORE_MAX_ASSETS];
     unsigned char *compare;
     struct mng_store_io_metrics metrics;
+    struct mng_store_job_intent job_intent;
+    int has_job_intent,intent_confirmed;
+    uint64_t job_device,job_inode;
 };
 static int rename_exclusive(int from, const char *source, int to, const char *destination);
 static int recover_retirement(struct mng_store *s,uint64_t *completed_title,char completed_gen[65]);
+static int same_snapshot(const struct stat *a,const struct stat *b);
+static int removal_preflight(int dir,unsigned depth);
+static int remove_tree(int parent,const char *name,unsigned depth);
+static int job_intent_cleanup(struct mng_store *s,const char *job);
+static int job_intent_protects(struct mng_store *s,uint64_t title,const char *generation);
 static int poll_cancel(struct mng_store *s) {
     if (!s) return 0;
     int state=atomic_load(&s->cancelled);
@@ -455,13 +463,117 @@ void mng_store_close(struct mng_store *s) {
 void mng_store_set_cancel_check(struct mng_store *s, int (*check)(void *), void *context) {
     if (s) { s->cancel_check=check; s->cancel_context=context; }
 }
+#define JOB_INTENT_BYTES 176u
+static int job_intent_dir(struct mng_store *s,int create) {
+    if(create&&mkdirat(s->root,"job-intents",0700)&&errno!=EEXIST)return -1;
+    int fd=openat(s->root,"job-intents",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);struct stat st={0};
+    if(fd>=0&&(fstat(fd,&st)||st.st_uid!=geteuid()||(st.st_mode&077))){close(fd);errno=EINVAL;return -1;}
+    if(fd>=0&&create&&fsync(s->root)){close(fd);return -1;}return fd;
+}
+static int job_intent_digest(const unsigned char *data,unsigned char out[32]) {
+    struct mng_sha256 *hash=NULL;int bad=mng_sha256_init(&hash)||mng_sha256_update(hash,data,144)||mng_sha256_final(hash,out);mng_sha256_free(hash);return bad;
+}
+static void job_intent_name(const char *job,char name[37]){memcpy(name,job,32);memcpy(name+32,".bin",5);}
+/* 0 missing,1 valid,-1 malformed/unsafe. The checksum detects corruption; it
+ * does not make imported metadata trusted or approve any content/execution. */
+static int job_intent_eof(int fd) {unsigned char extra;ssize_t got;do{got=read(fd,&extra,1);}while(got<0&&errno==EINTR);return got==0?0:-1;}
+static int job_intent_record(int dir,const char *job,struct mng_store_job_intent *out,uint64_t *dev,uint64_t *ino,int durable) {
+    char name[37];job_intent_name(job,name);int fd=openat(dir,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if(fd<0)return errno==ENOENT?0:-1;
+    struct stat before={0},after={0};unsigned char data[JOB_INTENT_BYTES]={0},digest[32];
+    int bad=regular(fd,JOB_INTENT_BYTES,&before)||before.st_size!=JOB_INTENT_BYTES||before.st_uid!=geteuid()||(before.st_mode&077)||
+        read_all(fd,data,sizeof(data))||job_intent_eof(fd)||fstat(fd,&after)||!same_snapshot(&before,&after);
+    if(bad||memcmp(data,"CNPYJI01",8)||get32(data+8)!=MNG_STORE_JOB_ADDON||get32(data+12)||
+        memcmp(data+16,job,32)||job_intent_digest(data,digest)||memcmp(digest,data+144,32)){close(fd);return -1;}
+    struct mng_store_job_intent intent={0};intent.mode=MNG_STORE_JOB_ADDON;intent.application_id=get64(data+48);memcpy(intent.base_generation_id,data+56,64);intent.addon_title_id=get64(data+120);
+    if(!intent.application_id||!intent.addon_title_id||intent.application_id==intent.addon_title_id||!hex_valid(intent.base_generation_id,64)||!get64(data+136)){close(fd);return -1;}
+    struct stat named={0};
+    bad=(durable&&fsync(fd))||fstat(fd,&after)||!same_snapshot(&before,&after)||
+        fstatat(dir,name,&named,AT_SYMLINK_NOFOLLOW)||!same_snapshot(&after,&named);
+    if(close(fd))bad=1;
+    if(bad)return -1;
+    *out=intent;*dev=get64(data+128);*ino=get64(data+136);return 1;
+}
+static int job_intent_job(struct mng_store *s,const char *job,struct stat *identity) {
+    int fd=openat(s->jobs,job,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return -1;
+    int bad=fstat(fd,identity)||identity->st_uid!=geteuid()||(identity->st_mode&077);close(fd);return bad?-1:0;
+}
+enum mng_prepare_status mng_store_read_job_intent(struct mng_store *s,const char *job,struct mng_store_job_intent *out,int *present) {
+    if(!s||!out||!present||!hex_valid(job,32))return MNG_PREPARE_INVALID;
+    if(poll_cancel(s))return MNG_PREPARE_CANCELLED;
+    struct stat identity={0};if(job_intent_job(s,job,&identity))return MNG_PREPARE_IO;
+    int dir=job_intent_dir(s,0);if(dir<0){if(errno==ENOENT){*present=0;return MNG_PREPARE_OK;}return MNG_PREPARE_INTEGRITY;}
+    struct mng_store_job_intent intent;uint64_t dev=0,ino=0;int result=job_intent_record(dir,job,&intent,&dev,&ino,0);close(dir);
+    if(poll_cancel(s))return MNG_PREPARE_CANCELLED;
+    if(result<0||(result&&((uint64_t)identity.st_dev!=dev||(uint64_t)identity.st_ino!=ino)))return MNG_PREPARE_INTEGRITY;
+    if(result)*out=intent;
+    *present=result;return MNG_PREPARE_OK;
+}
+/* Walk every real metadata entry before filtering. Only exact records and the
+ * one reserved bounded temporary are recognized; unknown entries are retained. */
+static int job_intent_scan(struct mng_store *s,int dir,uint64_t title,const char *generation,int cleanup,size_t *records) {
+    int fd=directory_iterator(dir);DIR *entries=fd<0?NULL:fdopendir(fd);if(!entries){if(fd>=0)close(fd);return -1;}
+    size_t count=0,total=0,seen_records=0;int bad=0,protected=0;struct dirent *entry;errno=0;
+    while((entry=readdir(entries))){const char *name=entry->d_name;if(!strcmp(name,".")||!strcmp(name,"..")){errno=0;continue;}
+        if(++total>MNG_STORE_MAX_JOB_INTENTS+1||poll_cancel(s)){bad=1;break;}
+        if(!strcmp(name,".intent.tmp")){struct stat st={0};if(fstatat(dir,name,&st,AT_SYMLINK_NOFOLLOW)||!S_ISREG(st.st_mode)||st.st_nlink!=1||st.st_uid!=geteuid()||(st.st_mode&077)||st.st_size<0||st.st_size>JOB_INTENT_BYTES||(cleanup&&safe_unlink(dir,name))){bad=1;break;}errno=0;continue;}
+        size_t length=strlen(name);char job[33]={0};if(++seen_records>MNG_STORE_MAX_JOB_INTENTS||length!=36||strcmp(name+32,".bin")){bad=1;break;}memcpy(job,name,32);if(!hex_valid(job,32)){bad=1;break;}
+        struct mng_store_job_intent intent;uint64_t dev=0,ino=0;struct stat identity={0};
+        if(job_intent_record(dir,job,&intent,&dev,&ino,0)!=1){bad=1;break;}
+        if(job_intent_job(s,job,&identity)) {
+            struct stat missing;if(!fstatat(s->jobs,job,&missing,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT){bad=1;break;}
+            if(cleanup&&(fsync(s->jobs)||safe_unlink(dir,name))){bad=1;break;}
+            if(!cleanup)count++;
+        } else {
+            if((uint64_t)identity.st_dev!=dev||(uint64_t)identity.st_ino!=ino||++count>MNG_STORE_MAX_JOB_INTENTS){bad=1;break;}
+            if(generation&&intent.application_id==title&&!strcmp(intent.base_generation_id,generation))protected=1;
+        }
+        errno=0;
+    }
+    if(!entry&&errno)bad=1;
+    closedir(entries);if(!bad&&cleanup&&fsync(dir))bad=1;
+    if(bad)return -1;
+    if(records)*records=count;
+    return protected;
+}
+static int job_intent_protects(struct mng_store *s,uint64_t title,const char *generation) {
+    int dir=job_intent_dir(s,0);if(dir<0)return errno==ENOENT?0:-1;int result=job_intent_scan(s,dir,title,generation,0,NULL);close(dir);return result;
+}
+static int job_intent_cleanup(struct mng_store *s,const char *job) {
+    struct stat st;if(!fstatat(s->jobs,job,&st,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT)return -1;
+    int dir=job_intent_dir(s,0);if(dir<0)return errno==ENOENT?0:-1;
+    struct mng_store_job_intent intent;uint64_t dev=0,ino=0;int result=job_intent_record(dir,job,&intent,&dev,&ino,0);
+    char name[37];job_intent_name(job,name);int bad=result<0||(result&&(fsync(s->jobs)||safe_unlink(dir,name)||fsync(dir)));close(dir);return bad?-1:result;
+}
+/* Re-establish durability even after a prior successful rename followed by
+ * failed directory fsync. Visibility alone never permits typed asset writes. */
+static int job_intent_confirm(struct mng_store *s) {
+    int dir=job_intent_dir(s,0);if(dir<0)return -1;
+    struct stat before={0},after={0},named={0},job={0};
+    struct mng_store_job_intent intent;uint64_t dev=0,ino=0;
+    int bad=fstat(dir,&before)||job_intent_record(dir,s->job_id,&intent,&dev,&ino,1)!=1||
+        intent.mode!=s->job_intent.mode||intent.application_id!=s->job_intent.application_id||
+        intent.addon_title_id!=s->job_intent.addon_title_id||strcmp(intent.base_generation_id,s->job_intent.base_generation_id)||
+        dev!=s->job_device||ino!=s->job_inode||fsync(s->job)||fsync(dir)||fsync(s->jobs)||fsync(s->root)||
+        fstat(dir,&after)||!same_snapshot(&before,&after)||
+        fstatat(s->root,"job-intents",&named,AT_SYMLINK_NOFOLLOW)||!same_snapshot(&after,&named)||
+        job_intent_job(s,s->job_id,&job)||(uint64_t)job.st_dev!=dev||(uint64_t)job.st_ino!=ino;
+    if(close(dir))bad=1;
+    return bad?-1:0;
+}
 enum mng_prepare_status mng_store_begin(struct mng_store *s, const char *job_id) {
     if (!s || !hex_valid(job_id,32) || s->job>=0) return MNG_PREPARE_INVALID;
     memset(&s->metrics,0,sizeof(s->metrics));
     if (poll_cancel(s)) return MNG_PREPARE_CANCELLED;
     s->job=directory(s->jobs,job_id,1); if (s->job<0) return MNG_PREPARE_IO;
     strcpy(s->job_id,job_id); s->failed=0; s->count=0; s->total=0;
-    enum mng_prepare_status failure=MNG_PREPARE_INTEGRITY;
+    memset(&s->job_intent,0,sizeof(s->job_intent));s->has_job_intent=0;s->intent_confirmed=0;
+    struct stat job_identity={0};
+    if(fstat(s->job,&job_identity)){close(s->job);s->job=-1;return MNG_PREPARE_IO;}
+    s->job_device=(uint64_t)job_identity.st_dev;s->job_inode=(uint64_t)job_identity.st_ino;
+    enum mng_prepare_status failure=mng_store_read_job_intent(s,job_id,&s->job_intent,&s->has_job_intent);
+    if(failure!=MNG_PREPARE_OK)goto bad;
+    failure=MNG_PREPARE_INTEGRITY;
     struct stat st; struct mng_prepare_result result;
     if (!fstatat(s->job,"receipt.bin",&st,AT_SYMLINK_NOFOLLOW)) {
         if (load_receipt(s->job,s->assets,&s->count,&result)) goto bad;
@@ -548,7 +660,7 @@ static int payload_write(struct mng_store *s,const unsigned char *bytes,size_t l
 static int sink_begin(void *context, const char *path, uint64_t size) {
     struct mng_store *s=context;
     if (!s) return -1;
-    if (s->job<0 || poll_cancel(s) || s->failed || s->hash || !asset_path(path)) { s->failed=1; return -1; }
+    if (s->job<0 || poll_cancel(s) || s->failed || s->hash || (s->has_job_intent&&!s->intent_confirmed) || !asset_path(path)) { s->failed=1; return -1; }
     int existing=find_asset(s,path);
     if ((existing>=0 && strcmp(s->assets[existing].path,path)) ||
         (existing<0 && (s->count>=MNG_STORE_MAX_ASSETS || size>MNG_STORE_MAX_BYTES-s->total)) ||
@@ -733,6 +845,49 @@ static enum mng_prepare_status verify_generation(struct mng_store *s, uint64_t t
 enum mng_prepare_status mng_store_verify(struct mng_store *s, uint64_t title, const char *gen, struct mng_prepare_result *out) {
     return verify_generation(s,title,gen,out,s,NULL);
 }
+static int addon_intent_matches(const struct mng_store_job_intent *intent,uint64_t application,const char *base,uint64_t addon) {
+    return intent->mode==MNG_STORE_JOB_ADDON&&intent->application_id==application&&intent->addon_title_id==addon&&!strcmp(intent->base_generation_id,base);
+}
+enum mng_prepare_status mng_store_begin_addon(struct mng_store *s,const char *job,uint64_t application,
+    const char *base,uint64_t addon,struct mng_prepare_result *verified_base) {
+    if(!s||s->job>=0||!hex_valid(job,32)||!application||!addon||application==addon||!hex_valid(base,64))return MNG_PREPARE_INVALID;
+    struct mng_prepare_result verified={0};enum mng_prepare_status status=mng_store_verify(s,application,base,&verified);
+    if(status!=MNG_PREPARE_OK)return status;
+    if(verified.title_id!=application||verified.application_id!=application||verified.version_identified!=1||verified.source_kind||
+        (verified.content_role!=0x80&&verified.content_role!=0x81)||verified.exefs_verified!=1||verified.romfs_verified!=1)return MNG_PREPARE_UNSUPPORTED;
+    struct stat identity={0};
+    if(!job_intent_job(s,job,&identity)) {
+        struct mng_store_job_intent previous;int present=0;
+        status=mng_store_read_job_intent(s,job,&previous,&present);if(status!=MNG_PREPARE_OK)return status;
+        if(present&&!addon_intent_matches(&previous,application,base,addon))return MNG_PREPARE_INTEGRITY;
+    } else {
+        struct stat named;if(!fstatat(s->jobs,job,&named,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT)return MNG_PREPARE_INTEGRITY;
+        if(job_intent_cleanup(s,job)<0)return MNG_PREPARE_INTEGRITY;
+    }
+    status=mng_store_begin(s,job);if(status!=MNG_PREPARE_OK)return status;
+    if(s->has_job_intent) {
+        if(!addon_intent_matches(&s->job_intent,application,base,addon)){status=MNG_PREPARE_INTEGRITY;goto fail;}
+    } else {
+        int dir=job_intent_dir(s,1);if(dir<0){status=MNG_PREPARE_IO;goto fail;}
+        size_t records=0;int scanned=job_intent_scan(s,dir,0,NULL,1,&records);
+        if(scanned<0||records>=MNG_STORE_MAX_JOB_INTENTS||fstat(s->job,&identity)||identity.st_uid!=geteuid()||(identity.st_mode&077)) {
+            close(dir);status=poll_cancel(s)?MNG_PREPARE_CANCELLED:scanned<0?MNG_PREPARE_INTEGRITY:records>=MNG_STORE_MAX_JOB_INTENTS?MNG_PREPARE_LIMIT:MNG_PREPARE_IO;goto fail;
+        }
+        unsigned char data[JOB_INTENT_BYTES]={0};memcpy(data,"CNPYJI01",8);put32(data+8,MNG_STORE_JOB_ADDON);memcpy(data+16,job,32);put64(data+48,application);memcpy(data+56,base,64);put64(data+120,addon);put64(data+128,(uint64_t)identity.st_dev);put64(data+136,(uint64_t)identity.st_ino);
+        int bad=job_intent_digest(data,data+144)||poll_cancel(s);int fd=bad?-1:openat(dir,".intent.tmp",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+        if(fd<0)bad=1;else {bad=write_all(fd,data,sizeof(data))||fchmod(fd,0400)||fsync(fd);if(close(fd))bad=1;}
+        char name[37];job_intent_name(job,name);
+        if(!bad)bad=poll_cancel(s)||rename_exclusive(dir,".intent.tmp",dir,name)||fsync(dir);
+        close(dir);if(bad){status=poll_cancel(s)?MNG_PREPARE_CANCELLED:MNG_PREPARE_IO;goto fail;}
+        s->job_intent.mode=MNG_STORE_JOB_ADDON;s->job_intent.application_id=application;s->job_intent.addon_title_id=addon;memcpy(s->job_intent.base_generation_id,base,65);s->has_job_intent=1;
+    }
+    if(poll_cancel(s)){status=MNG_PREPARE_CANCELLED;goto fail;}
+    if(job_intent_confirm(s)){status=poll_cancel(s)?MNG_PREPARE_CANCELLED:MNG_PREPARE_IO;goto fail;}
+    if(poll_cancel(s)){status=MNG_PREPARE_CANCELLED;goto fail;}
+    s->intent_confirmed=1;if(verified_base)*verified_base=verified;return MNG_PREPARE_OK;
+fail:
+    close(s->job);s->job=-1;s->count=0;s->total=0;s->failed=1;return status;
+}
 static int replace_current(struct mng_store *s, int dir, const char *line, int preparation) {
     if (safe_unlink(dir,".current.tmp")) return -1;
     int fd=openat(dir,".current.tmp",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
@@ -789,6 +944,7 @@ static int rename_exclusive(int from, const char *source, int to, const char *de
 }
 enum mng_prepare_status mng_store_commit(struct mng_store *s, const struct mng_prepare_result *r, char out[65]) {
     if (!s || !r || !out || s->job<0 || s->hash || s->output>=0 || !complete(s->assets,s->count,r)) return MNG_PREPARE_INVALID;
+    if(s->has_job_intent&&(!s->intent_confirmed||r->content_role!=0x82||r->title_id!=s->job_intent.addon_title_id||r->application_id!=s->job_intent.application_id))return MNG_PREPARE_INTEGRITY;
     if(s->reuse_root>=0&&(r->title_id!=s->reuse_title||(r->application_id?r->application_id:r->title_id)!=s->reuse_application))return MNG_PREPARE_INVALID;
     if (poll_cancel(s)) return MNG_PREPARE_CANCELLED;
     if (s->failed) return MNG_PREPARE_IO;
@@ -819,6 +975,17 @@ enum mng_prepare_status mng_store_commit(struct mng_store *s, const struct mng_p
     int published=publish(s,r->title_id,gen,1);
     finish_publication(s);
     if (published) return published==-2 ? MNG_PREPARE_CANCELLED:MNG_PREPARE_IO;
+    if(s->has_job_intent) {
+        struct stat remaining={0};
+        if(!fstatat(s->jobs,s->job_id,&remaining,AT_SYMLINK_NOFOLLOW)) {
+            if((uint64_t)remaining.st_dev!=s->job_device||(uint64_t)remaining.st_ino!=s->job_inode)return MNG_PREPARE_IO;
+            int duplicate=openat(s->jobs,s->job_id,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+            int unsafe=duplicate<0||removal_preflight(duplicate,0);if(duplicate>=0)close(duplicate);
+            if(unsafe||remove_tree(s->jobs,s->job_id,0))return MNG_PREPARE_IO;
+        } else if(errno!=ENOENT)return MNG_PREPARE_IO;
+        if(job_intent_cleanup(s,s->job_id)<0)return MNG_PREPARE_IO;
+        s->has_job_intent=0;s->intent_confirmed=0;
+    }
     memcpy(out,gen,65); return MNG_PREPARE_OK;
 }
 enum mng_prepare_status mng_store_pin_verified_assets(struct mng_store *s, uint64_t title, const char *gen,
@@ -961,6 +1128,7 @@ static int retirement_unprotected(struct mng_store *s,uint64_t title,const char 
         struct stat st;
         if(!fstatat(dir,"previous",&st,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT){close(dir);return -1;}
     } else if(!strcmp(previous,gen)){close(dir);return -2;}
+    int pending=job_intent_protects(s,title,gen);if(pending){close(dir);return pending>0?-2:-1;}
     int result=directory(dir,"generations",0);close(dir);
     if(result<0)return -1;
     *generations=result;return 0;
@@ -1083,7 +1251,23 @@ static int retirement_intent(int dir,uint64_t title,const char *gen,const struct
 }
 enum mng_prepare_status mng_store_discard_job(struct mng_store *s, const char *job_id) {
     if (!s || !hex_valid(job_id,32) || (s->job>=0 && !strcmp(job_id,s->job_id))) return MNG_PREPARE_INVALID;
-    return remove_tree(s->jobs,job_id,0) ? MNG_PREPARE_IO:MNG_PREPARE_OK;
+    struct stat st;int removed=0;
+    if(fstatat(s->jobs,job_id,&st,AT_SYMLINK_NOFOLLOW)) {
+        if(errno!=ENOENT)return MNG_PREPARE_IO;
+    } else {
+        struct mng_store_job_intent intent;int present=0;
+        enum mng_prepare_status checked=mng_store_read_job_intent(s,job_id,&intent,&present);
+        if(checked!=MNG_PREPARE_OK)return checked;
+        int target=openat(s->jobs,job_id,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+        struct stat opened={0},named={0};
+        int unsafe=target<0||fstat(target,&opened)||!same_snapshot(&st,&opened)||removal_preflight(target,0)||
+            fstatat(s->jobs,job_id,&named,AT_SYMLINK_NOFOLLOW)||!same_snapshot(&opened,&named);
+        if(target>=0)close(target);
+        if(unsafe||remove_tree(s->jobs,job_id,0))return MNG_PREPARE_IO;
+        removed=1;
+    }
+    int cleaned=job_intent_cleanup(s,job_id);
+    return cleaned<0||(!removed&&!cleaned)?MNG_PREPARE_IO:MNG_PREPARE_OK;
 }
 enum mng_prepare_status mng_store_remove_generation(struct mng_store *s, uint64_t title, const char *gen) {
     if (!s || !title || !hex_valid(gen,64)) return MNG_PREPARE_INVALID;

@@ -10,6 +10,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Re-select inputs for this exact unfinished job; native fingerprint checks
 /// remain authoritative. Contains no URLs, keys or inferred source identity.
 @property(nonatomic, copy, nullable) void (^resumePreparation)(NSString *jobIdentifier);
+/// Exact add-on route from the native verified resolver, never an inferred
+/// generic job kind. Consumer must recheck its own library/session exclusion.
+@property(nonatomic, copy, nullable) void (^resumeAddonPreparation)(NSDictionary<NSString *,id> *route);
 /// Latest actual backend observation; no filesystem work is performed here.
 @property(nonatomic, readonly) NSDictionary<NSString *,id> *diagnosticSnapshot;
 @end

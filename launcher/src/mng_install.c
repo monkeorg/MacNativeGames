@@ -82,17 +82,15 @@ enum mng_prepare_status mng_install_addon_fd(int root,int source,const struct mn
     struct installation context={0};context.control=control;
     enum mng_prepare_status status=mng_store_open(root,&store);if(status)return status;
     mng_store_set_cancel_check(store,cancel,&context);
-    struct mng_prepare_result base={0};status=mng_store_verify(store,application,base_generation,&base);if(status)goto done;
-    if(base.title_id!=application||base.application_id!=application||base.version_identified!=1||base.source_kind||
-        (base.content_role!=0x80&&base.content_role!=0x81)||base.exefs_verified!=1||base.romfs_verified!=1){status=MNG_PREPARE_UNSUPPORTED;goto done;}
-    report->verified_base_version=base.title_version;
+    struct mng_prepare_result base={0};
     char candidate[65];
     status=mng_store_current(store,addon,candidate);
     if(status==MNG_PREPARE_OK){struct mng_prepare_result previous;
         status=mng_store_set_reuse_generation(store,addon,candidate,&previous);if(status)goto done;
         if(previous.content_role!=0x82||previous.application_id!=application){status=MNG_PREPARE_INTEGRITY;goto done;}}
     else if(!current_missing(root,addon)){status=MNG_PREPARE_INTEGRITY;goto done;}
-    status=mng_store_begin(store,report->job_id);if(status)goto done;context.sink=mng_store_sink(store);
+    status=mng_store_begin_addon(store,report->job_id,application,base_generation,addon,&base);if(status)goto done;
+    report->verified_base_version=base.title_version;context.sink=mng_store_sink(store);
     struct mng_asset_sink sink={&context,begin,write_asset,end,stopped,progress};
     struct mng_addon_base owner={application,base.title_version,1};
     status=mng_prepare_addon_fd(source,keys,&sink,&owner,addon,&report->addon);if(status)goto done;
