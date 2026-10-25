@@ -41,6 +41,16 @@ iteration accounting: **457 checkpoints, 100 formerly unbraced, 62 raw sites
 (12 fixed, 50 pending)**. These counts are an inventory, not a safety percentage.
 Runtime translation remains disabled; source assessment continues.
 
+**Parser/resource follow-ups through [#133 / `2468ba0`](https://github.com/monkeorg/MacNativeGames/pull/133):**
+checked null-constant planning, array queries and resource-binding arithmetic;
+normal emission/metadata iteration limits; precharges before amplified type
+copies; and three direct self-alias replacement refusals. Current recorded
+inventory is **485 checkpoints, 128 formerly unbraced, 34 raw sites
+(13 fixed, 21 pending)**. The capacity planner has its own source-proven bounded
+loop, excluded from that inventory. Every compiler slice has at least two
+independent source reviews; #132 has three. All are source-only and unbuilt;
+no new tests, probes or compiler runs. Runtime translation remains disabled.
+
 | Area | Current source | Remaining acceptance / work |
 |---|---|---|
 | 📚 Library & preparation | Multiple titles, versions, NSP/XCI and supported folders; updates/add-ons; selected-title verified reuse | Real private inputs, provider failures and large-library/device checks; preparation grants no execution capability |
@@ -96,8 +106,8 @@ bound to installed app metadata and a verified complete seed, has no cancellatio
 API, and grants no Canopy trust bypass. Both routes need their own Apple/device
 results. Neither removal fix has rerun evidence; the recorded red failure is
 not relabeled green. Bounded compiler source assessment continues across the
-50 input-dependent or unproven loop sites (62 raw including 12 fixed), other
-recursion and noexcept boundaries at #121.
+21 input-dependent or unproven loop sites (34 raw including 13 fixed), other
+recursion and noexcept boundaries at #133.
 This identifies coverage work, not a newly demonstrated broken app flow; it is
 not a claim that all cloud work is complete. There is no
 registered BOTW provider, active-save Apply or actual TOTK restart mechanism.

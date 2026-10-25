@@ -2,8 +2,8 @@
 
 ## Live source cursor after the published #101 handoff
 
-Current branch `feat/canopy-save-ui-intents`, HEAD
-`2c3f23e54c264cdda0cd78c1714e8c8b33b309e0` (#122). Inspect actual log/status.
+Current branch `feat/canopy-shader-parser-alias-bounds`, HEAD
+`2468ba0da7c36ae828d0a598f7a18588238d81f5` (#133). Inspect actual log/status.
 The visual Mac/iPad handoff is published in #101, branch
 `feat/canopy-cloud-handoff`, head `3cec301a6dc32da136e7c86f3038d92fb2a54607`.
 That snapshot covers app source through #100 and remains a valid local starting
@@ -62,28 +62,66 @@ Reviewed dependent compiler source drafts after #101:
   Files export retains data until exact terminal picker. Runtime author; root/
   artifact source reviews including exact-owned full-screen picker window fallback.
   Underlying store/seals/backup/account/recovery unchanged; unbuilt/untested.
+- #123 `989f6ec6bb3bc358715b9f3d727820c3ae5cbc54`: reviewed visual/local/active
+  handoff through122, app snapshot and exact older CI evidence retained.
+- #124 `42ae3cf2266c2a699f9d450fc8a5f95970000472`: patch0021 actual scalar
+  specialization helper:32 existing opcodes (3 unary/1 Select/28 binary), exact
+  arity/depth/defined shifts and signed32 arithmetic. Lazy Select/uint32 wraps kept.
+- #125 `11ca9296e090d27b048235b220f0f2d65cd2d6d2`: patch0022, eight normal
+  expression-dependency/invalidation loops;465/108/raw54=12 fixed+42 pending.
+- #126 `eb197cd24243d28aeee684d05b236e041bc21deb`: patch0023, actual ParsedIR
+  null-constant depth/shape/narrowing/planned temporary+subconstant slots/bytes.
+- #127 `284a87069f6910996cb23fc9d21a9e26257ecbac`: patch0024, eight MSL loops
+  plus fixed16 argument-buffer reset classification;473/116/raw46=13+33.
+- #128 `f0621396ec642292755e19602c543b945e4ac53e`: patch0025, two array query
+  overloads refuse empty/narrowing/shape/index failures before vector access.
+- #129 `9d00dfa152bee21e9c0de714e4478d05617639a0`: patch0026, six normal
+  emission/semantic-cleanup/reset loops (not C++ destruction);479/122/raw40=13+27.
+- #130 `f38cb8be2975ddf505bd53bc45e77d3f5275facb`: patch0027, one resource
+  binding method's checked stride/plane/numeric cursors; exactMAX/zero retained.
+- #131 `48c62b08f4d09ea3a47cd9e5d819406e8f4a296d`: patch0028, six metadata
+  walks;485/128/raw34=13 fixed+21 pending.
+- #132 `9d4640350a647641c0b4106118a1c59530d13ca1`: patch0029, parser type-copy
+  precharges before Variant/ObjectPool replacement: four SmallVector payloads,
+  checked N8/POT capacities and immediate append growth, incidental CoopVec copy
+  and forward-fixup member copy. Artifact author; THREE independent root/execution/
+  native source reviews. Bounded <=25 planning loop excluded from raw inventory;
+  capacity/payload planning is not hard heap/allocator/complete parser proof.
+- #133 `2468ba0da7c36ae828d0a598f7a18588238d81f5`: patch0030, three direct
+  TypeArray/RuntimeArray/Pointer raw result/source equality refusals before lookup/
+  precharge/replacement. Untyped short-circuit and distinct-pointee forward pointer
+  resolution retained. Vector initial copy happens before old-holder destruction,
+  not the same lifetime bug; no global ID/cycle validator claim. Counts unchanged.
 
-Compiler drafts #102–#109/#111/#113–#118/#121 have two independent source reviews (root plus non-author reviewer), checked
+Compiler drafts #102–#109/#111/#113–#118/#121/#124–#133 have at least two independent source reviews (root plus non-author reviewer), checked
 patch/before/after SHA provenance, vendor untouched, source generation only.
 NO new tests/probes/compiler runs or new tests; `[skip ci]`. Runtime translator
 stays off; no malformed-SPIRV, heap-isolation, parity, FPS or hardware proof.
 
-Active ownership: native exclusively authors patch0021 and input-sha256/
-coverage/shader-doc changes for actual evaluate_spec_constant_u32 depth, exact
-supported-opcode arity, bounded shifts/unsigned negate and int64 signed semantics.
-Preserve lazy Select/intentional uint32 wraps; refuse signed min/-1 division.
-Execution/root review next; no loop-count changes. Execution has proposed next
-eight ordinary expression-dependency/invalidation loops (457→465,raw62→54,
-pending50→42), read-only until0021 committed and root grant. Other evaluator
+Active ownership: execution exclusively authors patch0031 and input-sha256/
+coverage/shader-doc changes for eight normal analysis/emission wrappers;
+native/root review next; expected493/136/raw26=13 fixed+13 pending. Native's
+approved single combined_decoration_for_member entry depth guard is QUEUED
+after0031, not abandoned. Native also assesses actual fill_composite_constant
+fixed[4] shape/initializer bounds read-only; that concrete finding remains TODO.
+Artifact may assess append-only parser buffers read-only but has no author grant.
+Other evaluator
 and other recursion/ownership remain separate gates. Product's supported app
 flow reassessment found the name defect now committed110; no other new source
 defect demonstrated in that pass. App acceptance still remains open.
+Product's additional read-only overlay/input/settings audit after122 found no new
+demonstrated source defect: modal capture/explicit Resume/focus+scene+callback
+epoch guards and desired/effective settings remain coherent. No execution or
+feature-complete/physical acceptance claim follows.
+Product's preparation/update/add-on caller audit also found no new demonstrated
+source defect: exact selection/reuse/resume and cancellation/commit authority/
+verified catalog refresh inspected. No provider/format/device acceptance inferred.
 No concurrent metadata edits. Root owns this live cursor, visual-doc addenda,
 integration, PRs/issues and attachments. Other workers use followup_task.
 
-Attachment attempts88–110 and116–119 returned connection closed. Attempts111–115
-are in functions cells800/807/810/816/826;120–122 in859 (may need wait).
-No attachment success is
+Attachment attempts88–125 returned connection closed; earlier cells through869
+drained. Attempts126–132 are in cells882/886/892/895/899/906+909/912;133
+still needs its first attempt. No attachment success is
 established. Source/source-review milestones do not replace exact CI:
 #77 green524/517/7 and940/931/9; later#85 red971/961/9/1, #99 fix UNRUN.
 

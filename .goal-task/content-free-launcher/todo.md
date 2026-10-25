@@ -1,7 +1,9 @@
 # Canopy executable development backlog
 
-Live cursor after the app snapshot below: source compiler drafts through #121 add
-reviewed controls (457 checkpoints,100 formerly unbraced,62 raw=12 fixed+50 pending).
+Live cursor after the app snapshot below: source compiler drafts through #133 add
+reviewed controls (485 checkpoints,128 formerly unbraced,34 raw=13 fixed+21 pending).
+Later cohorts include actual null-constant planning, array/spec/resource bounds,
+parser type-copy precharges and three direct self-alias lifetime refusals.
 #110 / `73bb8db` corrects the settings-first friendly-title fallback without
 metadata writes; #119 / `b136283` follows the same policy in the session title.
 #120 / `6c06d9a` and #122 / `2c3f23e` correct storage/save UI intent lifetimes
