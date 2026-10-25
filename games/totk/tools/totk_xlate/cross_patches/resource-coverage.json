@@ -725,7 +725,8 @@
     "MSL packable type parent/member marking",
     "MSL workgroup type parent/member marking",
     "scalar specialization-operation evaluation",
-    "ParsedIR null-constant parent/member construction"
+    "ParsedIR null-constant parent/member construction",
+    "combined member-decoration traversal"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",

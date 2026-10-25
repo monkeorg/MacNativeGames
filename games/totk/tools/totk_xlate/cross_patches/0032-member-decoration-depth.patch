@@ -1,0 +1,10 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -5457,6 +5457,7 @@
+ 
+ Bitset Compiler::combined_decoration_for_member(const SPIRType &type, uint32_t index) const
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	Bitset flags;
+ 	auto *type_meta = ir.find_meta(type.self);
+ 
