@@ -116,6 +116,9 @@ void runtime_warm_progress(uint64_t done,uint64_t total,uint64_t shaders,uint64_
  });
 }
 void runtime_warm_done(void){}
+/* Upstream d259f83: actual OS thermal state for existing NVN summary logs.
+ * 0 nominal,1 fair,2 serious,3 critical. This does not change frame pacing. */
+int dm_thermal_now(void){return (int)NSProcessInfo.processInfo.thermalState;}
 uint64_t front_game_res(int docked){
  (void)docked;
 #if defined(TOTK_GAME_V143) && defined(TOTK_IOS_DISPLAY_SETTINGS)
