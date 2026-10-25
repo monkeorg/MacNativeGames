@@ -79,7 +79,7 @@ def build(fixture, output, bundle_id='org.macnativegames.executionfixture'):
     sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
     output.mkdir(parents=True, exist_ok=False)
     command = ['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64-apple-ios16.0',
-        '-isysroot', sdk, '-fobjc-arc', '-O2', '-Wall', '-Wextra',
+        '-isysroot', sdk, '-fobjc-arc', '-O2', '-Wall', '-Wextra', '-Wl,-no_adhoc_codesign',
         '-Wno-deprecated-declarations', '-I'+str(COMPAT), '-I'+str(fixture/'generated'),
         str(Path(__file__).with_name('apple_probe.m')), str(fixture/'generated/embed.S'),
         '-framework', 'UIKit', '-framework', 'Foundation',

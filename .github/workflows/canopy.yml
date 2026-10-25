@@ -11,6 +11,13 @@ on:
       - 'tools/launcher/build_canopy.py'
       - 'tests/test_canopy_*'
       - 'tests/canopy_library_probe.m'
+      - 'tools/launcher/fixture/**'
+      - 'tests/test_launcher_execution_fixture.py'
+      - 'games/totk/third_party/d2r/patch_nso.py'
+      - 'games/totk/third_party/d2r/call_window.py'
+      - 'games/totk/third_party/d2r/relr.py'
+      - 'games/totk/ios/tools/gen_embed.py'
+      - 'games/totk/third_party/d2r_gfx/gfx/nvn/include/mach_vm_compat.h'
       - '.github/workflows/canopy.yml'
 
 permissions:
@@ -46,5 +53,39 @@ jobs:
         with:
           name: canopy-build-observation
           path: ${{ runner.temp }}/canopy-unsigned/build-observation.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  native-fixture:
+    name: Original-source iPhoneOS fixture compilation
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Install original-source fixture dependencies
+        run: python -m pip install capstone==5.0.9 lz4==4.4.5
+      - name: Test production rewrite and embed artifacts
+        run: python -m unittest discover -s tests -p 'test_launcher_execution_fixture.py' -v
+      - name: Generate original-source fixture artifacts
+        run: python tools/launcher/fixture/build_fixture.py "$RUNNER_TEMP/native-fixture"
+      - name: Compile unsigned iPhoneOS platform probe
+        # Compilation only: no signing, installation, simulator or native execution.
+        run: >-
+          python tools/launcher/fixture/build_apple_probe.py
+          --fixture "$RUNNER_TEMP/native-fixture"
+          --output "$RUNNER_TEMP/ExecutionFixture.app"
+      - name: Upload fixture build observations only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-fixture-build-observations
+          path: |
+            ${{ runner.temp }}/native-fixture/manifest.json
+            ${{ runner.temp }}/ExecutionFixture.app/probe-build.json
           if-no-files-found: warn
           retention-days: 7
