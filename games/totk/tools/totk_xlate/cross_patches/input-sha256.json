@@ -300,6 +300,16 @@
       },
       "patch": "0026-normal-emission-reset-loop-checkpoints.patch",
       "sha256": "93c7edb2d5ee3e8320dfeca8c7612ad8c908ab1751000ae55b4fdebb03eeda40"
+    },
+    {
+      "after": {
+        "spirv_msl.cpp": "6267dd4f6af544eff5445b64f89414be0a30b4a80572045dfc13708b79fa8b84"
+      },
+      "before": {
+        "spirv_msl.cpp": "8aad1628467e530dfe5f6ca25767d9e8aac77654b1d92038e72219938e42bafd"
+      },
+      "patch": "0027-resource-binding-arithmetic-bounds.patch",
+      "sha256": "2ba497c1763cea8fd293e0750f97044daf65553e93d1050b0f04f34b99ad9864"
     }
   ],
   "schemaVersion": 1
