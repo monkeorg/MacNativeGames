@@ -128,3 +128,20 @@ assignment.
 
 This issue split groups related work; the requirement matrix above remains the
 finish gate. None of these issues is complete at the architecture checkpoint.
+
+## First implementation checkpoint
+
+The separate draft stack is [#42](https://github.com/monkeorg/MacNativeGames/pull/42)
+architecture → [#43](https://github.com/monkeorg/MacNativeGames/pull/43) native
+container inventory → [#44](https://github.com/monkeorg/MacNativeGames/pull/44)
+public artifact inventory → [#45](https://github.com/monkeorg/MacNativeGames/pull/45)
+original-source rewrite fixture and unbuilt Apple platform probe.
+The [validation record](content-free-launcher-validation.md) identifies exact
+tests, limits and ordered local steps. These are working engineering components,
+not an implemented public game launcher or supported multiplayer release.
+
+The remaining critical gate is a demonstrated permitted way for the intended
+iPad distribution to execute private native code absent from the public app's
+signed executable. The existing loader cannot do so. The cloud cannot resolve
+that gate by drawing a library or extracting another container. No speculative
+user-facing backend or compatibility entry is enabled.

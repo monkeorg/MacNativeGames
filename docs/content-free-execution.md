@@ -44,9 +44,9 @@ The source comment at `runtime/loader.c:140` states that runtime-written iOS cod
 
 The repository does not establish whether an Apple-supported external-module solution exists for the intended distribution. `get-task-allow` in development provisioning (`install_device.py:167–168`) must not be presented as a production entitlement or a complete executable-loading solution. Do not add speculative entitlements and claim success.
 
-## Bounded implementation next
+## Bounded implementation and remaining integration
 
-1. Author a tiny ARM64 program entirely from repository-owned source. Cover arithmetic, writable data, an indirect call, a relocated pointer and one host service. Record expected results and the source hash. Give it its own neutral module/profile; do not borrow game binaries, keys, fonts, shaders or game-specific patch addresses.
+1. `tools/launcher/fixture/build_fixture.py` now authors a tiny ARM64 program entirely from repository-owned source. Cover arithmetic, writable data, an indirect call, a relocated pointer and one host service. Record expected results and the source hash. Give it its own neutral module/profile; do not borrow game binaries, keys, fonts, shaders or game-specific patch addresses.
 2. Feed that fixture through the production rewrite mechanism. Existing `scripts/emit_native_call_fixture.py:9–14` already reuses `call_window.prepare_call`; extend coverage through the actual NSO rewrite rather than treating hand-authored output as a complete rewrite proof. Any NSO wrapper must contain only this original program and generated metadata.
 3. Generate real executable sections with `ios/tools/gen_embed.py`. Verify section boundaries, padding, names, expected digests and linker protections with portable tests. Include failures for malformed layout, wrong hashes and truncated artifacts. These tests prove artifact properties, not Apple permission behavior.
 4. Add an isolated Apple harness using the production mapper/relocation logic, refactoring only the smallest common core needed. Call the fixture as native ARM64; check its observed return value, memory effects, host call, mapped permissions and return address. Run without a debugger as well as in development, and record the actual signing mode.
@@ -73,11 +73,11 @@ make -C games/totk probe-call
 
 `probe-call` builds an original-source fixture and executes 20,000 calls across four pthreads, checks real Darwin TLS and observed return addresses (`scripts/native_call_probe.c:34–78`). Its `mprotect` executable-memory path (`:56–67`) differs from iOS's signed remap. The separate `probe` target reads private TOTK v0 ELF data (`Makefile:29–35`, `scripts/native_leaf_probe.c:1–3`, `42–80`); do not use it in the cloud or label it content-free.
 
-The new iOS harness and its build commands do not exist yet. Its implementation must supply exact reproducible build, signing, install and run commands without changing the production app identity. Record Xcode/SDK versions, device/OS, source revision, distribution/provisioning mode, public artifact hashes, fixture hashes, mapped protections, computed results and negative-control failures. Keep signing credentials local.
+An isolated platform-permission probe and unsigned builder now exist in `tools/launcher/fixture/`; see its [README](../tools/launcher/fixture/README.md) for build and local signing/install commands. It shares generated artifacts and the Apple compatibility header, not the production loader or relocation implementation. It remains unbuilt and unexecuted on Apple hardware. A shared production runtime harness is still pending. Use a distinct probe identity and keep the working app intact. Record Xcode/SDK versions, device/OS, source revision, distribution/provisioning mode, public artifact hashes, fixture hashes, mapped protections, computed results and negative-control failures. Keep signing credentials local.
 
 ## Gates
 
-- [ ] Portable original-source rewrite and executable-section tests pass; negative controls actually fail.
+- [x] Portable original-source rewrite and executable-section tests pass; branch/call-prefix/MOD0/truncated-text negative controls fail as expected. See the checkpoint results in [validation](content-free-launcher-validation.md).
 - [ ] Independent harness builds for iPhoneOS; no proprietary input is needed.
 - [ ] Signed embedded fixture executes natively on a physical device with observed permissions and results; run without debugger.
 - [ ] Content-free public artifact inventory excludes all prohibited game-derived content.
@@ -85,4 +85,4 @@ The new iOS harness and its build commands do not exist yet. Its implementation 
 - [ ] One exact supported title/version completes private import, preparation and real gameplay through that mechanism.
 - [ ] Private data survives supported app updates; input, graphics, saves and required multiplayer acceptance pass separately.
 
-All boxes are pending for this redesign audit. Historical Track A device success remains attached to its recorded revision and packaged-code architecture. It does not satisfy the external-code or content-free artifact gates here.
+Only the portable artifact gate is evidenced; Apple execution and product gates remain pending. Historical Track A device success remains attached to its recorded revision and packaged-code architecture. It does not satisfy the external-code or content-free artifact gates here.
