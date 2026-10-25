@@ -9,8 +9,14 @@ building on it. Preserve the draft dependency chain and existing app behavior.
 No tests, probes, builds, CI dispatches, new tests, private inputs, installs,
 merges or releases in this continuation. Source review is not runtime evidence.
 
-Latest published source: `796c089e1eb0d80aa183cdd85bd484414d82fc97`, draft #152,
-`feat/canopy-preparation-io-diagnostics`, depends on #151. Actual native progress
+Latest published source: `7d112a2e5af94b6388b912c4eee4bac1934ef963`, draft #154,
+`fix/canopy-terminal-audio-silence`, depends on #153 → #152 → #151.
+#153 / `ad8da5875842f6cc1df70db4314b95fae2ffa028` connects actual per-title
+mouse policy, settings, capture/event admission and stale callback invalidation.
+#154 connects irreversible output suspension to real main-worker cleanup;
+CoreAudio/guest ownership is retained, not teardown/relaunch. Both have
+independent execution/root source review and no execution/build evidence.
+#152 / `796c089e1eb0d80aa183cdd85bd484414d82fc97`: actual native progress
 units and bounded logical I/O attempt counters reach opt-in diagnostics/export;
 publication and uncertainty are separate. Product author, independent execution
 and root source reviews; unbuilt/untested. No performance/device acceptance.
@@ -19,13 +25,15 @@ Active ownership (shared worktree; stage exact reviewed files only):
 
 - native_review: real linked shader-provider adapter, TOTK shader runtime/host,
   private build linkage and related integration docs (D10).
-- runtime_impl: CANOPY terminal audio-output suspension in audio_mixer.c and
-  runtime.h; native_review alone integrates the host cleanup call (D8).
+- runtime_impl: real additive MK compiled-host ABI/Registry/Runtime dispatch,
+  original-source MK glue and private builder (D11); TOTK ABI3 untouched.
 - storage_audit: native durable add-on job intent plus Storage/Addons backend
-  adapters; root owns StorageController/routing integration (D3/D4/D5).
-- product_audit: actual per-title mouse enable policy, settings, input/session
-  application and Games caller (D6/D9). Root queues Games routing until frozen.
-- execution_audit/artifact_audit: independent reviews; risky storage/translator
+  adapters (D3/D4/D5).
+- product_audit: connected StorageController/Games exact-base add-on routing
+  (D3/D4/D5), awaiting actual backend headers before final alignment/review.
+- artifact_audit: bounded SaveStore backup retirement/recovery (D7), existing
+  profile lock/seal/mandatory-backup authority preserved.
+- execution_audit/root: independent reviews; risky storage/translator
   slices need two independent reviewers. Authors cannot approve themselves.
 
 Newly established source gaps also queued: interrupted save-backup deletion

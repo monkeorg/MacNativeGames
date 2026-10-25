@@ -21,15 +21,25 @@ split is clarity cleanup, not a reproduced compiler failure; #77 compiled the ol
 form successfully. No new tests/probes run under this `/goal`; the steps below
 are the later authorized local handoff. A locked-iPad run executed no new-build checks.
 
-**Current source starting point:** the dependent chain through #150,
-`feat/canopy-shader-specialization-composite-bounds` /
-`6f166e738a4748dde8e0a844a3b1acc327c3ddd5`,
+**Current published source starting point:** the dependent chain through #154,
+`fix/canopy-terminal-audio-silence` /
+`7d112a2e5af94b6388b912c4eee4bac1934ef963`,
 includes the friendly library/session title fixes (#110/#119), storage UI intent
 correction (#120), save UI intent correction (#122) and compiler source through
-#150. Inspect the actual recovery cursor and status before checkout. This finite
-cloud source batch is handed off for its real validation gates; no later source
+#150, plus preparation diagnostics (#152), per-title mouse policy (#153) and
+terminal audio output suspension (#154). Inspect the actual recovery cursor and
+status before checkout; full-roadmap source work continues. No later source
 inherits earlier green CI. The overall product acceptance remains open.
 Both lifecycle corrections have two independent source reviews and no execution.
+
+For #152, opt into Diagnostics and compare actual preparation success/failure
+counters and bytes/blocks/records units; inspect redaction before sharing. For
+#153, toggle Mouse input per title, including while a button is held, then check
+actual lock release/reacquisition and keyboard/touch independence across modal,
+focus and scene changes. For #154, verify terminal main-worker cleanup silences
+output and interruption/restart notifications cannot revive it. Retain guest,
+save and module ownership protections; this does not authorize relaunch.
+These are later local validation steps, not checks run in this cloud continuation.
 
 | Order | Mac / iPad action | Evidence to retain locally |
 |---|---|---|

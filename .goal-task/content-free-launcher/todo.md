@@ -1,6 +1,6 @@
 # Canopy executable development backlog
 
-## Active continuation after #152
+## Active continuation after #154
 
 Full D0–D14 implementation continues; older handoff language below is historical.
 No tests/probes/builds/CI/new tests in this continuation. See state.md ownership.
@@ -8,11 +8,13 @@ No tests/probes/builds/CI/new tests in this continuation. See state.md ownership
 - [x] D13: actual preparation I/O and native progress units connected to redacted
   diagnostics, source-reviewed, #152 / `796c089`; unbuilt/untested.
 - [ ] ACTIVE D10: real linked in-process shader consumer and private build linkage.
-- [ ] ACTIVE D8: terminal worker failure silences actual audio outputs.
+- [x] D8 slice: terminal worker failure silences actual audio outputs, connected
+  cleanup, independent execution/root source reviews, #154 / `7d112a2`; unrun.
 - [ ] ACTIVE D3/D4/D5: durable exact-base add-on resume intent and connected UI.
-- [ ] ACTIVE D6/D9: per-title mouse enable policy with real capture/input handling.
-- [ ] TODO D7: interrupted backup deletion retirement/recovery.
-- [ ] TODO D11: pinned original MK8DX native host integration, independent seats,
+- [x] D6/D9 slice: per-title mouse enable policy with real capture/input handling,
+  independent execution/root source reviews, #153 / `ad8da58`; unbuilt/untested.
+- [ ] ACTIVE D7: interrupted backup deletion retirement/recovery.
+- [ ] ACTIVE D11: pinned original MK8DX native host integration, independent seats,
   controller-support semantics and real private-build/runtime caller.
 - [ ] EXTERNAL VALIDATION: Apple/private-format/device and combined integration
   evidence; source completion does not close these gates.

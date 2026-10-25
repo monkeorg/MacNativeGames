@@ -1,15 +1,18 @@
 # Canopy · development update
 
-**FOSS native launcher · cloud source handoff · local validation outstanding**
+**FOSS native launcher · cloud development active · local validation outstanding**
 
-Current source: [#150 / `6f166e7`](https://github.com/monkeorg/MacNativeGames/pull/150),
-`feat/canopy-shader-specialization-composite-bounds`,
-`6f166e738a4748dde8e0a844a3b1acc327c3ddd5`.
+Current published source: [#154 / `7d112a2`](https://github.com/monkeorg/MacNativeGames/pull/154),
+`fix/canopy-terminal-audio-silence`,
+`7d112a2e5af94b6388b912c4eee4bac1934ef963`.
 Newer source is reviewed but **unbuilt and untested**. This cloud pass ran no
 new tests, probes, compilers or builds and performed no installs, merges or releases.
 
 | Recent change | Published source | Acceptance |
 |---|---|---|
+| Preparation diagnostics | Actual native logical I/O attempt counters, exact progress units and separate publication/uncertainty flags (#152 / `796c089`) | Independently source-reviewed; no new execution; counters do not prove physical savings |
+| Mouse switch | Existing per-title settings now control real mouse handlers, capture requests and event admission; default On (#153 / `ad8da58`) | Independently source-reviewed; physical lock transitions and UI unverified |
+| Terminal audio | Real main-worker cleanup stops tracked outputs and irreversibly prevents further audio output (#154 / `7d112a2`) | Independently source-reviewed; CoreAudio unbuilt/unrun; no teardown/relaunch claim |
 | Friendly names | Library keeps its name after the first preference write (#110); session uses current custom/friendly name (#119) | Source-reviewed; check rename/reload/start locally |
 | Save dialogs | Scene/navigation-bound export, picker and confirmation intent; accepted Files export retains its data until its exact picker finishes (#122) | Two independent reviews; no new execution |
 | Storage dialogs | Stale confirmations/resume cannot revive after background or scene changes; accepted backend work still settles (#120) | Two independent reviews; no new execution |
@@ -30,6 +33,14 @@ acceptance remain explicit gates.
 
 The table below includes the app-source snapshot through #100 plus the later
 corrections above. None inherits old green CI as proof of current behavior.
+
+Active source work continues across the full roadmap: real linked shader
+consumer/build integration; durable exact-base add-on resume; interrupted backup
+deletion recovery; original-source MK8DX host/runtime integration. These are
+in-flight implementations, not completed features. Pinned public original MIT
+MK host/HLE source now provides a concrete reuse path; metadata is not execution
+authority, and private version pins, Apple builds and multiplayer acceptance
+remain open. Nintendo-derived code/assets/shaders are never public inputs.
 
 | Area | Current source | Remaining acceptance / work |
 |---|---|---|
