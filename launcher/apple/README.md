@@ -18,7 +18,10 @@ On a Mac with Xcode's iPhoneOS SDK selected, produce a separate unsigned bundle:
 python3 tools/launcher/build_canopy.py --out /path/to/existing/parent/canopy-build-001
 ```
 
-The output directory must not exist. It contains `Canopy.app` and
+The output directory must not exist, and its parent must use a canonical physical
+path with no symlink ancestors. On macOS use `/private/tmp` instead of `/tmp`, or
+obtain a parent path with `pwd -P`; `/var` likewise resolves under `/private/var`.
+It contains `Canopy.app` and
 `build-observation.json`; the JSON stays outside the app. The builder uses only
 its fixed list of public repository sources and headers. It snapshots and hashes
 those files, compiles the snapshot, checks the original and snapshot again, and

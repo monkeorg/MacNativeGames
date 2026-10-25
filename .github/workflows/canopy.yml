@@ -1,0 +1,102 @@
+name: Canopy public host checks
+
+on:
+  push:
+    branches:
+      - 'feat/canopy-*'
+      - 'ci/canopy-*'
+  pull_request:
+    paths:
+      - 'launcher/**'
+      - 'tools/launcher/build_canopy.py'
+      - 'tests/test_canopy_*'
+      - 'tests/canopy_library_probe.m'
+      - 'tools/launcher/fixture/**'
+      - 'tests/test_launcher_execution_fixture.py'
+      - 'games/totk/third_party/d2r/patch_nso.py'
+      - 'games/totk/third_party/d2r/call_window.py'
+      - 'games/totk/third_party/d2r/relr.py'
+      - 'games/totk/ios/tools/gen_embed.py'
+      - 'games/totk/third_party/d2r_gfx/gfx/nvn/include/mach_vm_compat.h'
+      - '.github/workflows/canopy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  canopy:
+    name: Canopy on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Configure portable Canopy CLI
+        run: cmake -S launcher -B "$RUNNER_TEMP/canopy-cli" -DCMAKE_BUILD_TYPE=Release
+      - name: Compile portable Canopy CLI
+        run: cmake --build "$RUNNER_TEMP/canopy-cli" --parallel 2
+      - name: Run synthetic Canopy tests
+        # Foundation tests visibly skip on Linux and execute on macOS.
+        # The runner's Python is sufficient; no package installation is needed.
+        run: python3 -m unittest discover -s tests -p 'test_canopy_*.py' -v
+      - name: Build unsigned iPhoneOS Canopy host with Xcode
+        if: runner.os == 'macOS'
+        run: python3 tools/launcher/build_canopy.py --out "$RUNNER_TEMP/canopy-unsigned"
+      - name: Archive unsigned public host
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent "$RUNNER_TEMP/canopy-unsigned/Canopy.app" "$RUNNER_TEMP/Canopy-unsigned.zip"
+      - name: Upload unsigned Canopy build
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canopy-unsigned-iphoneos-${{ github.sha }}
+          path: ${{ runner.temp }}/Canopy-unsigned.zip
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload build observation only
+        if: always() && runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canopy-build-observation
+          path: ${{ runner.temp }}/canopy-unsigned/build-observation.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  native-fixture:
+    name: Original-source iPhoneOS fixture compilation
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - name: Install original-source fixture dependencies
+        run: python -m pip install capstone==5.0.9 lz4==4.4.5
+      - name: Test production rewrite and embed artifacts
+        run: python -m unittest discover -s tests -p 'test_launcher_execution_fixture.py' -v
+      - name: Generate original-source fixture artifacts
+        run: python tools/launcher/fixture/build_fixture.py "$RUNNER_TEMP/native-fixture"
+      - name: Compile unsigned iPhoneOS platform probe
+        # Compilation only: no signing, installation, simulator or native execution.
+        run: >-
+          python tools/launcher/fixture/build_apple_probe.py
+          --fixture "$RUNNER_TEMP/native-fixture"
+          --output "$RUNNER_TEMP/ExecutionFixture.app"
+      - name: Upload fixture build observations only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-fixture-build-observations
+          path: |
+            ${{ runner.temp }}/native-fixture/manifest.json
+            ${{ runner.temp }}/ExecutionFixture.app/probe-build.json
+          if-no-files-found: warn
+          retention-days: 7

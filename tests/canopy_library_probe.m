@@ -27,8 +27,9 @@ static NSData *Document(NSArray *records) {
     return JSON(@{@"schemaVersion":@1,@"records":records});
 }
 static BOOL Add(CanopyLibrary *library, NSString *name, NSError **error) {
+    if (error) return [library addDisplayName:name format:@"NSP" sourceSize:123 entryCount:2 error:error];
     NSError *ignored=nil;
-    return [library addDisplayName:name format:@"NSP" sourceSize:123 entryCount:2 error:error ?: &ignored];
+    return [library addDisplayName:name format:@"NSP" sourceSize:123 entryCount:2 error:&ignored];
 }
 static BOOL Load(CanopyLibrary *library) { NSError *error=nil; return [library load:&error]; }
 static BOOL Reset(CanopyLibrary *library) { NSError *error=nil; return [library reset:&error]; }
