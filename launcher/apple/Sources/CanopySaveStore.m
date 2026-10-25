@@ -1,4 +1,5 @@
 #import "CanopySaveStore.h"
+#import <CoreFoundation/CoreFoundation.h>
 #include "mng_crypto.h"
 #include <dirent.h>
 #include <errno.h>
@@ -256,6 +257,233 @@ static BOOL CSDigestValid(NSString *value) {
     return [value isKindOfClass:NSString.class]&&value.length==64&&
         [value rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location==NSNotFound;
 }
+/* Backup retirement is separate from replacement's rollback journal. Its
+ * immutable record authorizes only an exact, preflighted private tree. Never
+ * use the generic staging remover on a canonical or partially retired backup. */
+static const NSUInteger CSRetirementLimit=16*1024*1024;
+static BOOL CSKeys(NSDictionary *value,NSArray *keys) {
+    return [value isKindOfClass:NSDictionary.class]&&
+        [[NSSet setWithArray:value.allKeys] isEqual:[NSSet setWithArray:keys]];
+}
+static BOOL CSUInt(id value,uint64_t *out) {
+    if(![value isKindOfClass:NSNumber.class]||CFGetTypeID((__bridge CFTypeRef)value)==CFBooleanGetTypeID())return NO;
+    const char *text=[value stringValue].UTF8String;
+    if(!text||!*text)return NO;uint64_t n=0;
+    for(const char *p=text;*p;p++){if(*p<'0'||*p>'9'||n>(UINT64_MAX-(unsigned)(*p-'0'))/10)return NO;n=n*10+(unsigned)(*p-'0');}
+    *out=n;return YES;
+}
+static BOOL CSRetirementPath(NSString *path) {
+    if(![path isKindOfClass:NSString.class]||!path.length)return NO;
+    BOOL payload=[path hasPrefix:@"data/"];
+    if(payload?path.length>1024+5:(![path isEqual:@"data"]&&![path isEqual:@"manifest.json"]))return NO;
+    NSArray *parts=path.pathComponents;if(parts.count>14||![[parts componentsJoinedByString:@"/"] isEqual:path])return NO;
+    for(NSString *part in parts)if(!CSLeaf(part.UTF8String)||[part.lowercaseString isEqual:@"account.uid"])return NO;
+    return [path isEqual:@"manifest.json"]||[path isEqual:@"data"]||[path hasPrefix:@"data/"];
+}
+static BOOL CSRetirementIdentity(int fd,NSDictionary *entry,BOOL directory) {
+    uint64_t device,inode;struct stat st={0};
+    return CSUInt(entry[@"device"],&device)&&CSUInt(entry[@"inode"],&inode)&&
+        !fstat(fd,&st)&&st.st_uid==geteuid()&&!(st.st_mode&077)&&
+        (directory?S_ISDIR(st.st_mode):(S_ISREG(st.st_mode)&&st.st_nlink==1))&&
+        (uint64_t)st.st_dev==device&&(uint64_t)st.st_ino==inode;
+}
+static NSString *CSRetirementHash(int fd,uint64_t *size,unsigned char *buffer) {
+    struct stat before={0},after={0};struct mng_sha256 *hash=NULL;unsigned char digest[32];uint64_t used=0;
+    BOOL ok=!fstat(fd,&before)&&S_ISREG(before.st_mode)&&before.st_nlink==1&&
+        before.st_uid==geteuid()&&!(before.st_mode&077)&&before.st_size>=0&&(uint64_t)before.st_size<=CSFileLimit&&
+        !mng_sha256_init(&hash);
+    while(ok){ssize_t n=read(fd,buffer,CS_CHUNK);if(n<0&&errno==EINTR)continue;
+        if(n<0){ok=NO;break;}if(!n)break;
+        if((uint64_t)n>(uint64_t)before.st_size-used){ok=NO;break;}used+=(uint64_t)n;
+        ok=!mng_sha256_update(hash,buffer,(size_t)n);
+    }
+    if(ok)ok=used==(uint64_t)before.st_size&&!fstat(fd,&after)&&CSStable(&before,&after)&&!mng_sha256_final(hash,digest);
+    NSString *result=ok?CSHex(digest):nil;if(ok)*size=used;
+    mng_secure_clear(digest,sizeof(digest));mng_sha256_free(hash);return result;
+}
+static BOOL CSRetirementScan(int fd,NSString *prefix,unsigned depth,NSMutableArray *rows,
+    uint64_t *total,unsigned char *buffer) {
+    if(depth>13)return NO;struct stat before={0},after={0};
+    if(fstat(fd,&before)||!S_ISDIR(before.st_mode)||before.st_uid!=geteuid()||(before.st_mode&077))return NO;
+    int iteration=openat(fd,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    DIR *dir=iteration<0?NULL:fdopendir(iteration);if(!dir){if(iteration>=0)close(iteration);return NO;}
+    BOOL ok=YES;NSMutableSet *names=[NSMutableSet set];struct dirent *ent;errno=0;
+    while((ent=readdir(dir))){const char *name=ent->d_name;if(!strcmp(name,".")||!strcmp(name,".."))continue;
+        if(rows.count>=CSEntryLimit+2||!CSLeaf(name)){ok=NO;break;}
+        NSString *leaf=[NSString stringWithUTF8String:name],*path=prefix.length?[prefix stringByAppendingFormat:@"/%@",leaf]:leaf;
+        if(!CSRetirementPath(path)||[names containsObject:leaf.lowercaseString]){ok=NO;break;}[names addObject:leaf.lowercaseString];
+        struct stat st={0},opened={0};
+        if(fstatat(fd,name,&st,AT_SYMLINK_NOFOLLOW)||(!S_ISDIR(st.st_mode)&&!S_ISREG(st.st_mode))){ok=NO;break;}
+        BOOL directory=S_ISDIR(st.st_mode);int child=openat(fd,name,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|(directory?O_DIRECTORY:O_NONBLOCK));
+        if(child<0||fstat(child,&opened)||!CSStable(&st,&opened)||st.st_uid!=geteuid()||(st.st_mode&077)||(!directory&&st.st_nlink!=1)){
+            if(child>=0)close(child);ok=NO;break;}
+        NSMutableDictionary *row=[@{@"path":path,@"kind":directory?@"directory":@"file",@"device":@((uint64_t)st.st_dev),@"inode":@((uint64_t)st.st_ino)} mutableCopy];
+        [rows addObject:row];
+        if(directory)ok=CSRetirementScan(child,path,depth+1,rows,total,buffer);
+        else {uint64_t size=0;NSString *hash=CSRetirementHash(child,&size,buffer);
+            ok=hash&&size<=CSTotalLimit+CSManifestLimit-*total;
+            if(ok){*total+=size;row[@"size"]=@(size);row[@"sha256"]=hash;}}
+        close(child);if(!ok)break;errno=0;
+    }
+    if(!ent&&errno)ok=NO;
+    if(ok&&(fstat(fd,&after)||!CSStable(&before,&after)))ok=NO;
+    closedir(dir);return ok;
+}
+static NSArray *CSRetirementInventory(int fd) {
+    unsigned char *buffer=malloc(CS_CHUNK);if(!buffer)return nil;
+    NSMutableArray *rows=[NSMutableArray array];uint64_t total=0;
+    BOOL ok=CSRetirementScan(fd,@"",0,rows,&total,buffer);
+    mng_secure_clear(buffer,CS_CHUNK);free(buffer);
+    if(!ok)return nil;
+    [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"path"] compare:b[@"path"] options:NSLiteralSearch];}];return rows;
+}
+static NSData *CSRetirementBytes(NSDictionary *record) {
+    NSData *data=[NSJSONSerialization dataWithJSONObject:record options:NSJSONWritingSortedKeys error:NULL];
+    return data.length&&data.length<=CSRetirementLimit?data:nil;
+}
+static NSString *CSRetirementDigest(NSData *data) {
+    struct mng_sha256 *hash=NULL;unsigned char digest[32];
+    BOOL ok=data&&!mng_sha256_init(&hash)&&!mng_sha256_update(hash,data.bytes,data.length)&&!mng_sha256_final(hash,digest);
+    mng_sha256_free(hash);NSString *result=ok?CSHex(digest):nil;mng_secure_clear(digest,sizeof(digest));return result;
+}
+static NSDictionary *CSRetirementRead(int fd,const char *name) {
+    int input=openat(fd,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);struct stat before={0},after={0};
+    if(input<0)return nil;
+    BOOL ok=!fstat(input,&before)&&S_ISREG(before.st_mode)&&before.st_nlink==1&&before.st_uid==geteuid()&&
+        !(before.st_mode&077)&&before.st_size>=2&&(uint64_t)before.st_size<=CSRetirementLimit;
+    NSMutableData *data=ok?[NSMutableData dataWithLength:(NSUInteger)before.st_size]:nil;size_t used=0;
+    while(ok&&used<data.length){ssize_t n=read(input,(unsigned char *)data.mutableBytes+used,data.length-used);
+        if(n<0&&errno==EINTR)continue;if(n<=0){ok=NO;break;}used+=(size_t)n;}
+    unsigned char extra;if(ok&&(read(input,&extra,1)!=0||fstat(input,&after)||!CSStable(&before,&after)))ok=NO;close(input);
+    id value=ok?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+    if(!CSKeys(value,@[@"record",@"sha256"])||!CSDigestValid(value[@"sha256"])||
+        ![value[@"record"] isKindOfClass:NSDictionary.class]||
+        ![CSRetirementDigest(CSRetirementBytes(value[@"record"])) isEqual:value[@"sha256"]])return nil;
+    return value[@"record"];
+}
+static BOOL CSRetirementWrite(int fd,NSDictionary *record) {
+    NSString *digest=CSRetirementDigest(CSRetirementBytes(record));
+    NSData *bytes=digest?CSRetirementBytes(@{@"record":record,@"sha256":digest}):nil;if(!bytes)return NO;
+    int output=openat(fd,"intent.json",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(output<0)return NO;
+    BOOL ok=CSWrite(output,bytes.bytes,bytes.length)&&!fsync(output);if(close(output))ok=NO;return ok&&!fsync(fd);
+}
+static BOOL CSRetirementSyncFile(int directory,const char *name,BOOL empty) {
+    int fd=openat(directory,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);if(fd<0)return NO;
+    struct stat before={0},after={0},named={0};
+    BOOL ok=!fstat(fd,&before)&&S_ISREG(before.st_mode)&&before.st_nlink==1&&before.st_uid==geteuid()&&
+        !(before.st_mode&077)&&(!empty||!before.st_size)&&!fsync(fd)&&!fstat(fd,&after)&&CSStable(&before,&after)&&
+        !fstatat(directory,name,&named,AT_SYMLINK_NOFOLLOW)&&CSStable(&after,&named);
+    if(close(fd))ok=NO;return ok;
+}
+static BOOL CSRetirementRecord(NSDictionary *record,NSString *title,NSString *profile) {
+    uint64_t device,inode;
+    if(!CSKeys(record,@[@"schema",@"titleID",@"profileID",@"backupID",@"device",@"inode",@"manifestSHA256",@"entries"])||
+        ![record[@"schema"] isEqual:@"canopy-backup-retirement-v1"]||![record[@"titleID"] isEqual:title]||
+        ![record[@"profileID"] isEqual:profile]||!CSIdentifier(record[@"backupID"])||
+        !CSUInt(record[@"device"],&device)||!CSUInt(record[@"inode"],&inode)||!inode||
+        !CSDigestValid(record[@"manifestSHA256"])||![record[@"entries"] isKindOfClass:NSArray.class])return NO;
+    NSArray *entries=record[@"entries"];if(entries.count<2||entries.count>CSEntryLimit+2)return NO;
+    NSMutableDictionary *seen=[NSMutableDictionary dictionary];NSMutableSet *folded=[NSMutableSet set];uint64_t total=0;NSString *previous=nil;
+    for(NSDictionary *row in entries){if(![row isKindOfClass:NSDictionary.class])return NO;
+        uint64_t size=0;NSString *path=row[@"path"],*kind=row[@"kind"];
+        BOOL directory=[kind isEqual:@"directory"];
+        if(!CSKeys(row,directory?@[@"path",@"kind",@"device",@"inode"]:@[@"path",@"kind",@"device",@"inode",@"size",@"sha256"])||
+            (!directory&&![kind isEqual:@"file"])||!CSRetirementPath(path)||!CSUInt(row[@"device"],&device)||
+            !CSUInt(row[@"inode"],&inode)||!inode||[folded containsObject:path.lowercaseString]||
+            (previous&&[previous compare:path options:NSLiteralSearch]!=NSOrderedAscending))return NO;
+        NSString *parent=path.stringByDeletingLastPathComponent;
+        if(parent.length&&![seen[parent][@"kind"] isEqual:@"directory"])return NO;
+        if(!directory&&(!CSUInt(row[@"size"],&size)||size>CSFileLimit||size>CSTotalLimit+CSManifestLimit-total||!CSDigestValid(row[@"sha256"])))return NO;
+        total+=size;seen[path]=row;[folded addObject:path.lowercaseString];previous=path;
+    }
+    return [seen[@"data"][@"kind"] isEqual:@"directory"]&&[seen[@"manifest.json"][@"kind"] isEqual:@"file"]&&
+        [seen[@"manifest.json"][@"sha256"] isEqual:record[@"manifestSHA256"]];
+}
+static BOOL CSRetirementShape(int fd,BOOL *intent,BOOL *completed,BOOL *deleting,BOOL *target) {
+    *intent=*completed=*deleting=*target=NO;
+    int iteration=openat(fd,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);DIR *dir=iteration<0?NULL:fdopendir(iteration);
+    if(!dir){if(iteration>=0)close(iteration);return NO;}BOOL ok=YES;unsigned count=0;struct dirent *ent;errno=0;
+    while((ent=readdir(dir))){const char *name=ent->d_name;if(!strcmp(name,".")||!strcmp(name,".."))continue;
+        struct stat st={0};if(++count>4||fstatat(fd,name,&st,AT_SYMLINK_NOFOLLOW)||st.st_uid!=geteuid()||(st.st_mode&077)){ok=NO;break;}
+        if(!strcmp(name,"retired")){ok=S_ISDIR(st.st_mode);*target=YES;}
+        else {ok=S_ISREG(st.st_mode)&&st.st_nlink==1;
+            if(!strcmp(name,"intent.json"))*intent=YES;
+            else if(!strcmp(name,"completed.json"))*completed=YES;
+            else if(!strcmp(name,"deleting")){*deleting=YES;ok=ok&&!st.st_size;}
+            else ok=NO;}
+        if(!ok)break;errno=0;
+    }
+    if(!ent&&errno)ok=NO;closedir(dir);return ok&&!(*intent&&*completed);
+}
+static int CSRetirementParent(int root,NSString *path,NSDictionary *expected,NSString **leaf) {
+    NSArray *parts=path.pathComponents;int fd=dup(root);if(fd<0)return -1;
+    NSString *prefix=@"";
+    for(NSUInteger i=0;i+1<parts.count;i++){
+        prefix=prefix.length?[prefix stringByAppendingFormat:@"/%@",parts[i]]:parts[i];
+        int next=CSDir(fd,[parts[i] UTF8String],NO);close(fd);
+        if(next<0)return -1;
+        if(!expected[prefix]||!CSRetirementIdentity(next,expected[prefix],YES)){close(next);return -1;}fd=next;
+    }
+    *leaf=parts.lastObject;return fd;
+}
+static BOOL CSRetirementEmpty(int fd) {
+    int iteration=openat(fd,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);DIR *dir=iteration<0?NULL:fdopendir(iteration);
+    if(!dir){if(iteration>=0)close(iteration);return NO;}BOOL empty=YES;struct dirent *ent;errno=0;
+    while((ent=readdir(dir))){if(strcmp(ent->d_name,".")&&strcmp(ent->d_name,"..")){empty=NO;break;}errno=0;}
+    if(!ent&&errno)empty=NO;closedir(dir);return empty;
+}
+static BOOL CSRetirementSubset(int target,NSDictionary *record,BOOL complete,NSArray **survivors) {
+    if(!CSRetirementIdentity(target,record,YES))return NO;
+    NSArray *actual=CSRetirementInventory(target);if(!actual)return NO;
+    NSArray *expected=record[@"entries"];NSMutableDictionary *byPath=[NSMutableDictionary dictionary];
+    for(NSDictionary *row in expected)byPath[row[@"path"]]=row;
+    for(NSDictionary *row in actual)if(!byPath[row[@"path"]]||!CSManifestsEqual(row,byPath[row[@"path"]]))return NO;
+    if(complete&&actual.count!=expected.count)return NO;
+    *survivors=actual;return YES;
+}
+static BOOL CSRetirementMatchesManifest(NSArray *entries,NSDictionary *manifest) {
+    NSMutableDictionary *files=[NSMutableDictionary dictionary];NSMutableSet *directories=[NSMutableSet set];
+    for(NSDictionary *row in manifest[@"files"])files[row[@"path"]]=row;
+    for(NSString *path in manifest[@"directories"])[directories addObject:path];
+    NSUInteger fileCount=0,directoryCount=0;
+    for(NSDictionary *row in entries){NSString *path=row[@"path"];
+        if([path isEqual:@"data"]||[path isEqual:@"manifest.json"])continue;
+        if(![path hasPrefix:@"data/"])return NO;NSString *relative=[path substringFromIndex:5];
+        if([row[@"kind"] isEqual:@"directory"]){if(![directories containsObject:relative])return NO;directoryCount++;}
+        else {NSDictionary *file=files[relative];
+            if(!file||![row[@"size"] isEqual:file[@"size"]]||![row[@"sha256"] isEqual:file[@"sha256"]])return NO;fileCount++;}
+    }
+    return fileCount==files.count&&directoryCount==directories.count;
+}
+static BOOL CSRetirementDelete(int target,NSArray *survivors) {
+    /* Full surviving-subset preflight already succeeded. Recheck each opened
+     * inode, then delete deepest paths first, retaining the manifest until last. */
+    NSArray *ordered=[survivors sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){
+        NSString *pa=a[@"path"],*pb=b[@"path"];
+        if([pa isEqual:pb])return NSOrderedSame;
+        if([pa isEqual:@"manifest.json"])return NSOrderedDescending;
+        if([pb isEqual:@"manifest.json"])return NSOrderedAscending;
+        NSUInteger da=pa.pathComponents.count,db=pb.pathComponents.count;
+        return da==db?[pb compare:pa options:NSLiteralSearch]:(da>db?NSOrderedAscending:NSOrderedDescending);
+    }];
+    NSMutableDictionary *expected=[NSMutableDictionary dictionary];for(NSDictionary *row in survivors)expected[row[@"path"]]=row;
+    unsigned char *buffer=malloc(CS_CHUNK);if(!buffer)return NO;BOOL removed=YES;
+    for(NSDictionary *row in ordered){NSString *leaf=nil;int parent=CSRetirementParent(target,row[@"path"],expected,&leaf);
+        BOOL directory=[row[@"kind"] isEqual:@"directory"];
+        int child=parent<0?-1:openat(parent,leaf.UTF8String,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|(directory?O_DIRECTORY:O_NONBLOCK));
+        BOOL ok=child>=0&&CSRetirementIdentity(child,row,directory)&&(!directory||CSRetirementEmpty(child));
+        if(ok&&!directory){uint64_t size=0;NSString *hash=CSRetirementHash(child,&size,buffer);
+            ok=hash&&[hash isEqual:row[@"sha256"]]&&[row[@"size"] unsignedLongLongValue]==size;}
+        struct stat named={0};uint64_t device=0,inode=0;
+        if(ok)ok=CSUInt(row[@"device"],&device)&&CSUInt(row[@"inode"],&inode)&&
+            !fstatat(parent,leaf.UTF8String,&named,AT_SYMLINK_NOFOLLOW)&&
+            (uint64_t)named.st_dev==device&&(uint64_t)named.st_ino==inode;
+        if(ok)ok=!unlinkat(parent,leaf.UTF8String,directory?AT_REMOVEDIR:0)&&!fsync(parent);
+        if(child>=0)close(child);if(parent>=0)close(parent);if(!ok){removed=NO;break;}
+    }
+    mng_secure_clear(buffer,CS_CHUNK);free(buffer);
+    return removed&&CSRetirementEmpty(target)&&!fsync(target);
+}
 static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
     NSString *temporary=[@".journal-" stringByAppendingString:CSID()];
     BOOL ok=CSWriteJSON(directory,temporary.UTF8String,document);
@@ -308,7 +536,7 @@ static NSString *CSEditDigest(NSData *data) {
     CanopySaveEditValidator _editValidator;
     CanopySaveEditPreview *_editPreview;
     int _profileFD,_backupsFD,_lockFD;
-    BOOL _recoveryRequired;
+    BOOL _recoveryRequired,_transactionRecoveryRequired,_backupRecoveryRequired;
     _Atomic int _sealedStatus,_recoveryStatus;
 }
 - (instancetype)initWithRootURL:(NSURL *)root titleID:(NSString *)titleID profileID:(NSString *)profileID error:(NSError **)error {
@@ -349,6 +577,12 @@ static NSString *CSEditDigest(NSData *data) {
     if(!ready){CSFail(error,@"The private save layout could not be prepared.",NO);return nil;}
     if(!fstatat(_profileFD,"transaction.json",&st,AT_SYMLINK_NOFOLLOW))[self markRecovery:YES];
     else if(errno!=ENOENT){CSFail(error,@"The save recovery state could not be read.",NO);return nil;}
+    if(!fstatat(_profileFD,".backup-retirement",&st,AT_SYMLINK_NOFOLLOW)){
+        int retirement=CSDir(_profileFD,".backup-retirement",NO);BOOL intent=NO,completed=NO,deleting=NO,target=NO;
+        BOOL empty=retirement>=0&&CSRetirementShape(retirement,&intent,&completed,&deleting,&target)&&!intent&&!completed&&!deleting&&!target&&
+            !fsync(retirement)&&!fsync(_backupsFD)&&!fsync(_profileFD);
+        if(retirement>=0)close(retirement);[self markBackupRecovery:!empty];
+    }else if(errno!=ENOENT){CSFail(error,@"Backup retirement state could not be inspected. Preserve the profile.",NO);return nil;}
     if(!CSCleanStages(_backupsFD,@".pending-") || !CSCleanStages(_profileFD,@".journal-") || (!_recoveryRequired && !CSCleanStages(_profileFD,@".stage-"))){CSFail(error,@"Interrupted save staging could not be cleaned safely. Preserve the profile for recovery.",NO);return nil;}
     return self;
 }
@@ -360,7 +594,12 @@ static NSString *CSEditDigest(NSData *data) {
 - (void)markRecovery:(BOOL)required {
     // Actual transaction gates remain protected by the existing monitor;
     // these mirrors let UI inspect status without waiting for a large copy.
-    _recoveryRequired=required;atomic_store(&_recoveryStatus,required?1:0);
+    _transactionRecoveryRequired=required;
+    _recoveryRequired=required||_backupRecoveryRequired;atomic_store(&_recoveryStatus,_recoveryRequired?1:0);
+}
+- (void)markBackupRecovery:(BOOL)required {
+    _backupRecoveryRequired=required;
+    _recoveryRequired=required||_transactionRecoveryRequired;atomic_store(&_recoveryStatus,_recoveryRequired?1:0);
 }
 - (BOOL)externalImportSupported {return _externalValidator!=nil;}
 - (BOOL)editingSupported {return _externalValidator!=nil&&_editValidator!=nil;}
@@ -583,11 +822,101 @@ static NSString *CSEditDigest(NSData *data) {
 }}
 - (BOOL)removeBackup:(NSString *)identifier error:(NSError **)error {@synchronized(self){
     if(![self available:error]||!CSIdentifier(identifier))return CSFail(error,@"Select a valid backup before removing it.",NO);
-    return (CSRemove(_backupsFD,identifier.UTF8String,0)&&!fsync(_backupsFD))||CSFail(error,@"The backup could not be removed safely.",NO);
+    int source=CSDir(_backupsFD,identifier.UTF8String,NO);struct stat before={0},after={0};
+    BOOL opened=source>=0&&!fstat(source,&before);
+    NSDictionary *manifest=source<0?nil:CSReadJSON(source,"manifest.json");
+    int data=source<0?-1:CSDir(source,"data",NO);
+    NSDictionary *actual=data<0?nil:CSManifest(data,-1,_title,_profile);if(data>=0)close(data);
+    BOOL valid=opened&&manifest&&actual&&CSExportShape(source)&&CSManifestsEqual(manifest,actual);
+    NSArray *entries=valid?CSRetirementInventory(source):nil;
+    valid=entries&&CSRetirementMatchesManifest(entries,actual)&&!fstat(source,&after)&&CSStable(&before,&after);
+    NSString *manifestHash=nil;for(NSDictionary *row in entries)if([row[@"path"] isEqual:@"manifest.json"])manifestHash=row[@"sha256"];
+    NSDictionary *record=valid&&manifestHash?@{@"schema":@"canopy-backup-retirement-v1",@"titleID":_title,@"profileID":_profile,
+        @"backupID":identifier,@"device":@((uint64_t)before.st_dev),@"inode":@((uint64_t)before.st_ino),
+        @"manifestSHA256":manifestHash,@"entries":entries}:nil;
+    if(source>=0)close(source);
+    if(!record||!CSRetirementRecord(record,_title,_profile)||!CSRetirementBytes(@{@"record":record,@"sha256":CSRetirementDigest(CSRetirementBytes(record))?:@""}))
+        return CSFail(error,@"The selected backup failed complete verification. It was not moved or removed.",NO);
+    int retirement=CSDir(_profileFD,".backup-retirement",YES);BOOL intent=NO,completed=NO,deleting=NO,target=NO;
+    if(retirement<0||!CSRetirementShape(retirement,&intent,&completed,&deleting,&target)||intent||completed||deleting||target){
+        if(retirement>=0)close(retirement);[self markBackupRecovery:YES];
+        return CSFail(error,@"Backup retirement needs recovery. Existing entries were preserved.",NO);}
+    [self markBackupRecovery:YES];BOOL written=CSRetirementWrite(retirement,record);close(retirement);
+    if(!written)return CSFail(error,@"The backup deletion intent was not confirmed. Preserve the profile and reconcile before retrying.",YES);
+    return [self recoverBackupRetirement:error];
 }}
+- (BOOL)recoverBackupRetirement:(NSError **)error {
+    /* Called only under the process/profile lock and monitor, after any save
+     * replacement recovery. A transaction's rollback backup cannot be retired. */
+    if(_sessionToken||_transactionRecoveryRequired)return CSFail(error,@"Finish save transaction recovery before backup retirement.",NO);
+    int retirement=CSDir(_profileFD,".backup-retirement",NO);
+    if(retirement<0){if(errno==ENOENT&&!_backupRecoveryRequired){[self markBackupRecovery:NO];return YES;}
+        return CSFail(error,@"Backup retirement is unavailable. Preserve the profile.",NO);}
+    BOOL intent=NO,completed=NO,deleting=NO,target=NO;
+    BOOL ok=CSRetirementShape(retirement,&intent,&completed,&deleting,&target);
+    if(ok&&!intent&&!completed&&!deleting&&!target){
+        BOOL durable=!fsync(retirement)&&!fsync(_backupsFD)&&!fsync(_profileFD);close(retirement);
+        if(!durable){[self markBackupRecovery:YES];return CSFail(error,@"Backup retirement cleanup needs durable confirmation. Retry recovery.",YES);}
+        [self markBackupRecovery:NO];return YES;
+    }
+    [self markBackupRecovery:YES];
+    NSDictionary *record=ok&&(intent||completed)?CSRetirementRead(retirement,completed?"completed.json":"intent.json"):nil;
+    ok=record&&CSRetirementRecord(record,_title,_profile)&&
+        CSRetirementSyncFile(retirement,completed?"completed.json":"intent.json",NO)&&!fsync(retirement);
+    struct stat canonical={0};BOOL present=NO;
+    if(ok){int status=fstatat(_backupsFD,[record[@"backupID"] UTF8String],&canonical,AT_SYMLINK_NOFOLLOW);
+        present=status==0;if(status&&errno!=ENOENT)ok=NO;}
+    int root=-1;NSArray *survivors=nil;
+    if(ok&&completed){
+        /* Completion is durable only after the authorized tree became empty.
+         * Never accept a new canonical backup or a populated retired tree. */
+        ok=!present;
+        if(ok&&target){root=CSDir(retirement,"retired",NO);ok=root>=0&&CSRetirementIdentity(root,record,YES)&&CSRetirementEmpty(root);}
+    }else if(ok){
+        if(present&&target)ok=NO;
+        else if(present){
+            ok=!deleting;root=ok?CSDir(_backupsFD,[record[@"backupID"] UTF8String],NO):-1;
+            if(ok)ok=root>=0&&CSRetirementSubset(root,record,YES,&survivors);
+            struct stat named={0};uint64_t device=0,inode=0;
+            if(ok)ok=CSUInt(record[@"device"],&device)&&CSUInt(record[@"inode"],&inode)&&
+                !fstatat(_backupsFD,[record[@"backupID"] UTF8String],&named,AT_SYMLINK_NOFOLLOW)&&
+                (uint64_t)named.st_dev==device&&(uint64_t)named.st_ino==inode;
+            if(ok)ok=!renameatx_np(_backupsFD,[record[@"backupID"] UTF8String],retirement,"retired",RENAME_EXCL)&&
+                !fsync(_backupsFD)&&!fsync(retirement);
+            if(ok)target=YES;
+        }else if(target){root=CSDir(retirement,"retired",NO);ok=root>=0;}
+        else ok=NO; // Prepared intent + both absent is ambiguous, never success.
+        if(ok)ok=CSRetirementSubset(root,record,!deleting,&survivors);
+        if(ok&&!deleting){int marker=openat(retirement,"deleting",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+            ok=marker>=0&&!fsync(marker);if(marker>=0&&close(marker))ok=NO;
+            if(ok)ok=!fsync(retirement);}
+        /* An earlier fsync failure may leave a visible but nondurable marker
+         * or move in this process. Confirm both on EVERY pass before deleting. */
+        if(ok)ok=CSRetirementSyncFile(retirement,"deleting",YES)&&!fsync(retirement)&&!fsync(_backupsFD)&&!fsync(_profileFD);
+        if(ok)ok=CSRetirementDelete(root,survivors);
+        if(ok)ok=!renameatx_np(retirement,"intent.json",retirement,"completed.json",RENAME_EXCL)&&!fsync(retirement);
+        if(ok)completed=YES;
+    }
+    if(ok&&completed){
+        if(target){struct stat named={0};uint64_t device=0,inode=0;
+            ok=root>=0&&CSRetirementIdentity(root,record,YES)&&CSRetirementEmpty(root)&&
+                CSUInt(record[@"device"],&device)&&CSUInt(record[@"inode"],&inode)&&
+                !fstatat(retirement,"retired",&named,AT_SYMLINK_NOFOLLOW)&&
+                (uint64_t)named.st_dev==device&&(uint64_t)named.st_ino==inode&&
+                !unlinkat(retirement,"retired",AT_REMOVEDIR)&&!fsync(retirement);}
+        if(ok&&unlinkat(retirement,"deleting",0)&&errno!=ENOENT)ok=NO;
+        if(ok)ok=!fsync(retirement);
+        if(ok)ok=!unlinkat(retirement,"completed.json",0)&&!fsync(retirement);
+        if(ok)ok=!fsync(_backupsFD)&&!fsync(_profileFD);
+    }
+    if(root>=0)close(root);close(retirement);
+    if(!ok)return CSFail(error,@"Backup retirement was not fully confirmed. Preserve the profile and retry recovery; unknown or changed entries are never removed.",YES);
+    [self markBackupRecovery:NO];return YES;
+}
 - (BOOL)recover:(NSError **)error {@synchronized(self){
     if(_sessionToken)return CSFail(error,@"Recovery is unavailable while a session owns the profile.",NO);
     if(!_recoveryRequired)return YES;
+    if(!_transactionRecoveryRequired)return [self recoverBackupRetirement:error];
     NSDictionary *journal=CSReadJSON(_profileFD,"transaction.json");
     if(!journal){struct stat st;if(fstatat(_profileFD,"transaction.json",&st,AT_SYMLINK_NOFOLLOW)&&errno==ENOENT)journal=_committedIntent;}
     NSString *stage=journal[@"stage"],*backup=journal[@"backupID"];
@@ -598,13 +927,13 @@ static NSString *CSEditDigest(NSData *data) {
     if([journal[@"state"] isEqual:@"committed"]){
         int active=CSDir(_profileFD,"active",NO);NSDictionary *actual=active<0?nil:CSManifest(active,-1,_title,_profile);if(active>=0)close(active);
         if(!actual||![CSManifestDigest(actual) isEqual:journal[@"activeDigest"]])return CSFail(error,@"The committed active save failed recovery verification. Preserve the profile.",YES);
-        _committedIntent=journal;return [self clearCommittedIntent:error];
+        _committedIntent=journal;return [self clearCommittedIntent:error]&&[self recoverBackupRetirement:error];
     }
     int source=CSDir(_backupsFD,backup.UTF8String,NO);if(source<0)return CSFail(error,@"The rollback backup is unavailable. Preserve the profile for manual recovery.",NO);
     NSString *recovery=[@".stage-" stringByAppendingString:CSID()],*digest=nil;BOOL ok=[self copyExport:source toStage:recovery digest:&digest error:error];close(source);if(!ok)return NO;
     if(renameatx_np(_profileFD,recovery.UTF8String,_profileFD,"active",RENAME_SWAP)||fsync(_profileFD))return CSFail(error,@"Rollback was not confirmed. Preserve the profile and retry recovery.",YES);
     NSMutableDictionary *committed=[journal mutableCopy];committed[@"state"]=@"committed";committed[@"activeDigest"]=digest;
     if(!CSIntent(_profileFD,committed,YES))return CSFail(error,@"Rollback confirmation failed. Reopen and reconcile the profile.",YES);
-    _committedIntent=[committed copy];return [self clearCommittedIntent:error];
+    _committedIntent=[committed copy];return [self clearCommittedIntent:error]&&[self recoverBackupRetirement:error];
 }}
 @end
