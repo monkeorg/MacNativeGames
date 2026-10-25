@@ -20,6 +20,16 @@ void runtime_hle_stack_init(uint64_t tsd_offset);
 void runtime_gpu_path_probe(const char *which);
 void runtime_audio_probe(void);
 void runtime_audio_output_restart(int recreate);   /* audio_mixer.c: start the outputs again after an audio session interruption (iOS) */
+#if defined(CANOPY_HOST_RUNTIME)
+/* Irreversible host-only terminal output silence. Calls actual registered
+ * AudioOutputUnitStop under the output registry lock; may block on CoreAudio.
+ * Never call from an audio render callback or while holding lifecycle/renderer
+ * locks. 0: registered Stop calls returned noErr; -1: at least one refused.
+ * Both outcomes latch silence and prevent future device open/restart. Does not
+ * retract already submitted audio or stop/free/join guest, mixer, capture or
+ * graphics owners. Keep all session/save/module protections retained. */
+int runtime_canopy_audio_output_suspend(void);
+#endif
 void *runtime_hle_wrap(void *fn);
 void runtime_hle_stack_set(uintptr_t top);
 void *runtime_font_override(const char *name);

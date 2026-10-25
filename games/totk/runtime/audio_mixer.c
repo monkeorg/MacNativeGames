@@ -51,6 +51,11 @@ typedef struct Mixer {
     int capture_started,capture_done,capture_closing,capture_worker;
 } Mixer;
 
+#if defined(CANOPY_HOST_RUNTIME)
+/* Irreversible process-lifetime output policy, not a mixer/guest teardown flag.
+ * Callbacks never acquire the output registry lock. */
+static _Atomic int canopy_output_terminal;
+#endif
 static _Atomic float device_volume = 1.0f;
 static unsigned audio_revision(const AudioRenderer *r) { unsigned byte=r->revision>>24;return byte>='0'?byte-'0':0; }
 static void report_once(Mixer *m, unsigned bit, const char *msg, int value) {
@@ -110,6 +115,13 @@ static OSStatus pull(void *ctx, AudioUnitRenderActionFlags *flags, const AudioTi
     (void)flags; (void)ts; (void)bus;
     Mixer *m = ctx; float *out = io->mBuffers[0].mData;
     atomic_fetch_add(&m->callback_frames,frames);
+#if defined(CANOPY_HOST_RUNTIME)
+    if(atomic_load_explicit(&canopy_output_terminal,memory_order_acquire)) {
+        memset(out,0,(size_t)frames*2*sizeof(float));
+        if(flags)*flags|=kAudioUnitRenderAction_OutputIsSilence;
+        return noErr;
+    }
+#endif
     unsigned epoch=atomic_load_explicit(&m->stop_epoch,memory_order_acquire);
     uint64_t rd = atomic_load(&m->rd), wr = atomic_load_explicit(&m->wr, memory_order_acquire), have = wr - rd;
     if(epoch!=m->callback_epoch){uint64_t until=atomic_load_explicit(&m->flush_until,memory_order_acquire);if(until>rd){rd=until<wr?until:wr;atomic_store_explicit(&m->rd,rd,memory_order_release);}have=wr-rd;m->callback_epoch=epoch;m->ready=0;}
@@ -134,12 +146,29 @@ static OSStatus pull(void *ctx, AudioUnitRenderActionFlags *flags, const AudioTi
     UInt32 n = frames < have ? frames : (UInt32)have;
     uint64_t nonzero=0;
     for (UInt32 i = 0; i < n; i++) { uint64_t k = (rd + i) % RING_FRAMES; out[2 * i] = m->ring[2 * k]; out[2 * i + 1] = m->ring[2 * k + 1];if(out[2*i]!=0 || out[2*i+1]!=0)nonzero++; }
+#if !defined(CANOPY_HOST_RUNTIME)
     atomic_fetch_add(&m->callback_nonzero,nonzero);
+#endif
     if (n < frames) { memset(out + 2 * n, 0, (frames - n) * 2 * sizeof(float));atomic_fetch_add(&m->underruns,1);atomic_fetch_add(&m->missing_frames,frames-n);m->ready=0; }
     atomic_store_explicit(&m->rd, rd + n, memory_order_release);
+#if defined(CANOPY_HOST_RUNTIME)
+    // An already-running callback may have passed the entry check before the
+    // terminal latch. Clear its output too before returning to CoreAudio.
+    if(atomic_load_explicit(&canopy_output_terminal,memory_order_acquire)) {
+        memset(out,0,(size_t)frames*2*sizeof(float));
+        if(flags)*flags|=kAudioUnitRenderAction_OutputIsSilence;
+        nonzero=0;
+    }
+    atomic_fetch_add(&m->callback_nonzero,nonzero);
+#endif
     return noErr;
 }
 static void output_open(Mixer *m, int rate) {
+#if defined(CANOPY_HOST_RUNTIME)
+    // All callers hold g_out_mu, shared with terminal suspension. A device
+    // opened before the latch is stopped by that same serialized registry pass.
+    if(atomic_load_explicit(&canopy_output_terminal,memory_order_acquire))return;
+#endif
     if (getenv("TOTK_AUDIO_OFF")) { fprintf(stderr, "[totk-audio] TOTK_AUDIO_OFF: mixing without a CoreAudio device\n"); return; }
 #if TARGET_OS_IPHONE
     AudioComponentDescription d = {kAudioUnitType_Output, kAudioUnitSubType_RemoteIO, kAudioUnitManufacturer_Apple, 0, 0};   /* session set up by the app */
@@ -163,8 +192,29 @@ static void output_open(Mixer *m, int rate) {
    outputs again, or (recreate, and whenever a start fails) build them anew. */
 static pthread_mutex_t g_out_mu = PTHREAD_MUTEX_INITIALIZER;
 static Mixer *g_out[4];
+#if defined(CANOPY_HOST_RUNTIME)
+int runtime_canopy_audio_output_suspend(void) {
+    // Silence is irreversible even when CoreAudio refuses Stop. Retain every
+    // mixer/unit/capture worker: this is neither disposal nor join acknowledgement.
+    atomic_store_explicit(&canopy_output_terminal,1,memory_order_release);
+    int failed=0;
+    pthread_mutex_lock(&g_out_mu);
+    for(int i=0;i<4;i++) {
+        Mixer *m=g_out[i];if(!m)continue;
+        atomic_store_explicit(&m->playing,0,memory_order_release);
+        atomic_store_explicit(&m->flush_until,atomic_load_explicit(&m->wr,memory_order_acquire),memory_order_release);
+        atomic_fetch_add_explicit(&m->stop_epoch,1,memory_order_release);
+        if(m->unit_ok && AudioOutputUnitStop(m->unit)!=noErr)failed=1;
+    }
+    pthread_mutex_unlock(&g_out_mu);
+    return failed?-1:0;
+}
+#endif
 void runtime_audio_output_restart(int recreate) {
     pthread_mutex_lock(&g_out_mu);
+#if defined(CANOPY_HOST_RUNTIME)
+    if(atomic_load_explicit(&canopy_output_terminal,memory_order_acquire)){pthread_mutex_unlock(&g_out_mu);return;}
+#endif
     for (int i = 0; i < 4; i++) {
         Mixer *m = g_out[i]; if (!m) continue;
         if (m->unit_ok && !recreate && !AudioOutputUnitStart(m->unit)) { fprintf(stderr, "[totk-audio] output started again\n"); continue; }
@@ -175,6 +225,9 @@ void runtime_audio_output_restart(int recreate) {
     pthread_mutex_unlock(&g_out_mu);
 }
 static void output_push(Mixer *m, const float *lr, int frames) {
+#if defined(CANOPY_HOST_RUNTIME)
+    if(atomic_load_explicit(&canopy_output_terminal,memory_order_acquire))return;
+#endif
     uint64_t wr = atomic_load(&m->wr), rd = atomic_load_explicit(&m->rd, memory_order_acquire);
     if (m->unit_ok && wr + (uint64_t)frames - rd > RING_FRAMES) { atomic_fetch_add(&m->overruns, 1); return; }   /* device stalled: drop this frame */
     for (int i = 0; i < frames; i++) { uint64_t k = (wr + (uint64_t)i) % RING_FRAMES; m->ring[2 * k] = lr[2 * i]; m->ring[2 * k + 1] = lr[2 * i + 1]; }
@@ -215,8 +268,17 @@ void audio_mixer_open(AudioRenderer *r) {
     }else fprintf(stderr,"[totk-audio] diagnostic capture unavailable (file exists or cannot be opened)\n");}
     prefill_blocks();   // decided before the device's callback can run
     pthread_mutex_lock(&g_out_mu);
-    m->rate = r->param.sample_rate; output_open(m, m->rate);
+    m->rate = r->param.sample_rate;
+#if defined(CANOPY_HOST_RUNTIME)
+    // Every Canopy device output must have a registry owner before starting;
+    // an extra mixer cannot create an untracked unit that suspension would miss.
+    int slot=-1;for(int i=0;i<4;i++)if(!g_out[i]){slot=i;break;}
+    if(slot>=0){g_out[slot]=m;output_open(m,m->rate);}
+    else fprintf(stderr,"[totk-audio] output registry full: mixing without a device\n");
+#else
+    output_open(m, m->rate);
     for (int i = 0; i < 4; i++) if (!g_out[i]) { g_out[i] = m; break; }
+#endif
     pthread_mutex_unlock(&g_out_mu);
 }
 void audio_mixer_set_running(AudioRenderer *r,int running){
