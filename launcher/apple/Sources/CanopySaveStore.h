@@ -78,6 +78,9 @@ typedef BOOL (^CanopySaveEditValidator)(NSString *relativePath, NSData *original
 - (BOOL)removeBackup:(NSString *)identifier error:(NSError **)error;
 /// Recovery rolls an uncommitted transaction back to its verified old backup,
 /// or verifies/finalizes a durable committed save whose cleanup was interrupted.
+/// Then resumes only an explicitly recorded backup retirement after verifying
+/// every surviving path, inode and file hash. Unknown/corrupt backups and
+/// retirement records are preserved; missing prepared targets are not success.
 /// On ambiguous I/O preserve quarantine; never assume active stayed unchanged.
 - (BOOL)recover:(NSError **)error;
 @end

@@ -21,13 +21,14 @@ split is clarity cleanup, not a reproduced compiler failure; #77 compiled the ol
 form successfully. No new tests/probes run under this `/goal`; the steps below
 are the later authorized local handoff. A locked-iPad run executed no new-build checks.
 
-**Current published source starting point:** the dependent chain through #154,
-`fix/canopy-terminal-audio-silence` /
-`7d112a2e5af94b6388b912c4eee4bac1934ef963`,
+**Current published source starting point:** the dependent chain through #155,
+`fix/canopy-backup-retirement-recovery` /
+`2f5d3baf459ffad9087cb4f7afa37eba174813b6`,
 includes the friendly library/session title fixes (#110/#119), storage UI intent
 correction (#120), save UI intent correction (#122) and compiler source through
 #150, plus preparation diagnostics (#152), per-title mouse policy (#153) and
-terminal audio output suspension (#154). Inspect the actual recovery cursor and
+terminal audio output suspension (#154) and backup deletion recovery (#155).
+Inspect the actual recovery cursor and
 status before checkout; full-roadmap source work continues. No later source
 inherits earlier green CI. The overall product acceptance remains open.
 Both lifecycle corrections have two independent source reviews and no execution.
@@ -40,6 +41,13 @@ focus and scene changes. For #154, verify terminal main-worker cleanup silences
 output and interruption/restart notifications cannot revive it. Retain guest,
 save and module ownership protections; this does not authorize relaunch.
 These are later local validation steps, not checks run in this cloud continuation.
+
+For #155, use invented local fixture backups first: interrupt each recorded
+retirement phase and reopen/recover; retry uncertain fsync outcomes; inject
+changed, linked, unknown and corrupt entries and confirm refusal preserves
+them. Then check the real backup catalog/export/restore with immediate private
+save/identity inventories retained locally. Mandatory backups and pre-Play
+seals must still hold. No such fault-injection or device run occurred here.
 
 | Order | Mac / iPad action | Evidence to retain locally |
 |---|---|---|
