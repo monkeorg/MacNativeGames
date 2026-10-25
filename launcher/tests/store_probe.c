@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <unistd.h>
 #include <errno.h>
@@ -20,6 +21,48 @@
 #include <sys/syscall.h>
 #endif
 
+static const char *retirement_root;
+static char retirement_title[17];
+static int retirement_renamed,retirement_removed;
+static int retirement_fd_is(int fd,const char *relative) {
+    if(!retirement_root)return 0;
+    char path[8192];struct stat actual,named;
+    int n=snprintf(path,sizeof(path),"%s/%s",retirement_root,relative);
+    return n>0&&(size_t)n<sizeof(path)&&!fstat(fd,&actual)&&!lstat(path,&named)&&
+        actual.st_dev==named.st_dev&&actual.st_ino==named.st_ino;
+}
+static int retirement_exists(const char *relative) {
+    char path[8192];struct stat st;
+    int n=snprintf(path,sizeof(path),"%s/%s",retirement_root,relative);
+    return n>0&&(size_t)n<sizeof(path)&&!lstat(path,&st);
+}
+static int retirement_event(const char *phase) {
+    const char *crash=getenv("CANOPY_TEST_RETIRE_EXIT"),*fail=getenv("CANOPY_TEST_RETIRE_FAIL");
+    if(crash&&!strcmp(crash,phase))_exit(31);
+    if(fail&&!strcmp(fail,phase)){errno=EIO;return -1;}
+    return 0;
+}
+ssize_t probe_write(int fd,const void *bytes,size_t count) {
+    int intent=retirement_fd_is(fd,".retirement/.intent.tmp");
+    if(intent&&retirement_event("before_intent_write"))return -1;
+    ssize_t result=write(fd,bytes,count);
+    if(result>0&&intent&&retirement_event("after_intent_write"))return -1;
+    return result;
+}
+int probe_unlinkat(int parent,const char *name,int flags) {
+    const char *before=NULL,*after=NULL;
+    if(retirement_fd_is(parent,".retirement")) {
+        if(!strcmp(name,"target")){before="before_target_rmdir";after="after_target_rmdir";}
+        else if(!strcmp(name,"intent.bin")){before="before_intent_unlink";after="after_intent_unlink";}
+    } else if(retirement_fd_is(parent,".retirement/target")||retirement_fd_is(parent,".retirement/target/exefs")) {
+        if(!strcmp(name,".lease")){before="before_lease_unlink";after="after_lease_unlink";}
+        else {before="before_payload_unlink";after="after_payload_unlink";}
+    }
+    if(before&&retirement_event(before))return -1;
+    int result=unlinkat(parent,name,flags);
+    if(!result&&after){if(!strcmp(after,"after_target_rmdir"))retirement_removed=1;if(retirement_event(after))return -1;}
+    return result;
+}
 static struct mng_store *cancel_target;
 static int cancel_requested;
 static int cancel_check(void *context) { return *(int *)context; }
@@ -35,7 +78,22 @@ ssize_t probe_read(int fd,void *bytes,size_t count) {
 }
 int probe_fsync(int fd) {
     if (fail_next_sync) { fail_next_sync=0; errno=EIO; return -1; }
-    return fsync(fd);
+    const char *phase=NULL;char generations[96];
+    (void)snprintf(generations,sizeof(generations),"titles/%s/generations",retirement_title);
+    if(retirement_fd_is(fd,".retirement/.intent.tmp"))phase="intent_file_sync";
+    else if(retirement_fd_is(fd,".retirement/target")) {
+        if(!retirement_exists(".retirement/target/.lease"))phase="lease_sync";
+        else if(!retirement_exists(".retirement/target/exefs")&&!retirement_exists(".retirement/target/romfs.bin")&&
+                !retirement_exists(".retirement/target/receipt.bin"))phase="payload_sync";
+    } else if(retirement_fd_is(fd,".retirement")) {
+        if(retirement_exists(".retirement/target"))phase="target_parent_sync";
+        else if(retirement_exists(".retirement/intent.bin"))phase=(retirement_renamed||retirement_removed)?"rmdir_sync":"intent_parent_sync";
+        else phase="intent_clear_sync";
+    } else if(retirement_title[0]&&retirement_fd_is(fd,generations)&&retirement_exists(".retirement/intent.bin"))phase="generation_parent_sync";
+    else if(retirement_fd_is(fd,".")&&retirement_exists(".retirement")&&!retirement_exists(".retirement/intent.bin"))phase="namespace_parent_sync";
+    int result=fsync(fd);
+    if(!result&&phase&&retirement_event(phase))return -1;
+    return result;
 }
 int probe_renameat(int from,const char *source,int to,const char *destination) {
     if ((!strcmp(destination,"current") && fault("current_rename")) ||
@@ -49,16 +107,21 @@ int probe_renameat(int from,const char *source,int to,const char *destination) {
         (!strcmp(destination,"current") && fault("hook_after_current")))) cancel_requested=1;
     return result;
 }
-static int before_exclusive(const char *source) {
+static int before_exclusive(const char *source,const char *destination) {
+    if(!strcmp(source,".intent.tmp")&&!strcmp(destination,"intent.bin")&&retirement_event("before_intent_rename"))return -1;
+    if(strlen(source)==64&&!strcmp(destination,"target")&&retirement_event("before_target_rename"))return -1;
     if (!strcmp(source,".asset.tmp") && fault("before_asset_rename")) _exit(24);
     if (strlen(source)==32 && fault("generation_rename")) { errno=EIO; return -1; }
     return 0;
 }
-static void after_exclusive(const char *source,int result) {
-    if (result) return;
+static int after_exclusive(const char *source,const char *destination,int result) {
+    if (result) return result;
+    if(!strcmp(source,".intent.tmp")&&!strcmp(destination,"intent.bin")&&retirement_event("after_intent_rename"))return -1;
+    if(strlen(source)==64&&!strcmp(destination,"target")){retirement_renamed=1;if(retirement_event("after_target_rename"))return -1;}
     if (!strcmp(source,".asset.tmp") && fault("after_asset_rename")) _exit(25);
     if (strlen(source)==32 && fault("after_generation_rename")) _exit(26);
     if (strlen(source)==32 && fault("generation_sync")) fail_next_sync=1;
+    return 0;
 }
 #ifdef __linux__
 long probe_syscall(long number,...) {
@@ -67,15 +130,15 @@ long probe_syscall(long number,...) {
     int from=va_arg(args,int); const char *source=va_arg(args,const char *);
     int to=va_arg(args,int); const char *destination=va_arg(args,const char *);
     unsigned flags=va_arg(args,unsigned); va_end(args);
-    if (before_exclusive(source)) return -1;
+    if (before_exclusive(source,destination)) return -1;
     long result=syscall(number,from,source,to,destination,flags);
-    after_exclusive(source,(int)result); return result;
+    return after_exclusive(source,destination,(int)result);
 }
 #elif defined(__APPLE__)
 int probe_renameatx_np(int from,const char *source,int to,const char *destination,unsigned flags) {
-    if (before_exclusive(source)) return -1;
+    if (before_exclusive(source,destination)) return -1;
     int result=renameatx_np(from,source,to,destination,flags);
-    after_exclusive(source,result); return result;
+    return after_exclusive(source,destination,result);
 }
 #endif
 
@@ -111,6 +174,8 @@ static void hex_digest(const unsigned char digest_bytes[32],char out[65]) {
 }
 int main(int argc,char **argv) {
     if (argc<3) return 2;
+    retirement_root=argv[2];
+    if(argc>3&&strlen(argv[3])==16)memcpy(retirement_title,argv[3],16);
     int root=open(argv[2],O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     if (root<0) return 3;
     struct mng_store *store=NULL;

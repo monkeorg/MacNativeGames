@@ -34,6 +34,8 @@ class CanopyStoreTests(unittest.TestCase):
             '#include <unistd.h>\n#include <stdio.h>\n'
             'int probe_fstatvfs(int,struct statvfs *);\n#define fstatvfs probe_fstatvfs\n'
             'ssize_t probe_read(int,void *,size_t);\nint probe_fsync(int);\n'
+            'ssize_t probe_write(int,const void *,size_t);\nint probe_unlinkat(int,const char *,int);\n'
+            '#define write probe_write\n#define unlinkat probe_unlinkat\n'
             'int probe_renameat(int,const char *,int,const char *);\n'
             '#define read probe_read\n#define fsync probe_fsync\n#define renameat probe_renameat\n'
             '#ifdef __linux__\n#include <sys/syscall.h>\nlong probe_syscall(long,...);\n#define syscall probe_syscall\n'
@@ -822,6 +824,178 @@ class CanopyStoreTests(unittest.TestCase):
             if holder.poll() is None:
                 holder.kill(); holder.wait()
             holder.stdin.close(); holder.stdout.close(); holder.stderr.close()
+
+    def retirement_fixture(self, parent=None):
+        if parent is not None:
+            self.root = parent
+            self.root.mkdir(mode=0o700)
+            self.jobs = 0
+        first, previous, current = self.commit('retire-A'), self.commit('retire-B'), self.commit('retire-C')
+        protected = {}
+        for generation in (previous, current):
+            directory = self.generation(generation)
+            protected[generation] = {str(p.relative_to(directory)):(p.stat().st_ino,p.read_bytes())
+                                     for p in directory.rglob('*') if p.is_file()}
+        for name in ('profiles', 'saves', 'accounts'):
+            (self.root / name).mkdir(mode=0o700)
+            (self.root / name / 'retain').write_bytes(b'outside generation removal')
+        return first, previous, current, protected
+
+    def retirement_crash(self, first, phase):
+        result = subprocess.run([str(self.probe), 'prune', str(self.root), TITLE, first],
+                                env={**os.environ, 'CANOPY_TEST_RETIRE_EXIT':phase},
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 31, phase + result.stdout + result.stderr)
+
+    def retirement_protected(self, previous, current, snapshots):
+        self.assertEqual(self.run_probe('current', TITLE)['generation'], current)
+        self.assertEqual((self.root / 'titles' / TITLE / 'previous').read_text(), previous+'\n')
+        for generation, before in snapshots.items():
+            directory = self.generation(generation)
+            self.assertEqual(before, {str(p.relative_to(directory)):(p.stat().st_ino,p.read_bytes())
+                                      for p in directory.rglob('*') if p.is_file()})
+            self.assertEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+        for name in ('profiles', 'saves', 'accounts'):
+            self.assertEqual((self.root / name / 'retain').read_bytes(), b'outside generation removal')
+
+    def test_retirement_real_process_exit_boundaries_recover_only_durable_intent(self):
+        # These are actual process exits/syscalls, not power-loss emulation.
+        # The production fsync ordering is reviewed separately.
+        before_intent = ('namespace_parent_sync', 'before_intent_write', 'after_intent_write',
+                         'intent_file_sync', 'before_intent_rename')
+        committed = ('after_intent_rename', 'intent_parent_sync', 'before_target_rename',
+                     'after_target_rename', 'generation_parent_sync', 'target_parent_sync',
+                     'before_payload_unlink', 'after_payload_unlink', 'payload_sync',
+                     'before_lease_unlink', 'after_lease_unlink', 'lease_sync',
+                     'before_target_rmdir', 'after_target_rmdir', 'rmdir_sync',
+                     'before_intent_unlink', 'after_intent_unlink', 'intent_clear_sync')
+        parent = self.root
+        for phase in before_intent + committed:
+            with self.subTest(phase=phase):
+                first, previous, current, snapshots = self.retirement_fixture(parent / phase)
+                self.retirement_crash(first, phase)
+                # Opening the same real store completes only the recorded
+                # retirement; orphan intent.tmp grants no deletion authority.
+                self.retirement_protected(previous, current, snapshots)
+                self.assertEqual(self.generation(first).exists(), phase in before_intent)
+                self.assertEqual(list((self.root / '.retirement').iterdir()), [])
+
+    def test_retirement_io_after_real_mutation_reconciles_without_old_state_claim(self):
+        parent = self.root
+        for phase in ('namespace_parent_sync', 'intent_file_sync', 'after_intent_rename',
+                      'intent_parent_sync', 'after_target_rename', 'generation_parent_sync',
+                      'target_parent_sync', 'payload_sync', 'after_lease_unlink', 'lease_sync',
+                      'after_target_rmdir', 'rmdir_sync', 'after_intent_unlink', 'intent_clear_sync'):
+            with self.subTest(phase=phase):
+                first, previous, current, snapshots = self.retirement_fixture(parent / phase)
+                result = self.run_probe('prune', TITLE, first, env={'CANOPY_TEST_RETIRE_FAIL':phase})
+                self.assertNotEqual(result['status'], 0)
+                self.retirement_protected(previous, current, snapshots)
+                # IO before durable intent leaves the selected generation;
+                # later IO can already have completed retirement.
+                self.assertEqual(self.generation(first).exists(), phase in ('namespace_parent_sync', 'intent_file_sync'))
+                self.assertEqual(list((self.root / '.retirement').iterdir()), [])
+
+    def test_retirement_never_infers_authority_from_missing_canonical_lease(self):
+        first, previous, current, snapshots = self.retirement_fixture()
+        directory = self.generation(first)
+        (directory / '.lease').unlink()
+        sentinel = directory / 'foreign-retain';sentinel.write_bytes(b'retain canonical directory')
+        self.assertNotEqual(self.run_probe('prune', TITLE, first)['status'], 0)
+        self.assertFalse((self.root / '.retirement').exists())
+        self.assertEqual(sentinel.read_bytes(), b'retain canonical directory')
+        self.retirement_protected(previous, current, snapshots)
+
+    def test_retirement_unrecorded_or_unsafe_namespace_entries_are_preserved(self):
+        first = self.commit()
+        retired = self.root / '.retirement';retired.mkdir(mode=0o700)
+        target = retired / 'target';target.mkdir(mode=0o700)
+        sentinel = target / 'retain';sentinel.write_bytes(b'no intent authority')
+        self.assertNotEqual(self.run_probe('current', TITLE)['status'], 0)
+        self.assertEqual(sentinel.read_bytes(), b'no intent authority')
+        self.assertTrue(self.generation(first).exists())
+        target.rename(self.root / 'unrecorded-retain')
+        (retired / 'unexpected').write_bytes(b'unknown entry')
+        self.assertNotEqual(self.run_probe('current', TITLE)['status'], 0)
+        self.assertEqual((retired / 'unexpected').read_bytes(), b'unknown entry')
+        (retired / 'unexpected').unlink()
+        (retired / 'intent.bin').symlink_to(self.root / 'unrecorded-retain' / 'retain')
+        self.assertNotEqual(self.run_probe('current', TITLE)['status'], 0)
+        self.assertEqual((self.root / 'unrecorded-retain' / 'retain').read_bytes(), b'no intent authority')
+        (retired / 'intent.bin').unlink()
+        os.mkfifo(retired / '.intent.tmp', 0o600)
+        self.assertNotEqual(self.run_probe('current', TITLE)['status'], 0)
+        self.assertTrue((retired / '.intent.tmp').exists())
+
+    def test_retirement_replacement_directory_lease_and_corrupt_intent_fail_closed(self):
+        parent = self.root
+        for scenario in ('directory', 'lease', 'checksum', 'identity', 'nonempty-no-lease', 'duplicate'):
+            with self.subTest(scenario=scenario):
+                first, previous, current, snapshots = self.retirement_fixture(parent / scenario)
+                phase = 'before_lease_unlink' if scenario == 'nonempty-no-lease' else 'after_target_rename'
+                self.retirement_crash(first, phase)
+                retired = self.root / '.retirement';target = retired / 'target'
+                if scenario == 'directory':
+                    target.rename(self.root / 'recorded-target-retain')
+                    target.mkdir(mode=0o700);(target / 'retain').write_bytes(b'replacement directory')
+                elif scenario == 'lease':
+                    (target / '.lease').rename(self.root / 'recorded-lease-retain')
+                    (target / '.lease').touch(mode=0o400)
+                elif scenario in ('checksum', 'identity'):
+                    intent = bytearray((retired / 'intent.bin').read_bytes())
+                    intent[24] ^= 1
+                    if scenario == 'identity':intent[112:] = hashlib.sha256(intent[:112]).digest()
+                    (retired / 'intent.bin').write_bytes(intent)
+                elif scenario == 'nonempty-no-lease':
+                    (target / '.lease').unlink();(target / 'retain').write_bytes(b'missing lease is not payload authority')
+                else:
+                    self.generation(first).mkdir(mode=0o700)
+                    (self.generation(first) / 'retain').write_bytes(b'canonical replacement')
+                before = {str(p.relative_to(self.root)):(p.stat().st_ino,p.read_bytes())
+                          for p in self.root.rglob('*') if p.is_file() and not p.is_symlink()}
+                self.assertNotEqual(self.run_probe('current', TITLE)['status'], 0)
+                self.assertEqual(before, {str(p.relative_to(self.root)):(p.stat().st_ino,p.read_bytes())
+                                          for p in self.root.rglob('*') if p.is_file() and not p.is_symlink()})
+                self.assertEqual((self.root / 'titles' / TITLE / 'current').read_text(), current+'\n')
+                self.assertEqual((self.root / 'titles' / TITLE / 'previous').read_text(), previous+'\n')
+
+    def test_retirement_recovery_rechecks_current_and_previous_references(self):
+        parent = self.root
+        for pointer in ('current', 'previous'):
+            with self.subTest(pointer=pointer):
+                first, previous, current, snapshots = self.retirement_fixture(parent / pointer)
+                self.retirement_crash(first, 'before_target_rename')
+                (self.root / 'titles' / TITLE / pointer).write_text(first+'\n')
+                directory = self.generation(first)
+                before = {str(p.relative_to(directory)):p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+                self.assertNotEqual(self.run_probe('current', TITLE)['status'], 0)
+                self.assertEqual(before, {str(p.relative_to(directory)):p.read_bytes() for p in directory.rglob('*') if p.is_file()})
+                self.assertFalse((self.root / '.retirement' / 'target').exists())
+
+    def test_retirement_recovery_requires_recorded_real_exclusive_lease(self):
+        import fcntl
+        first, previous, current, snapshots = self.retirement_fixture()
+        self.retirement_crash(first, 'before_target_rename')
+        directory = self.generation(first)
+        with (directory / '.lease').open('rb') as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            before = {str(p.relative_to(directory)):p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+            self.assertNotEqual(self.run_probe('current', TITLE)['status'], 0)
+            self.assertEqual(before, {str(p.relative_to(directory)):p.read_bytes() for p in directory.rglob('*') if p.is_file()})
+        self.retirement_protected(previous, current, snapshots)
+        self.assertFalse(directory.exists())
+        self.assertEqual(list((self.root / '.retirement').iterdir()), [])
+
+    def test_reading_legacy_store_does_not_create_retirement_or_require_new_space(self):
+        generation = self.commit()
+        self.assertFalse((self.root / '.retirement').exists())
+        # If ordinary open/verify tried to create+fsync that new namespace, this
+        # precise source hook would refuse it; no full-disk result is invented.
+        env = {'CANOPY_TEST_RETIRE_FAIL':'namespace_parent_sync', 'CANOPY_TEST_NO_SPACE':'1'}
+        self.assertEqual(self.run_probe('current', TITLE, env=env)['generation'], generation)
+        self.assertEqual(self.run_probe('verify', TITLE, generation, env=env)['status'], 0)
+        self.assertFalse((self.root / '.retirement').exists())
+
 
 
 if __name__ == '__main__':
