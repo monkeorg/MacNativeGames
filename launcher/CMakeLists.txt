@@ -11,6 +11,7 @@ target_sources(canopy_core PRIVATE src/mng_addon.c src/mng_install.c src/mng_mul
 target_sources(canopy_core PRIVATE src/mng_input.c src/mng_keyboard.c src/mng_pointer.c src/mng_touch.c)
 target_sources(canopy_core PRIVATE src/mng_display.c)
 target_sources(canopy_core PRIVATE src/mng_totk_save.c)
+target_sources(canopy_core PRIVATE src/mng_restart.c)
 find_package(Threads REQUIRED)
 target_link_libraries(canopy_core PUBLIC Threads::Threads)
 if(NOT APPLE)
