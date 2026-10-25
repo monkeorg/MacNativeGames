@@ -1,4 +1,18 @@
 {
+  "additionalParsedIRLoopCheckpoints": {
+    "count": 5,
+    "file": "spirv_cross_parsed_ir.cpp",
+    "method": "ParsedIR::mark_used_as_array_length",
+    "originalSourceLines": [
+      555,
+      559,
+      561,
+      566,
+      583
+    ],
+    "patch": "0045-array-length-dependency-depth-bounds.patch",
+    "reason": "Five dependency traversal loop bodies checked separately from the original four-file loop inventory; includes fixed four-slot edge scans, gives no original unbraced-site credit."
+  },
   "boundedAddedHelperLoopsExcluded": [
     {
       "function": "parser_type_vector_copy_bytes",
@@ -775,7 +789,8 @@
     "Three conditional GLSL flattening helpers: member-path indices before reads/naming, recursive member-count narrowing, I/O Struct refusal and leaf nonempty path/primary-alias final member bounds; empty root store path preserved, not global ID or flattening validation",
     "ensure_struct_members_valid_vecsizes only: parent-member index before write, dimension-count narrowing and once-evaluated uint32 products, zero advances preserved and positive interface cursor result strictly below unknown sentinel; no hardware/type-format/global layout validity claim",
     "Fixed composite caller storage availability: two Parser composite opcodes check minimum2operands before access/subtraction, fixedbranch nonzero count, shared result/source dimensions andnonnull1..4 constituents before3pointer-constructor set sites; Struct/array/longvectorID-list andReplicatedEXT unchanged",
-    "emit_tessellation_access_chain only: operand minima, local vector-size narrowing, all local actual member-read/mask-prefix bounds and known interface-index additions reserving unresolvedMAX; preserves array/Struct precedence, deferred states and intentional resets, not global type/ID/array/helper validation"
+    "emit_tessellation_access_chain only: operand minima, local vector-size narrowing, all local actual member-read/mask-prefix bounds and known interface-index additions reserving unresolvedMAX; preserves array/Struct precedence, deferred states and intentional resets, not global type/ID/array/helper validation",
+    "mark_used_as_array_length only: entry ID bound before ids[], fixed columns<=4 before column-slot access, local CompositeExtract/Insert dependency availability1/2 and VectorShuffle first2ID-only traversal excluding literal selectors; not full expression arity/type/ID/global validation"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
@@ -801,7 +816,8 @@
     "GLSL flattened struct-store member traversal",
     "conditional GLSL zero-initialization eligibility member query",
     "conditional MSL tessellation struct vector-size adjustment",
-    "conditional MSL tessellation access-chain rematerialization"
+    "conditional MSL tessellation access-chain rematerialization",
+    "ParsedIR array-length constant dependency traversal"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
