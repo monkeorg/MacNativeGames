@@ -105,7 +105,12 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     BOOL _busy, _importPicker, _rawImportPicker, _exportPicker, _cancelRequested;
     NSFileCoordinator *_coordinator;
     NSURL *_temporaryExport;
-    BOOL _totkCandidateAvailable;
+    BOOL _totkCandidateAvailable, _workInFlight;
+    NSUInteger _presentationEpoch, _workOperation, _pickerEpoch, _exportOperation;
+    UIDocumentPickerViewController *_ownedPicker;
+    CanopySaveController *_pickerLifetime;
+    UIAlertController *_confirmation;
+    __weak UIWindowScene *_intentScene;
 }
 - (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue profileName:(NSString *)name titleID:(NSString *)titleID {
     if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) { _store = store; _queue = queue; _profileName=[name copy]; _backups = @[];
@@ -117,11 +122,56 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     self.tableView.rowHeight = UITableViewAutomaticDimension; self.tableView.estimatedRowHeight = 70;
     [self reloadBackups];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(saveBackground:) name:UIApplicationDidEnterBackgroundNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(saveSceneBackground:) name:UISceneDidEnterBackgroundNotification object:nil];
 }
 - (void)dealloc {
     [NSNotificationCenter.defaultCenter removeObserver:self];
     [_coordinator cancel]; NSURL *temporary = _temporaryExport;
     if (temporary) dispatch_async(_queue, ^{ [NSFileManager.defaultManager removeItemAtURL:temporary error:NULL]; });
+}
+- (BOOL)activeOwnerAtEpoch:(NSUInteger)epoch allowing:(UIViewController *)presentation {
+    UIWindow *window=self.viewIfLoaded.window;
+    // A full-screen Files picker can detach the presenting view. Only that
+    // exact owned, still-presented picker may supply a window, in the scene
+    // captured before its presentation. Queued exports pass nil and cannot
+    // borrow another controller's foreground window.
+    if(!window && presentation && presentation==_ownedPicker && self.presentedViewController==_ownedPicker &&
+       _pickerEpoch==epoch && _intentScene && presentation.viewIfLoaded.window.windowScene==_intentScene)
+        window=presentation.viewIfLoaded.window;
+    if(presentation==_ownedPicker && presentation && window.windowScene!=_intentScene)return NO;
+    return NSThread.isMainThread && epoch!=NSUIntegerMax && epoch==_presentationEpoch &&
+        self.navigationController.topViewController==self && !self.isBeingDismissed && !self.navigationController.isBeingDismissed &&
+        window.isKeyWindow && UIApplication.sharedApplication.applicationState==UIApplicationStateActive &&
+        window.windowScene.activationState==UISceneActivationStateForegroundActive &&
+        (!self.presentedViewController || self.presentedViewController==presentation);
+}
+- (void)invalidatePresentationIntent {
+    if(_presentationEpoch!=NSUIntegerMax)++_presentationEpoch;
+    if(_confirmation) {
+        UIAlertController *alert=_confirmation;_confirmation=nil;
+        if(self.presentedViewController==alert)[alert dismissViewControllerAnimated:NO completion:nil];
+    }
+    // An accepted export picker owns its data until its terminal delegate event.
+    // Invalidate its UI intent, but never delete bytes Files may still be copying.
+    if(_ownedPicker && !_exportPicker) {
+        UIDocumentPickerViewController *picker=_ownedPicker;
+        [picker dismissViewControllerAnimated:NO completion:^{[self finishPicker:picker];}];
+    }
+}
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    // Our own Files presentation is not navigation away from save management.
+    if(self.isMovingFromParentViewController || self.isBeingDismissed || self.navigationController.isBeingDismissed ||
+       self.navigationController.topViewController!=self || !_ownedPicker)[self invalidatePresentationIntent];
+}
+- (BOOL)ownsPicker:(UIDocumentPickerViewController *)picker { return picker && _ownedPicker==picker; }
+- (void)finishPicker:(UIDocumentPickerViewController *)picker {
+    if(![self ownsPicker:picker])return;
+    BOOL exported=_exportPicker;
+    _ownedPicker=nil;_importPicker=NO;_rawImportPicker=NO;_exportPicker=NO;
+    if(!_workInFlight)_busy=NO;
+    if(exported)[self cleanupExport];
+    [self refresh];_pickerLifetime=nil;
 }
 - (void)refresh {
     self.navigationItem.rightBarButtonItem = _coordinator ? [[UIBarButtonItem alloc] initWithTitle:_cancelRequested ? @"Cancel requested" : @"Cancel access" style:UIBarButtonItemStylePlain target:self action:@selector(cancelAccess)] : nil;
@@ -130,12 +180,14 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (void)performWork:(id (^)(NSError **))work completion:(void (^)(id, NSError *))completion {
     if (_busy || _store.sealed) return;
-    _busy = YES; [self refresh];
+    if(_workOperation==NSUIntegerMax)return;
+    _busy = YES;_workInFlight=YES;NSUInteger operation=++_workOperation;[self refresh];
     dispatch_async(_queue, ^{
         @autoreleasepool { NSError *error = nil; id result = work(&error);
             if (!error && (!result || ([result isKindOfClass:NSNumber.class] && ![result boolValue]))) error = [NSError errorWithDomain:@"CanopySaveUI" code:2 userInfo:@{NSLocalizedDescriptionKey:@"The save operation did not report successful completion. Check recovery status before retrying."}];
             dispatch_async(dispatch_get_main_queue(), ^{
-                self->_busy = NO; self->_coordinator = nil; self->_cancelRequested = NO;
+                if(self->_workOperation!=operation)return;
+                self->_workInFlight=NO;self->_busy = NO; self->_coordinator = nil; self->_cancelRequested = NO;
                 if (error) self->_status = error.localizedDescription;
                 completion(result,error); [self refresh];
             });
@@ -174,13 +226,23 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     return cell;
 }
 - (void)confirmTitle:(NSString *)title message:(NSString *)message action:(void (^)(void))action {
+    NSUInteger epoch=_presentationEpoch;
+    if(_busy || _store.sealed || ![self activeOwnerAtEpoch:epoch allowing:nil])return;
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *selected) { (void)selected; action(); }]];
+    _intentScene=self.viewIfLoaded.window.windowScene;
+    _confirmation=alert;__weak UIAlertController *weakAlert=alert;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *selected){
+        (void)selected;if(self->_confirmation==weakAlert)self->_confirmation=nil;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *selected) {
+        (void)selected;UIAlertController *current=weakAlert;
+        if(!current || self->_confirmation!=current || ![self activeOwnerAtEpoch:epoch allowing:current] || self->_busy || self->_store.sealed)return;
+        self->_confirmation=nil;action();
+    }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
-    [tableView deselectRowAtIndexPath:path animated:YES]; if (_busy || _store.sealed) return;
+    [tableView deselectRowAtIndexPath:path animated:YES]; if (_busy || _store.sealed || _presentationEpoch==NSUIntegerMax || ![self activeOwnerAtEpoch:_presentationEpoch allowing:nil]) return;
     if (!path.section && path.row == 5) {
         if (!_totkCandidateAvailable || _store.recoveryRequired || [CanopySessionController nativeSessionOwnsProcess] ||
             self.presentedViewController || UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
@@ -198,8 +260,10 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     if (path.row == 0) [self exportBundle];
     else if (path.row == 1 || path.row == 2) {
         if (!_store.externalImportSupported) return;
-        _importPicker = YES; _rawImportPicker = path.row == 2;
+        _importPicker = YES; _rawImportPicker = path.row == 2;_busy=YES;
         UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO]; picker.delegate = self; picker.allowsMultipleSelection = NO;
+        _intentScene=self.viewIfLoaded.window.windowScene;
+        _ownedPicker=picker;_pickerEpoch=_presentationEpoch;_pickerLifetime=self;[self refresh];
         [self presentViewController:picker animated:YES completion:nil];
     } else if (path.row == 3) [self performWork:^id(NSError **error) { return [self->_store backup:error]; } completion:^(id result, NSError *error) { if (!error && result) self->_status = @"Active saves were backed up and verified."; [self reloadBackups]; }];
     else if (_store.recoveryRequired) [self confirmTitle:@"Recover the interrupted save replacement?" message:@"The store will reconcile its journal: roll back an unfinished replacement or verify and finalize a committed save. Account identity and ambiguous data are preserved." action:^{
@@ -207,34 +271,57 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     }];
 }
 - (void)exportBundle {
+    NSUInteger epoch=_presentationEpoch;
+    if(_busy || _store.sealed || epoch==NSUIntegerMax || _workOperation==NSUIntegerMax || ![self activeOwnerAtEpoch:epoch allowing:nil])return;
+    NSUInteger operation=_workOperation+1;_intentScene=self.viewIfLoaded.window.windowScene;
     NSURL *temporary = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES] URLByAppendingPathComponent:[@"Canopy-export-" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
-    _temporaryExport = temporary;
+    __block BOOL created=NO;
     [self performWork:^id(NSError **error) {
-        if (![NSFileManager.defaultManager createDirectoryAtURL:temporary withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error]) return nil;
-        return [self->_store exportToDirectory:temporary error:error];
+        created=[NSFileManager.defaultManager createDirectoryAtURL:temporary withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error];
+        return created ? [self->_store exportToDirectory:temporary error:error] : nil;
     } completion:^(id result, NSError *error) {
-        if (error || ![result isKindOfClass:NSURL.class]) { [self cleanupExport]; return; }
-        if (!self.view.window) { [self cleanupExport]; return; }
-        self->_exportPicker = YES; self->_busy = YES;
-        UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[result] asCopy:YES]; picker.delegate = self;
+        // The accepted worker settles authoritatively even when presentation has
+        // expired. Only its own successfully-created temporary root is removed.
+        if(error || ![result isKindOfClass:NSURL.class] || ![self activeOwnerAtEpoch:epoch allowing:nil]) {
+            if(created)dispatch_async(self->_queue,^{[NSFileManager.defaultManager removeItemAtURL:temporary error:NULL];});
+            return;
+        }
+        self->_temporaryExport=temporary;self->_exportOperation=operation;
+        self->_exportPicker=YES;self->_busy=YES;
+        UIDocumentPickerViewController *picker=[[UIDocumentPickerViewController alloc] initForExportingURLs:@[result] asCopy:YES];picker.delegate=self;
+        self->_ownedPicker=picker;self->_pickerEpoch=epoch;self->_pickerLifetime=self;
         [self presentViewController:picker animated:YES completion:nil];
     }];
 }
 - (void)cleanupExport {
-    NSURL *temporary = _temporaryExport; _temporaryExport = nil;
-    if (temporary) dispatch_async(_queue, ^{ [NSFileManager.defaultManager removeItemAtURL:temporary error:NULL]; });
+    NSURL *temporary=_temporaryExport;
+    if(!temporary || _exportOperation!=_workOperation)return;
+    _temporaryExport=nil;
+    dispatch_async(_queue,^{[NSFileManager.defaultManager removeItemAtURL:temporary error:NULL];});
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    (void)controller; _busy = NO; _importPicker = NO; _rawImportPicker = NO; _exportPicker = NO; [self cleanupExport]; [self refresh];
+    [self finishPicker:controller];
 }
 - (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    if (_exportPicker) { _exportPicker = NO; _busy = NO; _status = @"Canopy export handed to Files."; [self cleanupExport]; [self refresh]; return; }
-    if (!_importPicker || urls.count != 1) return;
-    _importPicker = NO; BOOL raw = _rawImportPicker; _rawImportPicker = NO; NSURL *source = urls.firstObject;
+    if(![self ownsPicker:controller])return;
+    NSUInteger epoch=_pickerEpoch;
+    BOOL active=[self activeOwnerAtEpoch:epoch allowing:controller];
+    if(_exportPicker) {
+        if(active)_status=@"Canopy export handed to Files.";
+        [self finishPicker:controller];return;
+    }
+    BOOL raw=_rawImportPicker;BOOL accepted=_importPicker && active && urls.count==1 && urls.firstObject.isFileURL;
+    NSURL *source=accepted?urls.firstObject:nil;
+    // Keep identity until dismissal completes, so a late delegate callback
+    // cannot clear the flags of a replacement picker or accepted worker.
+    _importPicker=NO;_rawImportPicker=NO;
     [controller dismissViewControllerAnimated:YES completion:^{
+        if(![self ownsPicker:controller])return;
+        [self finishPicker:controller];
+        if(!source || ![self activeOwnerAtEpoch:epoch allowing:nil])return;
         [self confirmTitle:raw ? @"Import this validated raw save folder?" : @"Import this Canopy export?"
             message:raw ? @"A private bounded copy must pass this title's trusted structural validator. Active saves are backed up before replacement; account identity is untouched." : @"A matching title/profile export and the trusted title-format validator are required. Active saves are backed up before replacement; account identity is untouched."
-            action:^{ [self importBundle:source raw:raw]; }];
+            action:^{[self importBundle:source raw:raw];}];
     }];
 }
 - (void)importBundle:(NSURL *)source raw:(BOOL)raw {
@@ -261,14 +348,17 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     _cancelRequested = YES; [_coordinator cancel];
     _status = @"Access cancellation requested. A save publication may already have completed; waiting for the authoritative result."; [self refresh];
 }
+- (void)saveSceneBackground:(NSNotification *)notification {
+    if(notification.object==_intentScene || notification.object==self.viewIfLoaded.window.windowScene)[self saveBackground:notification];
+}
 - (void)saveBackground:(NSNotification *)notification {
     (void)notification;
-    if (_importPicker) { _importPicker = NO; _rawImportPicker = NO; [self dismissViewControllerAnimated:NO completion:nil]; }
+    [self invalidatePresentationIntent];
     [self cancelAccess];
 }
 - (UISwipeActionsConfiguration *)tableView:(UITableView *)tableView trailingSwipeActionsConfigurationForRowAtIndexPath:(NSIndexPath *)path {
     (void)tableView;
-    if (!path.section || !_backups.count || _busy || _store.sealed) return nil;
+    if (!path.section || !_backups.count || _busy || _store.sealed || ![self activeOwnerAtEpoch:_presentationEpoch allowing:nil]) return nil;
     NSString *identifier = _backups[(NSUInteger)path.row][@"identifier"];
     UIContextualAction *remove = [UIContextualAction contextualActionWithStyle:UIContextualActionStyleDestructive title:@"Delete backup" handler:^(UIContextualAction *action, UIView *view, void (^done)(BOOL)) {
         (void)action; (void)view; done(NO);
