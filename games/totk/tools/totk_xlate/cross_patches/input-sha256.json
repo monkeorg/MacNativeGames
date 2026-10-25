@@ -126,6 +126,18 @@
       },
       "patch": "0010-query-scalar-loop-checkpoints.patch",
       "sha256": "39da6080f0b93407b56972688e81260569912afa01bc4ad3b5e4d769d68c883f"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "b7b61608459a70ef3c9029a71f1076732052220d3fdbb825e6f9dc7caf08b64e",
+        "spirv_glsl.cpp": "fa0e2f3878b29783502bf706af86ee5cdf2a8973687264bd8208283b34c8dd4e"
+      },
+      "before": {
+        "spirv_cross.cpp": "677ea6e728b334a2e7438dab676624a552c3cb76a76d7a90f425cdd964bad5c3",
+        "spirv_glsl.cpp": "c11756d09746c544fbb397698bb5840c94226a5d373caaac729f0193aed1fb2c"
+      },
+      "patch": "0011-expression-dependency-depth.patch",
+      "sha256": "40ea9f6c5268654fa43f15b302134978108aa9ced7e4ae831ff6ee2fdd74af28"
     }
   ],
   "schemaVersion": 1

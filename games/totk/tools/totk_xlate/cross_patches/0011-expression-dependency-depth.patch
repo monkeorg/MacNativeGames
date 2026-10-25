@@ -1,0 +1,28 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -418,6 +418,7 @@
+ 
+ void Compiler::register_global_read_dependencies(const SPIRFunction &func, uint32_t id)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	for (auto block : func.blocks)
+ 		register_global_read_dependencies(get<SPIRBlock>(block), id);
+ }
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -12312,6 +12312,7 @@
+ 
+ void CompilerGLSL::track_expression_read(uint32_t id)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	switch (ir.ids[id].get_type())
+ 	{
+ 	case TypeExpression:
+@@ -12776,6 +12777,7 @@
+ 
+ void CompilerGLSL::disallow_forwarding_in_expression_chain(const SPIRExpression &expr)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	// Allow trivially forwarded expressions like OpLoad or trivial shuffles,
+ 	// these will be marked as having suppressed usage tracking.
+ 	// Our only concern is to make sure arithmetic operations are done in similar ways.

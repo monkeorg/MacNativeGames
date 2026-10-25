@@ -369,7 +369,10 @@
     "combined-image sampler dependency hierarchy",
     "function purity and control-dependence call-graph queries",
     "parser structural type equivalence",
-    "compiler type-alias name resolution"
+    "compiler type-alias name resolution",
+    "implied expression-read traversal",
+    "invariant expression-dependency traversal",
+    "global-read function-dependency traversal"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
