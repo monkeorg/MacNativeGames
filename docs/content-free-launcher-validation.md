@@ -245,3 +245,13 @@ When useful bounded checks and the harness source are complete, the remaining
 critical task is local Apple signing/external-module execution evidence. If that
 path fails or remains unavailable, record the precise blocker and preserve a
 reviewable checkpoint; do not weaken the product gate or claim completion.
+
+
+## Subsequent Canopy construction and Apple evidence
+
+The user requested continued construction after this historical checkpoint.
+See [Canopy inspection build](canopy-inspection.md) for the current native CLI,
+UIKit metadata library, completed Foundation checks, unsigned iPhoneOS build and
+compiled original-source permission probe. The newer public macOS CI evidence
+supersedes the earlier blanket Apple-toolchain-unavailable status for those
+specific targets. It does not establish physical execution or gameplay.

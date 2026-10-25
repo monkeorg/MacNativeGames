@@ -1,7 +1,7 @@
 # Canopy iPhoneOS inspection host
 
 This is a separate original host target for iPhone and iPad, with iOS 16.0 as its
-minimum deployment version. It links UIKit, Foundation and UniformTypeIdentifiers
+minimum deployment version. It links UIKit, Foundation, CoreFoundation and UniformTypeIdentifiers
 and the portable Canopy container/file inspection code. It does not link the TOTK
 runtime or package games, shaders, firmware fonts, keys, saves or private caches.
 The working TOTK target and bundle identity are unchanged.
@@ -56,7 +56,28 @@ Nintendo-derived bytes, validate signing or establish gameplay compatibility.
 The builder produces a `.app` directory, not an IPA, and performs no upload.
 
 Portable tests exercise planning and file-handling with a synthetic fake command
-runner. Those tests do not establish Apple compilation. Actual Xcode compilation,
-signing review and physical-device acceptance must be reported separately; they
-are unavailable in the current cloud environment. This target is an inspection
+runner. Those tests do not establish Apple compilation. The iPhoneOS host now compiles in the public macOS CI runner; see the
+[verified build record](../../docs/canopy-inspection.md). Signing review and
+physical-device acceptance remain separate and unperformed. This target is an inspection
 app and does not provide game execution, decryption or installation.
+
+## Local signing and physical launch
+
+The downloadable build is unsigned. On the Mac, select a dedicated profile and
+matching entitlements for `org.monkeorg.canopy`; keep them outside the repository.
+Set `CANOPY_APP` to the extracted `Canopy.app` path, and set the other values from
+your private local provisioning configuration. Never point these commands at the
+working TOTK app. These are next-step instructions, not performed checks:
+
+```sh
+cp "$CANOPY_PROFILE" "$CANOPY_APP/embedded.mobileprovision"
+codesign --force --sign "$CANOPY_SIGNING_IDENTITY" \
+  --entitlements "$CANOPY_ENTITLEMENTS" "$CANOPY_APP"
+codesign --verify --strict --verbose=2 "$CANOPY_APP"
+xcrun devicectl device install app --device "$CANOPY_DEVICE" "$CANOPY_APP"
+xcrun devicectl device process launch --device "$CANOPY_DEVICE" org.monkeorg.canopy
+```
+
+If the chosen profile uses a different `.canopy` bundle ID, rebuild with that ID
+and use it in the launch command. A successful local signature/install still
+requires the [physical acceptance sequence](../../docs/canopy-inspection.md).
