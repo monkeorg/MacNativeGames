@@ -159,7 +159,7 @@ def commands(source_root, work, sdk):
                    '-isysroot', sdk, *objects, '-framework', 'UIKit', '-framework', 'Foundation',
                    '-framework', 'UniformTypeIdentifiers', '-framework', 'CoreFoundation',
                    '-framework', 'GameController',
-                   '-framework', 'Metal', '-framework', 'QuartzCore',
+                   '-framework', 'Metal', '-framework', 'QuartzCore', '-framework', 'CoreGraphics',
                    '-Wl,-no_adhoc_codesign',
                    '-o', str(work / 'Canopy.app/Canopy')])
     return result
