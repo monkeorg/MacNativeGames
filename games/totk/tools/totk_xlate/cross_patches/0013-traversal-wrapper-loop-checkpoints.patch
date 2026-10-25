@@ -1,0 +1,84 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -359,8 +359,11 @@
+ {
+ 	canopy_cross_budget::depth_scope canopy_depth;
+ 	for (auto block : func.blocks)
++	{
++		canopy_cross_budget::step();
+ 		if (!block_is_pure(get<SPIRBlock>(block)))
+ 			return false;
++	}
+ 
+ 	return true;
+ }
+@@ -369,8 +372,11 @@
+ {
+ 	canopy_cross_budget::depth_scope canopy_depth;
+ 	for (auto block : func.blocks)
++	{
++		canopy_cross_budget::step();
+ 		if (block_is_control_dependent(get<SPIRBlock>(block)))
+ 			return true;
++	}
+ 
+ 	return false;
+ }
+@@ -420,7 +426,10 @@
+ {
+ 	canopy_cross_budget::depth_scope canopy_depth;
+ 	for (auto block : func.blocks)
++	{
++		canopy_cross_budget::step();
+ 		register_global_read_dependencies(get<SPIRBlock>(block), id);
++	}
+ }
+ 
+ SPIRVariable *Compiler::maybe_get_backing_variable(uint32_t chain)
+@@ -2125,8 +2134,11 @@
+ {
+ 	canopy_cross_budget::depth_scope canopy_depth;
+ 	for (auto block : func.blocks)
++	{
++		canopy_cross_budget::step();
+ 		if (!traverse_all_reachable_opcodes(get<SPIRBlock>(block), handler))
+ 			return false;
++	}
+ 
+ 	return true;
+ }
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -12319,7 +12319,10 @@
+ 	{
+ 		auto &e = get<SPIRExpression>(id);
+ 		for (auto implied_read : e.implied_read_expressions)
++		{
++			canopy_cross_budget::step();
+ 			track_expression_read(implied_read);
++		}
+ 		break;
+ 	}
+ 
+@@ -12327,7 +12330,10 @@
+ 	{
+ 		auto &e = get<SPIRAccessChain>(id);
+ 		for (auto implied_read : e.implied_read_expressions)
++		{
++			canopy_cross_budget::step();
+ 			track_expression_read(implied_read);
++		}
+ 		break;
+ 	}
+ 
+@@ -12788,7 +12794,10 @@
+ 		forced_invariant_temporaries.insert(expr.self);
+ 
+ 		for (auto &dependent : expr.invariance_dependencies)
++		{
++			canopy_cross_budget::step();
+ 			disallow_forwarding_in_expression_chain(get<SPIRExpression>(dependent));
++		}
+ 	}
+ }
+ 
