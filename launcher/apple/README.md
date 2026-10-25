@@ -60,3 +60,24 @@ runner. Those tests do not establish Apple compilation. The iPhoneOS host now co
 [verified build record](../../docs/canopy-inspection.md). Signing review and
 physical-device acceptance remain separate and unperformed. This target is an inspection
 app and does not provide game execution, decryption or installation.
+
+## Local signing and physical launch
+
+The downloadable build is unsigned. On the Mac, select a dedicated profile and
+matching entitlements for `org.monkeorg.canopy`; keep them outside the repository.
+Set `CANOPY_APP` to the extracted `Canopy.app` path, and set the other values from
+your private local provisioning configuration. Never point these commands at the
+working TOTK app. These are next-step instructions, not performed checks:
+
+```sh
+cp "$CANOPY_PROFILE" "$CANOPY_APP/embedded.mobileprovision"
+codesign --force --sign "$CANOPY_SIGNING_IDENTITY" \
+  --entitlements "$CANOPY_ENTITLEMENTS" "$CANOPY_APP"
+codesign --verify --strict --verbose=2 "$CANOPY_APP"
+xcrun devicectl device install app --device "$CANOPY_DEVICE" "$CANOPY_APP"
+xcrun devicectl device process launch --device "$CANOPY_DEVICE" org.monkeorg.canopy
+```
+
+If the chosen profile uses a different `.canopy` bundle ID, rebuild with that ID
+and use it in the launch command. A successful local signature/install still
+requires the [physical acceptance sequence](../../docs/canopy-inspection.md).
