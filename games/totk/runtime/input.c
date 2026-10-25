@@ -147,6 +147,9 @@ static void *input_script(void *arg) {
     return NULL;
 }
 __attribute__((constructor)) static void input_script_start(void) {
+#if defined(CANOPY_HOST_RUNTIME)
+    return; /* Dedicated Canopy input is explicitly session-owned. */
+#endif
     const char *e = getenv("TOTK_INPUT_SCRIPT"); if (!e) return;
     pthread_t t; pthread_create(&t, NULL, input_script, (void *)e); pthread_detach(t);
 }
@@ -233,6 +236,9 @@ static void *input_file(void *arg) {
     fclose(f); return NULL;
 }
 __attribute__((constructor)) static void input_file_start(void) {
+#if defined(CANOPY_HOST_RUNTIME)
+    return; /* Dedicated Canopy input is explicitly session-owned. */
+#endif
     const char *e = getenv("TOTK_INPUT_FILE"); if (!e || !*e) return;
     pthread_t t; if (pthread_create(&t, NULL, input_file, (void *)e)) runtime_fail("diagnostic input thread"); pthread_detach(t);
 }

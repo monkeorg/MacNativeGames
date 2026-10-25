@@ -76,43 +76,127 @@ returning, then unloads the module and releases the generation lease. The caller
 seals saves only after close returns and can then open a new session. The ABI
 cannot safely unload a module that violates its thread teardown contract.
 
-## Existing TOTK host: concrete remaining integration
+## Existing TOTK host: opt-in private integration
 
-The existing TOTK runtime is deliberately preserved. This generic module loader
-does not make that executable into a reentrant shared library or establish any
-commercial game's compatibility. Inspection of the real source identifies these
-separate hooks that must be refactored and privately validated before a TOTK
-module can implement ABI v1:
+`CanopyRuntime.h/.m` now owns a real, separate adapter to the existing compiled
+TOTK host. `games/totk/runtime/canopy_host.h/.m` supplies the original native host
+control descriptor only when explicitly built with `CANOPY_HOST_RUNTIME` into a
+private title host. The public launcher has a weak reference, no descriptor or
+private payload, and therefore no approved executable profile. Descriptor
+exposure additionally requires an explicit `CANOPY_HOST_TITLE_ID`, reviewed
+`CANOPY_HOST_ORIGINAL_MAIN_SHA256` and `CANOPY_HOST_SHADER_SEED_MANIFEST_SHA256`;
+their defaults expose no profile. The latter
+is the original plaintext ExeFS `main` NSO hash, **not** an encrypted-container
+SHA, rewritten image SHA or invented title-version approval. The host's existing
+`game_version.h`, generated `runtime_tables.h`, embedded-code checks and
+`romfs_config.h` pins remain unchanged.
 
-- `games/totk/runtime/loader.c`: `main(argc,argv)` receives module root in `argv[1]`
-  and `"boot"` in `argv[2]`, maps/relocates ahead-of-time-rewritten modules, applies
-  checked patches and eventually calls `boot` through `runtime_front_run`.
-  `runtime_fail` currently exits the process. A session wrapper needs recoverable
-  startup errors and ownership/reset of module mappings, TLS and signal handlers.
-  It must preserve existing original-input/version pins and checked patches.
-- `games/totk/ios/Sources/main.m`: `run_host` invokes `totk_host_main` on a host
-  thread and supplies `TOTK_ROMFS` and related resource paths through environment
-  variables. Per-session startup must bind verified prepared paths explicitly
-  rather than mutate global environment across simultaneous sessions.
-- `games/totk/runtime/frontend_ios.m`: `runtime_ios_attach_layer(layer,host)` is
-  the real Metal surface attachment; `runtime_ios_set_fps_limit` and the matching
-  supported query are real FPS hooks. Its `runtime_front_request_close` only
-  logs an iOS close request. The Mac implementation in `frontend.m` closes an
-  NSWindow. Neither proves guest thread cancellation/join or safe relaunch.
-- `games/totk/runtime/input.c`: `runtime_input_clear` clears keyboard/gamepad
-  state. The current `pad_states` routes only `pad_id()` and is not an eight-player
-  adapter. Diagnostic input constructors detach threads. These need explicit
-  session ownership, cancellation/join, and per-player guest routing before
-  `destroy` or multiplayer claims can be supported.
-- `games/totk/runtime/fs_host.c`: `M_SAVE` mounts use `save_root`; session/profile
-  identity must bind that mount and commit/drain writers before save sealing.
-  Native service and NVN/Metal ownership also require reset/join evidence.
+The real call chain is library selection → `CanopySessionController` save seal →
+`CanopyRuntime` background preflight → `mng_store_pin` (verified generation and
+kernel lease) → original-main/RomFS compiled-pin comparison →
+`mng_romfs_runtime_index_fd` → exact compiled runtime-index-pin comparison →
+main-thread native layer/settings attachment → owned worker → `totk_host_main`
+→ the existing loader's map/relocate/checked-patch/seal/`boot` path. This is a
+separate route from the unloadable shared-module ABI above: the existing TOTK
+host cannot honestly implement that ABI's reusable `destroy` contract yet.
 
-Calling `totk_host_main` from `create` and providing a no-op `destroy` would be
-unsafe and is intentionally not implemented. These are exact remaining runtime
-source changes, not evidence that a dummy backend completes D8. They require
-explicit shared-runtime ownership approval plus private pinned input validation;
-there are no invented game addresses, title profiles or checked words here.
+Private runtime assets resolve from the compiled descriptor's approved resource
+location (normally the private signed bundle's GameData). Imported JSON cannot
+select the host or approve an executable. Prepared ExeFS and `romfs.bin` stay in
+the verified immutable generation. Shader preparation calls the actual `CanopyShaderCache` worker API with the
+compiled whole seed-manifest SHA, translation chain, approved RomFS SHA and actual
+selected Metal device/OS identity. The extended manifest authenticates
+`shader_map.tsv` separately from the legacy shader-file table, so native shader
+map reads do not escape verification. Immutable verified seed and mutable runtime
+cache URLs bind separate `shader_seed`/`shader_cache` native-start fields. The
+runtime retains the shared shader-cache lease for the full single-use process;
+no save or general cache directory is repurposed as the shader cache. An exact
+host attestation is established only from that verified lease-backed path.
+Under the explicit flag, the existing shader consumer then reads it in place
+without rehashing/copying every shader again. Its result reports `verifiedPrivate`
+and `readInPlace`; `sealed` remains false for this Documents cache. Unattested
+seeds follow normal hash/import behavior, and environment overrides do not turn
+Documents data into a signed bundle. Missing private seed/tool identity refuses
+startup; extraction never approves it. Private producers must add and authenticate
+`shader_map_sha256` before a new manifest pin can be compiled; there is no fallback
+to an old unverified map.
+
+Native index production writes only a fresh
+private staging file under `cache/totk-runtime-index-v1/<expected-index-sha>/`,
+checks the produced SHA against the compiled expectation, and atomically links
+`runtime-index.bin` without replacing an existing published file. A valid cache
+is rehashed and reused; a corrupt or linked cache refuses startup and is retained
+for explicit recovery. Recipe/hash identity survives unrelated app updates.
+
+The adapter binds actual existing consumers:
+
+- `TOTK_ROMFS` names the verified derived index directory; `TOTK_ROMFS_DATA`
+  names the pinned generation containing the original image. Runtime image/index
+  hashes are still checked by `runtime/romfs.c`.
+- `TOTK_PROFILE_DIR` names `CanopySaveStore.accountIdentityDirectoryURL`;
+  the guarded `CANOPY_SAVE_DIR` override in `fs_host.c` binds the actual writable
+  save mount to `activeDirectoryURL`. The original UID-derived standalone layout
+  is unchanged outside the compile flag. New Canopy save diagnostics omit paths.
+- Resource, shader/cache, proof, game-slot and language paths bind the existing
+  host consumers. `runtime_ios_attach_layer` receives the actual CAMetalLayer and
+  UIView; the native host owns its existing render/display loop.
+- FPS and TAA changes call the existing supported queries, setters and effective
+  getters. HUD changes use `fps_overlay_hud_mode`/`fps_overlay_toggle_hints`.
+  Language binds `TOTK_LANG` before service initialization and later changes
+  report `restartRequired`. Settings without a real hook report `unsupported`;
+  persisted desire is not reported as successful runtime application.
+- Capture clears actual keyboard/gamepad/touch state, releases native mouse
+  input and routes through the same iOS graphics/focus path used on backgrounding.
+  The Canopy router must also clear its own input state. Overlay focus remains
+  captured across OS foreground notifications until the host explicitly restores
+  input; OS focus and host focus are combined. Native guest input reads
+  only the routed Canopy snapshot under the compile flag, avoiding a second OR
+  of legacy physical mappings. Exactly one guest pad is supported. Additional
+  players refuse; this is not Mario Kart multiplayer support.
+- The two diagnostic input constructors return immediately under the explicit
+  flag. The legacy physical-controller startup also returns before installing
+  observers or replacing any GameController valueChangedHandler; CanopyControllers
+  is the sole physical event owner. Existing standalone behavior remains unchanged.
+  Portable button semantics are explicitly converted to the existing Npad bit
+  layout (the shoulder, stick, menu and directional bits differ). Home/Capture
+  are refused. Routed physical input and native focus suppression remain active.
+- Before worker creation, attachment samples actual OS activity and starts with
+  host input/GPU focus captured. The UI restores it only for an active key window
+  with the overlay closed, so background preflight completion cannot briefly
+  submit GPU work. Native graphics gating and focus-message queues use initialized
+  static locks/atomics and are safe at that preboot point.
+- The worker preserves the existing iOS host's 64 MiB stack. Audio uses the real
+  AVAudioSession playback/activation path and calls runtime_audio_output_restart
+  after interruptions/media-service resets. Audio recovery never restores input
+  focus behind an open overlay. Relative native shader requests stay inside the
+  identity-scoped mutable cache. The Canopy flag excludes the legacy unpinned
+  fill-pack importer; verified seed updates use the native cache contract instead.
+
+The Objective-C adapter validates and hashes on a background queue; native UI
+attachment and completion run on main. Full stat identity/size/link/mtime/ctime
+checks bind each hash, with interrupted reads retried. `cancelPreparation` requests
+cancellation before native entry; the store, hash loops and native index parser
+poll its atomic flag. Completion remains the authority for releasing the seal.
+The final main-thread entry decision checks cancellation again. Preflight failures return
+without invoking native code, close the generation lease and allow the caller to
+release the save seal. `nativeEntryInvoked` becomes true **before** entering the
+native start callback. After that point, the runtime retains its process owner
+and lease even on startup failure. The caller must retain its save seal.
+
+This initial existing-host route is explicitly **single use per process**.
+`runtime_fail` can still exit the process, the SDK entry normally never returns,
+and there is no complete stop/join/reset implementation. `close` and CPU `pause`
+therefore refuse. Focus deactivation stops GPU submission and changes native
+focus; it does not promise suspension of guest CPUs. Runtime state `active`
+means the native host worker started, not that a first game frame was verified.
+No tick, fixture counter or display-link callback is exposed as gameplay FPS.
+
+Safe thread teardown/relaunch, recoverable post-entry loader failures, complete
+service/NVN ownership reset are remaining source work. The input guards establish a single controller owner but do
+not pretend that process-global host resources became a reusable session. These
+are development gaps, not hardware or signing blockers. Private original inputs,
+exact private generated pins and physical graphics/gameplay/save acceptance are
+separate validation debt; no commercial title is accepted by these fixture tests.
 
 ## Platform and verification status
 
@@ -128,6 +212,25 @@ loader, then exercises native create, settings, distinct simultaneous players,
 tick, pause cancellation, profile save writes, destroy and lease release. It
 also rejects bad hashes, missing entry, ABI/title-version mismatch, traversal,
 symlinks, unapproved modules, stale input and duplicate physical assignment.
-The fixture contains no game code. Linux execution has passed; Apple CI and real
-Mac/iPad graphics/gameplay acceptance remain separate evidence. No fixture
+The fixture contains no game code. Linux shared-module execution has passed. `test_canopy_runtime.py` additionally
+executes the actual guarded `fs_host.c` mount/create path on synthetic private
+folders, checks active-save/identity isolation and preserves the unflagged layout.
+Its macOS Foundation consumer exercises real preflight/index/cache/settings/input
+calls with an original-source native provider, including wrong-pin refusal and
+post-entry failure lifetime. It also compiles all five guarded existing-host
+sources for iPhoneOS, both flagged/unflagged where applicable. Those Apple checks
+visibly skip on Linux until Apple CI runs; they are not device acceptance. A Mac
+without an actual Metal device skips only device-dependent consumer scenarios;
+independent wrong-pin/private-cache/cancellation and iPhoneOS compilation checks
+still run, with no fake GPU fallback. `test_canopy_shader_inplace.py` separately
+executes the actual guarded seed consumer with original fixtures: real SHA calls
+are counted, private read-in-place performs only the metadata fingerprint, no
+shader payload is copied, and the result never claims the private cache is signed.
+Unattested and unflagged imports remain exercised. The actual host/device helper
+fixture tests nil/no-fallback without a GPU and uses actual Metal objects when
+available. Renderer source checks run with and without the explicit flag. Full
+Metal4 renderer/frontend checks require iPhoneOS SDK26 and explicitly report a
+skip when only an older SDK is selected; other available source checks continue.
+No SDK version is fabricated or downloaded by these tests. Real
+Mac/iPad graphics/gameplay acceptance remains separate evidence. No fixture
 counter is reported as gameplay FPS or commercial compatibility.

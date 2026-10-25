@@ -122,15 +122,31 @@ uint64_t front_game_res(int docked){
 #endif
 }
 static _Atomic int appActive=1;
+#if defined(CANOPY_HOST_RUNTIME)
+static _Atomic int canopySystemActive=1, canopyHostActive=1;
+#endif
 int runtime_front_focus(void){return atomic_load(&appActive);}
 void mtl_app_active(int active);
 /* Not active (background, Control Center, lock): stop GPU submission (iOS rejects background GPU work) and tell the game focus changed, like the Mac window. */
 static void app_active_changed(int active){
+#if defined(CANOPY_HOST_RUNTIME)
+ atomic_store(&canopySystemActive,!!active);
+ active=active&&atomic_load(&canopyHostActive);
+#endif
  if(atomic_exchange(&appActive,active)==active)return;
  if(!active)runtime_input_clear();
  mtl_app_active(active);runtime_oe_push_message(15);
  fprintf(stderr,"[totk] app %s\n",active?"became active":"resigned active: GPU submission paused");
 }
+#if defined(CANOPY_HOST_RUNTIME)
+/* Opt-in private host: overlay focus follows the actual OS graphics/focus path.
+ * This deactivates GPU submission; guest CPU suspension is not promised. */
+void runtime_ios_set_host_active(int active) {
+ NSCAssert(NSThread.isMainThread,@"Host focus changes on main thread");
+ atomic_store(&canopyHostActive,!!active);
+ app_active_changed(atomic_load(&canopySystemActive));
+}
+#endif
 void runtime_front_request_close(void){fprintf(stderr,"[totk] close requested; iOS apps are closed by the user\n");}
 void runtime_front_text_test(const char *op,const char *text){(void)text;fprintf(stderr,"[totk] text entry test \"%s\" ignored: iOS has no text entry bar (the keyboard request is cancelled)\n",op?op:"");}
 
@@ -145,7 +161,21 @@ static TOTKVsync *vsyncTarget;
 void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  rateHost=host;screen_maximum();
  bootStartNS=runtime_now_ns();
- metalLayer=layer;metalLayer.device=MTLCreateSystemDefaultDevice();metalLayer.pixelFormat=MTLPixelFormatBGRA8Unorm;metalLayer.framebufferOnly=NO;
+ metalLayer=layer;
+#if defined(CANOPY_HOST_RUNTIME)
+ // Preserve the exact selected device used to namespace verified shader caches.
+ if(!metalLayer.device)metalLayer.device=MTLCreateSystemDefaultDevice();
+#else
+ metalLayer.device=MTLCreateSystemDefaultDevice();
+#endif
+ metalLayer.pixelFormat=MTLPixelFormatBGRA8Unorm;metalLayer.framebufferOnly=NO;
+#if defined(CANOPY_HOST_RUNTIME)
+ // Preflight may have finished after an OS resign notification. Read current
+ // state and start captured before the worker can submit any GPU work. The UI
+ // restores host focus only after an active key window and closed overlay.
+ atomic_store(&canopyHostActive,0);
+ app_active_changed(UIApplication.sharedApplication.applicationState==UIApplicationStateActive);
+#endif
  UIScreen *screen=active_screen();
  CGFloat s=screen.nativeScale>0?screen.nativeScale:host.traitCollection.displayScale;
  if(s<=0)s=1;

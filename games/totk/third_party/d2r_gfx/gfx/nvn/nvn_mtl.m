@@ -1,6 +1,7 @@
 // NVN 空设备的 Metal 执行层，见 nvn_mtl.h。
 // Metal execution layer of the NVN null device, see nvn_mtl.h.
 #import <Metal/Metal.h>
+#include "../../../../runtime/canopy_metal_device.h"
 #include "totk_ui_lang.h"
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CAMetalDisplayLink.h>
@@ -525,7 +526,7 @@ void mtl_init(void) {
     const char *latency = getenv("DM_PRESENT_LATENCY");
     if (latency && atoi(latency) > 0) g_present_latency = atoi(latency);
     g_res_check_on = getenv("DM_RES_CHECK") != NULL;
-    g_dev = MTLCreateSystemDefaultDevice();
+    g_dev = canopy_renderer_metal_device();
     if (!g_dev) MDIE("没有 Metal 设备");
     if (!g_dev.hasUnifiedMemory) MDIE("需要统一内存设备（零拷贝内存池）");
     g_q = [g_dev newCommandQueue];
