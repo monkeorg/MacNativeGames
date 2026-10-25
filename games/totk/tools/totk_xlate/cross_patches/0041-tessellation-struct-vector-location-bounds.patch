@@ -1,0 +1,48 @@
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -4193,7 +4193,9 @@
+ // The location parameter is modified recursively.
+ void CompilerMSL::ensure_struct_members_valid_vecsizes(SPIRType &struct_type, uint32_t &location)
+ {
+-	assert(struct_type.basetype == SPIRType::Struct);
++	canopy_cross_budget::depth_scope canopy_depth;
++	if (struct_type.basetype != SPIRType::Struct)
++		SPIRV_CROSS_THROW("Vector-size adjustment requires a struct type.");
+ 
+ 	auto mbr_cnt = struct_type.member_types.size();
+ 	for (size_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+@@ -4212,18 +4214,31 @@
+ 				// Set a new member type into the struct type, and all its parent types.
+ 				auto new_mbr_type_id = build_extended_vector_type(mbr_type_id, p_va->second.vecsize);
+ 				for (auto *p_type = &struct_type; p_type; p_type = maybe_get<SPIRType>(p_type->parent_type))
++				{
++					canopy_cross_budget::step();
++					if (mbr_idx >= p_type->member_types.size())
++						SPIRV_CROSS_THROW("Parent type lacks the adjusted struct member.");
+ 					p_type->member_types[mbr_idx] = new_mbr_type_id;
++				}
+ 			}
+ 
+ 			// Calc location of next member
+ 			uint32_t loc_cnt = mbr_type.columns;
+ 			auto dim_cnt = mbr_type.array.size();
++			if (dim_cnt > (std::numeric_limits<uint32_t>::max)())
++				SPIRV_CROSS_THROW("Struct member array dimension count exceeds the index range.");
+ 			for (uint32_t i = 0; i < dim_cnt; i++)
+ 			{
+ 				canopy_cross_budget::step();
+-				loc_cnt *= to_array_size_literal(mbr_type, i);
+-			}
+-
++				uint32_t factor = to_array_size_literal(mbr_type, i);
++				if (factor != 0 && loc_cnt > (std::numeric_limits<uint32_t>::max)() / factor)
++					SPIRV_CROSS_THROW("Struct member location count overflows.");
++				loc_cnt *= factor;
++			}
++
++			if (loc_cnt != 0 &&
++			    (location == k_unknown_location || loc_cnt >= k_unknown_location - location))
++				SPIRV_CROSS_THROW("Struct member location advance reaches the unknown-location sentinel.");
+ 			location += loc_cnt;
+ 		}
+ 	}
