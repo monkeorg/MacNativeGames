@@ -53,6 +53,25 @@ enum mng_prepare_status mng_store_verify(struct mng_store *store, uint64_t title
  * current is retained as previous. No generations are implicitly deleted. */
 enum mng_prepare_status mng_store_select(struct mng_store *store,
     uint64_t title_id, const char *generation_id);
+/* Facts from the same complete receipt/assets/generation/manifest verification
+ * that acquires the genuine shared generation lease. Every call still rehashes
+ * every asset; this is not a trust cache. Compare present identities with the
+ * compiled host pins before use; no execution or compatibility is approved.
+ * V5 add-ons have main.present0; zero-byte present assets remain distinguishable.
+ * Both outputs are unchanged on failure and assigned only after lease success.
+ * All calls retain the existing caller-serialized store-lock/lifetime contract. */
+struct mng_store_asset_identity {
+    uint64_t size;
+    unsigned char sha256[32];
+    int present;
+};
+struct mng_store_verified_assets {
+    struct mng_prepare_result preparation;
+    struct mng_store_asset_identity main,romfs;
+};
+enum mng_prepare_status mng_store_pin_verified_assets(struct mng_store *store,
+    uint64_t title_id, const char *generation_id,
+    struct mng_store_verified_assets *verified, int *lease_fd);
 /* Returns a caller-owned shared lease descriptor; close it to unpin. Kernel
  * releases the lease on process exit. Keep it open for a private session. */
 enum mng_prepare_status mng_store_pin(struct mng_store *store,
