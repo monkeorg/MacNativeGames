@@ -27,6 +27,12 @@ typedef NS_ENUM(NSInteger, CanopyDiagnosticsError) {
 + (CanopyDiagnosticsPhase)phaseForRuntimeState:(nullable NSString *)state;
 /// Reads only recognized domains/numeric codes. Never copies error text/info.
 + (CanopyDiagnosticsError)errorForError:(nullable NSError *)error;
+/// Exact native callback units; unknown phases remain unspecified.
++ (NSString *)progressUnitForNativePhase:(nullable NSString *)phase;
+/// Closed logical I/O/publication projection from one actual job completion.
+/// Does not retain the supplied NSError/result or sample process state.
++ (NSDictionary<NSString *,id> *)preparationMetricsForResult:(nullable NSDictionary *)result
+    error:(nullable NSError *)error;
 /// Returns NO without sampling/retaining arguments when collection is off.
 /// Preparation may use Catalog's nested integrity or Job's flat flags. Optional
 /// phaseDone/phaseTotal are counts, with phaseUnit bytes/blocks/records; omitted
