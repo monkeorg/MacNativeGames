@@ -3,7 +3,7 @@
 #define CANOPY_TOTK_HOST_H
 #include <stdint.h>
 #include "mng_display.h"
-#define CANOPY_TOTK_HOST_ABI 2u
+#define CANOPY_TOTK_HOST_ABI 3u
 struct canopy_totk_start {
     const char *modules, *resources, *index_directory, *romfs_data, *active_saves, *identity, *cache;
     const char *shader_seed, *shader_cache;
@@ -20,6 +20,29 @@ struct canopy_totk_display {
      * are verified by the native RomFS overlay consumer before use. */
     const char *heap_manifest_sha256,*layout_manifest_sha256;
     int (*read_state)(struct mng_display_state *);
+};
+#define CANOPY_TOTK_LIFECYCLE_ABI 1u
+enum canopy_totk_main_phase {
+    CANOPY_TOTK_MAIN_NOT_STARTED=0,
+    CANOPY_TOTK_MAIN_RUNNING=1,
+    CANOPY_TOTK_MAIN_CLEANUP_OBSERVED=2,
+    CANOPY_TOTK_MAIN_JOINED=3,
+    CANOPY_TOTK_MAIN_OBSERVATION_FAILED=4
+};
+/* Observation only: even MAIN_JOINED + zero children is not whole-runtime
+ * teardown. The process-owned watcher, guest reaper, GPU/audio/IPC helpers,
+ * dispatch jobs, module mappings and all session protections remain owned.
+ * main_return_code is meaningful only when main_returned==1; otherwise zero.
+ * main_joined becomes true only after pthread_join, including TLS destructors.
+ */
+struct canopy_totk_lifecycle_state {
+    uint32_t abi,size,phase,main_returned,main_joined,join_error;
+    uint32_t owned_guest_children,joining_guest_children,guest_join_failures,guest_admission_closed;
+    int32_t main_return_code;
+};
+struct canopy_totk_lifecycle {
+    uint32_t abi_version,size;
+    int (*read_state)(struct canopy_totk_lifecycle_state *);
 };
 struct canopy_totk_host {
     uint32_t abi_version, size;
@@ -48,6 +71,7 @@ struct canopy_totk_host {
     /* Native Npad button layout; caller converts the portable router schema. */
     void (*input)(uint64_t,int32_t,int32_t,int32_t,int32_t,int);
     struct canopy_totk_display display;
+    struct canopy_totk_lifecycle lifecycle;
 };
 /* SINGLE USE, process-owned. No safe stop/join/relaunch exists yet. Focus
  * deactivation pauses GPU submission; it does not promise CPU suspension. */
@@ -62,5 +86,9 @@ void canopy_host_game_patches_validated(void);
 /* Main-thread query; caller initializes state ABI/size. NOT_CONFIGURED does
  * not become pending/validated merely because a callback ran. */
 int canopy_host_read_display_state(struct mng_display_state *);
+/* Main-thread strict ABI/size query; output unchanged on error. Available in
+ * the actual iPhoneOS worker component (and its native original-source probe).
+ * This never grants stop, unseal, destruction or relaunch capability. */
+int canopy_host_read_lifecycle_state(struct canopy_totk_lifecycle_state *);
 #endif
 #endif

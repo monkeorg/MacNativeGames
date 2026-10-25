@@ -8,6 +8,8 @@
 #include "../games/totk/runtime/canopy_host.h"
 #include <stdio.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <sys/file.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +25,15 @@ static uint32_t displayFlags;
 static struct mng_display_config selectedDisplay;
 static uint32_t displayValidation=MNG_DISPLAY_NOT_CONFIGURED;
 static CGRect gameBounds;
-static BOOL malformedDisplayState;
+static BOOL malformedDisplayState,malformedLifecycle;
+static struct canopy_totk_lifecycle_state mainLifecycle;
+static NSString *shaderLeasePath;
+static void LeaseHeld(NSString *path) {
+    int fd=open(path.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    Check(fd>=0,"retained lease file exists");
+    int locked=flock(fd,LOCK_EX|LOCK_NB),saved=errno;close(fd);
+    Check(locked<0 && (saved==EWOULDBLOCK || saved==EAGAIN),"native attempt retains actual shared lease");
+}
 static unsigned starts,fps=60,clears,inputs;
 static uint64_t expectedButtons=1;
 static int32_t expectedLX=16384;
@@ -55,6 +65,14 @@ static int start(const struct canopy_totk_start *s) {
     struct mng_display_profile profile={MNG_DISPLAY_ABI,sizeof(profile),displayFlags};
     Check(!mng_display_check(&profile,&s->display,gameBounds.size.width,gameBounds.size.height),"actual native display config binding");
     selectedDisplay=s->display;displayValidation=MNG_DISPLAY_PENDING;
+    shaderLeasePath=[[@(s->shader_cache) stringByDeletingLastPathComponent] stringByAppendingPathComponent:@".lease"];
+    mainLifecycle=(struct canopy_totk_lifecycle_state){CANOPY_TOTK_LIFECYCLE_ABI,sizeof(mainLifecycle),CANOPY_TOTK_MAIN_RUNNING,0,0,0,2,0,0,0,0};
+    if(!strcmp(mode,"lifecycle-start-ended")) {
+        mainLifecycle.phase=CANOPY_TOTK_MAIN_CLEANUP_OBSERVED;mainLifecycle.main_returned=1;
+        mainLifecycle.main_return_code=17;mainLifecycle.guest_admission_closed=1;
+    }
+    if(!strcmp(mode,"lifecycle-start-invalid"))malformedLifecycle=YES;
+    if(!strcmp(mode,"lifecycle-not-started"))mainLifecycle.phase=CANOPY_TOTK_MAIN_NOT_STARTED;
     fps=s->fps_limit;taa=s->taa_enabled;hud=s->hud_mode;focus=0;starts++;
     return !strcmp(mode,"entry-failure") ? -1:0;
 }
@@ -77,6 +95,13 @@ static int read_display(struct mng_display_state *state) {
     *state=(struct mng_display_state){MNG_DISPLAY_ABI,sizeof(*state),displayValidation,selectedDisplay};
     if(malformedDisplayState || !strcmp(mode,"display-bad-start-state"))state->size--;return 0;
 }
+/* Contract records exercise the consumer boundary. Actual pthread cleanup,
+ * TLS completion, joins and owned child accounting have separate host probes. */
+static int read_lifecycle(struct canopy_totk_lifecycle_state *state) {
+    Check(NSThread.isMainThread,"native lifecycle query thread");
+    if(!state || state->abi!=CANOPY_TOTK_LIFECYCLE_ABI || state->size!=sizeof(*state))return -1;
+    *state=mainLifecycle;if(malformedLifecycle)state->size--;return 0;
+}
 const struct canopy_totk_host *totk_canopy_host_v1(void) {
     static struct canopy_totk_host host;
     if(!strcmp(mode,"unavailable"))return NULL;
@@ -87,7 +112,10 @@ const struct canopy_totk_host *totk_canopy_host_v1(void) {
         !strcmp(mode,"wrong-romfs")?"0000000000000000000000000000000000000000000000000000000000000000":romfsHash,!strcmp(mode,"wrong-index")?"0000000000000000000000000000000000000000000000000000000000000000":indexHash,
         resourcePath,manifestHash,"original-fixture-chain",start,fps_supported,set_fps,get_fps,taa_supported,set_taa,get_taa,get_hud,cycle_hud,clear,set_focus,input,
         {MNG_DISPLAY_ABI,sizeof(struct canopy_totk_display),{MNG_DISPLAY_ABI,sizeof(struct mng_display_profile),displayFlags},
-         displayFlags&MNG_DISPLAY_SCENE_1080?heapHash:NULL,displayFlags&MNG_DISPLAY_FOUR_THREE?layoutHash:NULL,read_display}};
+         displayFlags&MNG_DISPLAY_SCENE_1080?heapHash:NULL,displayFlags&MNG_DISPLAY_FOUR_THREE?layoutHash:NULL,read_display},
+        {CANOPY_TOTK_LIFECYCLE_ABI,sizeof(struct canopy_totk_lifecycle),read_lifecycle}};
+    if(!strcmp(mode,"lifecycle-bad-record"))host.lifecycle.size--;
+    if(!strcmp(mode,"lifecycle-abi2"))host.abi_version=2;
     if(!strcmp(mode,"display-bad-record"))host.display.size--;
     if(!strcmp(mode,"display-bad-pin"))host.display.heap_manifest_sha256=NULL;
     return &host;
@@ -110,7 +138,7 @@ int main(int argc,char **argv) {
             withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:NULL],"private directories");
         id<MTLDevice> device=MTLCreateSystemDefaultDevice();
         BOOL deviceDependent=!strcmp(mode,"success") || !strcmp(mode,"entry-failure") || !strcmp(mode,"cache-reuse") || !strcmp(mode,"actual-shader-device") || !strcmp(mode,"cache-parent-alias") || !strcmp(mode,"display-1080") || !strcmp(mode,"display-full") ||
-            !strcmp(mode,"display-full-fallback") || !strcmp(mode,"display-stock-fallback") || !strcmp(mode,"display-live") || !strcmp(mode,"display-bad-state") || !strcmp(mode,"display-bad-start-state") || !strcmp(mode,"display-unknown-aspect");
+            !strcmp(mode,"display-full-fallback") || !strcmp(mode,"display-stock-fallback") || !strcmp(mode,"display-live") || !strcmp(mode,"display-bad-state") || !strcmp(mode,"display-bad-start-state") || !strcmp(mode,"display-unknown-aspect") || (!strncmp(mode,"lifecycle-",10) && strcmp(mode,"lifecycle-bad-record") && strcmp(mode,"lifecycle-abi2"));
         if(!device && deviceDependent){puts("{\"status\":\"skip\",\"reason\":\"No actual native Metal device is available\"}");return 0;}
         if(!strcmp(mode,"actual-shader-device")) {
             NSError *shaderError=nil;
@@ -136,7 +164,7 @@ int main(int argc,char **argv) {
             activeSavesURL:saves identityURL:identity cacheURL:cache settings:settings graphicsSurface:layer hostView:gameView
             error:&error completion:^(BOOL nativeStarted,NSError *e) {Check(NSThread.isMainThread,"completion owner");started=nativeStarted;failure=e;completed=YES;}];
         if(!strcmp(mode,"unavailable") || !strcmp(mode,"abi1") || !strcmp(mode,"display-bad-record") || !strcmp(mode,"display-bad-flags") ||
-           !strcmp(mode,"display-bad-pin") || !strcmp(mode,"display-v121-flags")) {
+           !strcmp(mode,"display-bad-pin") || !strcmp(mode,"display-v121-flags") || !strcmp(mode,"lifecycle-bad-record") || !strcmp(mode,"lifecycle-abi2")) {
             Check(!accepted && !runtime.nativeEntryInvoked && error!=nil,"unavailable host refusal");
         } else {
             Check(accepted && [runtime.state isEqual:@"preparing"],"async native preflight");
@@ -149,9 +177,46 @@ int main(int argc,char **argv) {
             if(!strncmp(mode,"overlay-",8) || !strcmp(mode,"wrong-romfs") || !strcmp(mode,"corrupt-main") || !strcmp(mode,"corrupt-romfs") || !strcmp(mode,"wrong-main") || !strcmp(mode,"wrong-index") || !strcmp(mode,"corrupt-cache") || !strcmp(mode,"public-cache") || !strcmp(mode,"cache-leaf-symlink") || !strcmp(mode,"cancel")) {
                 Check(!started && failure && !runtime.nativeEntryInvoked && starts==0,"pin mismatch reaches no native entry");
                 Check([runtime close:&error],"preflight refusal permits seal release");
-            } else if(!strcmp(mode,"entry-failure") || !strcmp(mode,"display-bad-start-state")) {
+            } else if(!strcmp(mode,"entry-failure") || !strcmp(mode,"display-bad-start-state") ||
+                      !strcmp(mode,"lifecycle-start-ended") || !strcmp(mode,"lifecycle-start-invalid") || !strcmp(mode,"lifecycle-not-started")) {
                 Check(!started && failure && runtime.nativeEntryInvoked && starts==1,"native failure lifetime");
                 Check(![runtime close:&error],"failed entry does not promise teardown");
+                NSString *generationLease=[[[[root.path stringByAppendingPathComponent:@"titles/0100123456780000/generations"]
+                    stringByAppendingPathComponent:generation] stringByAppendingPathComponent:@".lease"] copy];
+                LeaseHeld(generationLease);LeaseHeld(shaderLeasePath);
+                Check(!focus,"failed startup keeps native focus captured");
+            } else if(!strncmp(mode,"lifecycle-",10)) {
+                Check(started && !failure && runtime.nativeEntryInvoked && starts==1,"actual lifecycle-capable native startup");
+                Check([runtime.diagnosticMetrics[@"mainWorkerPhase"] isEqual:@"running"],"main worker running evidence");
+                Check([runtime restoreInput:&error] && focus,"live worker can receive focus");unsigned before=clears;
+                mainLifecycle.phase=CANOPY_TOTK_MAIN_CLEANUP_OBSERVED;mainLifecycle.guest_admission_closed=1;
+                mainLifecycle.owned_guest_children=2;mainLifecycle.joining_guest_children=1;
+                if(!strcmp(mode,"lifecycle-returned")){mainLifecycle.main_returned=1;mainLifecycle.main_return_code=17;}
+                if(!strcmp(mode,"lifecycle-joined")){mainLifecycle.phase=CANOPY_TOTK_MAIN_JOINED;mainLifecycle.main_joined=1;mainLifecycle.owned_guest_children=0;mainLifecycle.joining_guest_children=0;}
+                if(!strcmp(mode,"lifecycle-join-error")){mainLifecycle.phase=CANOPY_TOTK_MAIN_OBSERVATION_FAILED;mainLifecycle.join_error=EINVAL;}
+                if(!strcmp(mode,"lifecycle-invalid-state"))malformedLifecycle=YES;
+                if(!strcmp(mode,"lifecycle-diagnostics")) {
+                    NSDictionary *observed=runtime.diagnosticMetrics;
+                    Check([observed[@"mainWorkerPhase"] isEqual:@"cleanupObserved"] && [runtime.state isEqual:@"failed"] && !focus,"diagnostics observes and captures ended worker");
+                }
+                if(!strcmp(mode,"lifecycle-settings")) {
+                    NSDictionary *observed=[runtime applyDesiredSettings:@{@"fpsLimit":@30}];
+                    Check([observed[@"fpsLimit"][@"state"] isEqual:@"rejected"] && fps==60 && [runtime.state isEqual:@"failed"] && !focus,"settings cannot write ended worker before tick");
+                }
+                Check(![runtime tick:&error] && [runtime.state isEqual:@"failed"] && !focus && clears>before,"ended worker fails and captures real input/focus");
+                Check(![runtime restoreInput:&error] && ![runtime close:&error] && !focus,"worker end never grants restore or teardown");
+                NSDictionary *metrics=runtime.diagnosticMetrics;
+                if(!strcmp(mode,"lifecycle-ended"))Check([metrics[@"mainWorkerPhase"] isEqual:@"cleanupObserved"] && ![metrics[@"mainJoined"] boolValue] &&
+                    ![metrics[@"mainReturned"] boolValue] && [metrics[@"ownedGuestChildren"] unsignedIntValue]==2 && [metrics[@"joiningGuestChildren"] unsignedIntValue]==1,"cleanup is not TLS join or all-child completion");
+                if(!strcmp(mode,"lifecycle-returned"))Check([metrics[@"mainReturned"] boolValue] && [metrics[@"mainReturnCode"] intValue]==17,"native function return status is distinct");
+                if(!strcmp(mode,"lifecycle-joined"))Check([metrics[@"mainWorkerPhase"] isEqual:@"mainJoined"] && [metrics[@"mainJoined"] boolValue] && ![runtime close:&error],"real main join plus zero child subset is not full stop");
+                if(!strcmp(mode,"lifecycle-join-error"))Check([metrics[@"mainWorkerPhase"] isEqual:@"observationFailed"] && ![metrics[@"mainJoined"] boolValue] && [metrics[@"mainJoinError"] unsignedIntValue]==EINVAL,"join failure is not join completion");
+                if(!strcmp(mode,"lifecycle-invalid-state"))Check([metrics[@"mainWorkerPhase"] isEqual:@"unavailable"],"malformed lifecycle record not trusted");
+                NSDictionary *refused=[runtime applyDesiredSettings:@{@"fpsLimit":@30}];
+                Check([refused[@"fpsLimit"][@"state"] isEqual:@"rejected"] && fps==60,"ended worker settings are not applied");
+                NSString *generationLease=[[[root.path stringByAppendingPathComponent:@"titles/0100123456780000/generations"]
+                    stringByAppendingPathComponent:generation] stringByAppendingPathComponent:@".lease"];
+                LeaseHeld(generationLease);LeaseHeld(shaderLeasePath);
             } else if(!strncmp(mode,"display-",8)) {
                 Check(started && !failure && runtime.nativeEntryInvoked && starts==1,"actual native display callback");
                 if(!strcmp(mode,"display-bad-state")) {
