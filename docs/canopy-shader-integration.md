@@ -57,3 +57,28 @@ python -m unittest discover -s tests -p test_canopy_runtime.py -v
 The shader fixture generator is `write_shader_seed` in `tests/test_canopy_shader_cache.py`. It writes original tiny Metal code, invented reflection/bind indices and authenticated map bytes; its invented tool hashes are test identity only. The component probe uses a synthetic device dictionary, while production calls `deviceIdentityForDevice` with the actual selected device.
 
 Review gates are two independent source reviews, actual Apple compilation/test evidence, the connected Runtime consumer suite, and eventually selected-device Metal compilation/execution evidence. A valid seed only covers its supplied variants. Missing shaders, native translator deployment, runtime behavior and exact-title gameplay remain separately measurable work.
+
+## In-process source checkpoint
+
+The next source slice now exists under `games/totk/tools/totk_xlate`:
+
+- `Program.cs:TranslateBytes` shares the real patched Ryujinx/SPIR-V translator with the file CLI adapter.
+- `Service.cs:TranslateBytes` shares the existing inference retries, FP64 fallback, depth rewrites and reflection construction; the CLI supplies its existing executable Cross adapter, while the library supplies the real in-process adapter.
+- `NativeExports.cs` exports ABI version 1 and `canopy_shader_translate`; `inprocess_cross.h` documents caller-owned buffers and statuses. The output is bounded UTF-8 JSON containing final SPIR-V as base64, MSL and reflection. No cache publication or subprocess belongs to this ABI. An atomic nonblocking admission gate serializes managed translations and reports busy rather than sharing request state.
+- `inprocess_cross.cpp` invokes the exact pinned public `CompilerMSL` with the service's current options. Its C boundary catches C++ exceptions and never writes partial output on insufficient capacity.
+- `NativeLibrary.csproj` selects static NativeAOT by default, with direct `__Internal` P/Invoke for the Cross symbol. The original executable project remains available.
+- `publish_library.py` checks the public Cross commit and requires no modified, untracked or ignored dependency files, builds the adapter/archive, and uses a private copy of the same vendor source with the existing ordered patches. Restore uses an empty local package source, allowing only packages already in the global cache. It installs neither SDKs nor packages. Missing offline dependencies are a failed build gate. Build metadata hashes the actual copied/patched vendor tree, copied managed sources and every emitted NativeAOT product, alongside the bridge recipe and Cross products; it does not claim a hermetic SDK/package/compiler identity.
+
+Native input caps are 64 KiB shader bytes and 64 KiB request JSON (depth 16); pointers must refer to valid nonoverlapping caller-owned buffers. The decoder accessor validates addresses/alignment and limits reads to one million. Cross accepts at most 4 MiB SPIR-V with bounded ID space, emits at most 8 MiB MSL, and the final envelope is limited to 16 MiB. These limits are not preemptive timeouts or a comprehensive optimizer/CFG work budget. This checkpoint has no cancellation during managed/native compiler internals. Do not expose untrusted arbitrary translation jobs or enable runtime capability before reviewing those remaining resource controls and proving actual static build/link behavior.
+
+Available local evidence is a real GCC 14 build of pinned Cross and the adapter, original SPIR-V compute-to-MSL execution, malformed-input/exception boundaries, concurrent independent compiler calls, and no-partial-output behavior. The original Maxwell fixture is authored from the checked-in EXIT/NOP decoder fields, with a scheduling word and local size 1. Its successful translation is gated by an actual linked static NativeAOT caller plus existing CLI parity; its opcode bytes alone are not translation proof. No .NET compiler or Apple SDK is installed in this Linux environment, so managed compilation, static export/link, iOS deployment and Metal dispatch remain unproven. No runtime capability is enabled by these source files.
+
+Example commands, with an existing exact-pinned public checkout:
+
+```sh
+python games/totk/tools/totk_xlate/publish_library.py --inspect
+python games/totk/tools/totk_xlate/publish_library.py --cross-source /path/to/pinned/SPIRV-Cross --output /empty/private/build --rid osx-arm64
+CANOPY_SPIRV_CROSS_SOURCE=/path/to/pinned/SPIRV-Cross python -m unittest discover -s tests -p test_canopy_shader_native.py -v
+```
+
+`--cross-only --rid linux-x64` checks the genuine native adapter without .NET. `tests/canopy_shader_native_probe.c` must actually link against the produced static managed archive and Cross archive before setting `CANOPY_SHADER_NATIVE_PROBE`. Set `CANOPY_SHADER_CLI` and `CANOPY_SPIRV_CROSS_CLI` to actual existing compiler binaries to enable byte/JSON parity on the original Maxwell input. The test suite does not download dependencies or substitute a mock compiler when these binaries are missing.
