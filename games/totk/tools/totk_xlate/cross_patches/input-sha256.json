@@ -270,6 +270,16 @@
       },
       "patch": "0023-null-constant-planning-bounds.patch",
       "sha256": "528eacd233018c64884038195a6afda9c6228f0f559d18ec682bb8ecc41f7462"
+    },
+    {
+      "after": {
+        "spirv_msl.cpp": "8aad1628467e530dfe5f6ca25767d9e8aac77654b1d92038e72219938e42bafd"
+      },
+      "before": {
+        "spirv_msl.cpp": "d7d40b66bef0ab153d4916228ad100f72bedb1fea6b6979b7cc0dc6f8ec7682e"
+      },
+      "patch": "0024-msl-dimension-resource-loop-checkpoints.patch",
+      "sha256": "eb131d217d517161f90dd1f2f8aa84cfca709aa17409ac04a6f2e6402472aecf"
     }
   ],
   "schemaVersion": 1
