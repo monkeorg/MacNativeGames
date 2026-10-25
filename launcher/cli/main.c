@@ -17,6 +17,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/random.h> /* Darwin declares getentropy here, not unistd.h. */
+#endif
 
 /* Constant error codes deliberately omit private paths and platform errors. */
 static int error(const char *code, int exit_code) {
