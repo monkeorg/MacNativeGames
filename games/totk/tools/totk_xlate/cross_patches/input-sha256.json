@@ -322,6 +322,16 @@
       },
       "patch": "0028-name-decoration-index-loop-checkpoints.patch",
       "sha256": "9b72d63d3ebcca55dc141a85c9d1b039c465032e0087e6b4beb06551b92d952c"
+    },
+    {
+      "after": {
+        "spirv_parser.cpp": "f727a28521aaa9f6809c2615cf913000f44b2c265384b718c4a1f986197b3528"
+      },
+      "before": {
+        "spirv_parser.cpp": "9f5664fbd0c76fe87fbef9cf2a1591a4ed79bd8665b81d4e517ac6023b10bda3"
+      },
+      "patch": "0029-parser-type-copy-precharges.patch",
+      "sha256": "6de99860d648350f1b7844a0b2e711615f7c2146083f83f9a11093ed4e5f14ee"
     }
   ],
   "schemaVersion": 1
