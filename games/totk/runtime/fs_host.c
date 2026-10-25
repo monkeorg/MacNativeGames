@@ -4,6 +4,16 @@
    for titles that declare save data. Writes reach the host file immediately; Commit flushes them.
    Because of that, quitting in the middle of a save (the game writes several files, then commits) would leave a slot half
    written: runtime_fs_save_busy tells the window close to wait until the save is done (runtime/frontend.m). */
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+/* Both native iOS launchers retain guest-closed save descriptors until a real
+ * successful flush. Standalone Mac behavior remains on its original path. */
+#if defined(CANOPY_HOST_RUNTIME) || (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+#define TOTK_SAFE_SAVE_FLUSH 1
+#else
+#define TOTK_SAFE_SAVE_FLUSH 0
+#endif
 #include "autoload.h"
 #include "runtime.h"
 #include "fs_host.h"
@@ -45,7 +55,7 @@ static Mount mounts[16];
 static File files[NFILES];
 static Dir dirs[NDIRS];
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
 /* Serialize mutating host operations with flush/close. Guest-closed save
  * descriptors remain owned in the existing bounded table with mode0 until a
  * successful save commit. They are neither guest handles nor reusable slots.
@@ -69,7 +79,7 @@ static _Atomic uint64_t save_changed_ns;
 static void save_touched(void) { atomic_store(&save_changed_ns, runtime_now_ns()); atomic_store(&save_dirty, 1); }
 int runtime_fs_save_busy(void) {
     if (atomic_load(&save_writers) > 0) return 1;
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     /* An unsuccessful flush never ages into an apparent clean state. This
      * signal still is not a guest-thread stop or multi-file transaction ACK. */
     return atomic_load(&save_dirty);
@@ -229,18 +239,18 @@ static void unmount(const char *name) {
     BOTW_AOC_UNMOUNT(name) if (!runtime_romfs_owns(name)) runtime_fail("unmount of unknown fs mount");
 }
 static unsigned commit(const char *name) {
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     if (!name)return R_INVALID_ARGUMENT;
 #endif
     pthread_mutex_lock(&lock); int found = 0, save = 0;
     for (int i = 0; i < 16; i++) if (mounts[i].kind && !strcmp(mounts[i].name, name)) { found = 1; save = mounts[i].kind == M_SAVE; }
     pthread_mutex_unlock(&lock);
     if (!found) return R_PATH_NOT_FOUND;
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     pthread_mutex_lock(&canopy_io_lock);
     unsigned result=0;
     for (int i=0;i<NFILES;i++) {
-        /* All Canopy open/write/resize/close paths hold canopy_io_lock, so
+        /* All safe-path open/write/resize/close paths hold canopy_io_lock, so
          * this descriptor cannot close or be reused during F_FULLFSYNC. */
         if (files[i].fd>0 && (save ? files[i].save : (files[i].mode&OPEN_WRITE))) {
             if (canopy_sync_fd(files[i].fd)) { result=errno_result();break; }
@@ -270,11 +280,11 @@ static unsigned commit(const char *name) {
 static File *file_of(uint64_t h, int *fd, int *mode) {
     if (h < FILE_BASE || h >= FILE_BASE + NFILES) return NULL;
     pthread_mutex_lock(&lock); File *f = &files[h - FILE_BASE]; int v = f->fd; if (fd) *fd = f->fd; if (mode) *mode = f->mode;
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     int active=f->mode;
 #endif
     pthread_mutex_unlock(&lock);
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     return v>0 && active ? f:NULL; /* mode0 is an owned, guest-closed save fd */
 #else
     return v > 0 ? f : NULL;
@@ -286,7 +296,7 @@ static unsigned open_file(uint64_t *out, const char *path, int mode) {
     if (runtime_romfs_owns(path)) return runtime_romfs_open(out, path, mode); BOTW_AOC_OPEN(out, path, mode)
     if (!out || !(mode & (OPEN_READ | OPEN_WRITE)) || (mode & ~7)) return R_INVALID_ARGUMENT;
     char p[1100]; int kind = M_FREE; unsigned r = host_path_kind(path, p, sizeof p, &kind); if (r) return r;
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     pthread_mutex_lock(&canopy_io_lock);
     struct stat st; unsigned result=0;
     if (stat(p,&st) || !S_ISREG(st.st_mode)) { result=R_PATH_NOT_FOUND;goto canopy_open_done; }
@@ -331,7 +341,7 @@ static unsigned read_file(uint64_t *out, uint64_t h, int64_t offset, void *buffe
 static unsigned read_options(uint64_t *out, uint64_t h, int64_t off, void *buf, uint64_t size, const void *options) { (void)options; return read_file(out, h, off, buf, size); }
 static unsigned read_exact(uint64_t h, int64_t off, void *buf, uint64_t size) { uint64_t n = 0; unsigned r = read_file(&n, h, off, buf, size); return r ? r : n == size ? 0 : R_INVALID_ARGUMENT; }
 static unsigned write_file(uint64_t h, int64_t offset, const void *buffer, uint64_t size, const int32_t *option) {
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     pthread_mutex_lock(&canopy_io_lock);
     unsigned result=0;int fd,mode;struct stat st;
     File *f=offset<0 || (!buffer&&size) ? NULL:file_of(h,&fd,&mode);
@@ -373,7 +383,7 @@ static unsigned file_size(int64_t *out, uint64_t h) {
     *out = st.st_size; return 0;
 }
 static unsigned set_file_size(uint64_t h, int64_t size) {
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     pthread_mutex_lock(&canopy_io_lock);
     int fd,mode;unsigned result=0;
     if (size<0 || !file_of(h,&fd,&mode)) result=R_INVALID_ARGUMENT;
@@ -388,7 +398,7 @@ static unsigned set_file_size(uint64_t h, int64_t size) {
 #endif
 }
 static unsigned flush_file(uint64_t h) {
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     pthread_mutex_lock(&canopy_io_lock);int fd;unsigned result=0;
     File *f=file_of(h,&fd,NULL);
     if (!f)result=R_INVALID_ARGUMENT;
@@ -400,7 +410,7 @@ static unsigned flush_file(uint64_t h) {
 }
 static void close_file(uint64_t h) {
     if (runtime_romfs_handle(h)) { runtime_romfs_close(h); return; } BOTW_AOC_CLOSE(h)
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     pthread_mutex_lock(&canopy_io_lock);
     if (!file_of(h,NULL,NULL)) { pthread_mutex_unlock(&canopy_io_lock);runtime_fail("close invalid file handle"); }
     pthread_mutex_lock(&lock);File *f=files+(h-FILE_BASE);int fd=f->fd,save=f->save;
@@ -415,7 +425,7 @@ static void close_file(uint64_t h) {
     if (save) { save_touched(); atomic_fetch_sub(&save_writers, 1); }
 #endif
 }
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
 #define create_file canopy_create_file_body
 #define delete_file canopy_delete_file_body
 #define rename_file canopy_rename_file_body
@@ -423,7 +433,7 @@ static void close_file(uint64_t h) {
 #define delete_recursive canopy_delete_recursive_body
 #endif
 static unsigned create_file(const char *path, int64_t size) {
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     char p[1100];int kind=M_FREE;unsigned r=host_path_kind(path,p,sizeof(p),&kind);
     if (r)return r;if (size<0)return R_INVALID_ARGUMENT;
     int slot=-1;
@@ -448,7 +458,7 @@ static unsigned create_file(const char *path, int64_t size) {
 }
 static unsigned delete_file(const char *path) { char p[1100]; unsigned r = save_change_path(path, p, sizeof p); if (r) return r; return unlink(p) ? errno_result() : 0; }
 static unsigned rename_file(const char *from, const char *to) {
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
     char a[1100],b[1100];int from_kind=M_FREE,to_kind=M_FREE;
     unsigned r=host_path_kind(from,a,sizeof(a),&from_kind);
     if (!r)r=host_path_kind(to,b,sizeof(b),&to_kind);
@@ -485,7 +495,7 @@ typedef struct { char name[769]; uint8_t pad0[3]; int8_t type; uint8_t pad1[3]; 
 _Static_assert(sizeof(DirectoryEntry) == 0x310, "nn::fs::DirectoryEntry");
 static unsigned create_directory(const char *path) { char p[1100]; unsigned r = save_change_path(path, p, sizeof p); if (r) return r; return mkdir(p, 0700) ? errno_result() : 0; }
 static unsigned delete_recursive(const char *path) { char p[1100]; unsigned r = save_change_path(path, p, sizeof p); if (r) return r; struct stat st; if (stat(p, &st)) return R_PATH_NOT_FOUND; return remove_tree(p) ? R_INVALID_ARGUMENT : 0; }
-#if defined(CANOPY_HOST_RUNTIME)
+#if TOTK_SAFE_SAVE_FLUSH
 #undef create_file
 #undef delete_file
 #undef rename_file
@@ -547,9 +557,9 @@ void runtime_save_probe(void) {
     close_file(h);
     CHECK(create_file("save:/b.sav", 4) == 0 && runtime_fs_save_busy(), "second change");
     atomic_store(&save_changed_ns, runtime_now_ns() - 4000000000ull);
-#if defined(CANOPY_HOST_RUNTIME)
-    CHECK(runtime_fs_save_busy(), "Canopy uncommitted changes do not age into clean state");
-    CHECK(commit("save")==0 && !runtime_fs_save_busy(), "explicit Canopy flush clears dirty state");
+#if TOTK_SAFE_SAVE_FLUSH
+    CHECK(runtime_fs_save_busy(), "iOS/Canopy uncommitted changes do not age into clean state");
+    CHECK(commit("save")==0 && !runtime_fs_save_busy(), "explicit safe flush clears dirty state");
 #else
     CHECK(!runtime_fs_save_busy(), "uncommitted changes older than 3 s are not a save in progress");
 #endif
@@ -558,8 +568,8 @@ void runtime_save_probe(void) {
     CHECK(commit("save") == 0 && !runtime_fs_save_busy() && delete_file("save:/c.sav") == 0 && runtime_fs_save_busy() && commit("save") == 0, "delete and commit");
 #undef CHECK
     remove_tree(dir);
-#if defined(CANOPY_HOST_RUNTIME)
-    printf("{\"status\":\"pass\",\"probe\":\"probe-save\",\"checks\":%u,\"scope\":\"Canopy owned save-descriptor flushing and dirty state; no multi-file transaction or CPU teardown ACK\"}\n",checks);
+#if TOTK_SAFE_SAVE_FLUSH
+    printf("{\"status\":\"pass\",\"probe\":\"probe-save\",\"checks\":%u,\"scope\":\"iOS/Canopy owned save-descriptor flushing and dirty state; no multi-file transaction or CPU teardown ACK\"}\n",checks);
 #else
     printf("{\"status\":\"pass\",\"probe\":\"probe-save\",\"checks\":%u,\"scope\":\"save-in-progress state (runtime_fs_save_busy) through open / write / close / create / rename / delete / commit on a save mount; reads and temporary storage do not count; stale uncommitted changes do not hold a close\"}\n", checks);
 #endif
