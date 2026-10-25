@@ -5,6 +5,19 @@ NS_ASSUME_NONNULL_BEGIN
 /// JSON. It receives an already private, bounded, hash-checked replacement.
 typedef BOOL (^CanopySaveValidator)(NSURL *privateStagedDirectory,
     NSError * _Nullable * _Nullable error);
+/// Native constructor policy only: approves this exact selected-file edit.
+/// Must validate original/replacement semantics and integrity, never mutate or
+/// reenter the store. Imported metadata/UI cannot authorize an editor.
+typedef BOOL (^CanopySaveEditValidator)(NSString *relativePath, NSData *original,
+    NSData *replacement, NSError * _Nullable * _Nullable error);
+/// Private immutable selected bytes from a bounded whole-tree snapshot. The
+/// token belongs only to its original store instance/title/profile and slot.
+@interface CanopySaveEditPreview : NSObject
+@property(nonatomic,readonly) NSString *relativePath;
+@property(nonatomic,readonly) NSData *originalData;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
 /// Serialized, synchronous private save storage. Run transfers on a host-owned
 /// serial worker queue. The process holds an exclusive profile lock until this
 /// object is released. No account identity bytes are created, imported or copied.
@@ -16,6 +29,19 @@ typedef BOOL (^CanopySaveValidator)(NSURL *privateStagedDirectory,
 - (nullable instancetype)initWithRootURL:(NSURL *)root titleID:(NSString *)titleID
     profileID:(NSString *)profileID externalValidator:(nullable CanopySaveValidator)validator
         error:(NSError **)error;
+/// Existing initializers supply no edit validator and cannot Apply edits.
+- (nullable instancetype)initWithRootURL:(NSURL *)root titleID:(NSString *)titleID
+    profileID:(NSString *)profileID externalValidator:(nullable CanopySaveValidator)validator
+    editValidator:(nullable CanopySaveEditValidator)editValidator error:(NSError **)error;
+@property(nonatomic, readonly) BOOL editingSupported;
+/// Whole-tree copy/CAS observation; slot must be slot_00...slot_05. One preview
+/// per store. No source path, account file or publication capability is exposed.
+- (nullable CanopySaveEditPreview *)previewEditForSlot:(NSString *)slot error:(NSError **)error;
+/// Requires BOTH constructor validators, unchanged active/snapshot manifests,
+/// unsealed/no-recovery state, then existing backup/journal publication. A
+/// production TOTK reference-family candidate has no approved edit validator.
+- (BOOL)applyEditPreview:(CanopySaveEditPreview *)preview replacementData:(NSData *)data error:(NSError **)error;
+- (BOOL)discardEditPreview:(CanopySaveEditPreview *)preview error:(NSError **)error;
 @property(nonatomic, readonly) NSURL *activeDirectoryURL;
 @property(nonatomic, readonly) NSURL *accountIdentityDirectoryURL;
 /// Nonblocking atomic status mirrors; safe to read from the UI during a copy.
