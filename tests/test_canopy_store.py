@@ -138,10 +138,14 @@ class CanopyStoreTests(unittest.TestCase):
         self.assertEqual(report['status'],6,report)
         stage=self.root/'jobs'/job
         before={name:(stage/name).stat().st_ino for name in ('romfs.bin','runtime-index.bin')}
+        # An interrupted index generator may leave this controlled scratch
+        # file. Resume removes it while retaining both verified asset inodes.
+        (stage/'.runtime-index.tmp').write_bytes(b'partial index')
         self.assertEqual(self.run_probe('current',ADDON)['generation'],current)
         resumed=self.addon('new-image',job)
         self.assertNotEqual(resumed,current)
         for name,inode in before.items():self.assertEqual((self.generation(resumed,ADDON)/name).stat().st_ino,inode)
+        self.assertFalse((self.generation(resumed,ADDON)/'.runtime-index.tmp').exists())
 
     def test_addon_receipt_truncation_reserved_role_and_index_corruption_refused(self):
         generation=self.addon();root=self.generation(generation,ADDON);path=root/'receipt.bin'

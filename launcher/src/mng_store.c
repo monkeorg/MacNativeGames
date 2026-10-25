@@ -405,7 +405,7 @@ static int sweep_job(struct mng_store *s, int dir, int exefs) {
             char path[PATH_BYTES];
             if (exefs) { if (!leaf(name)) { bad=1; break; } strcpy(path,"exefs/"); strcat(path,name); }
             else { if (strlen(name)>=sizeof(path)) { bad=1; break; } strcpy(path,name); }
-            if (find_asset(s,path)<0 && (exefs || !strcmp(path,"romfs.bin") || !strcmp(path,"runtime-index.bin") || !strcmp(path,"input-members.json") || !strcmp(path,".asset.tmp") ||
+            if (find_asset(s,path)<0 && (exefs || !strcmp(path,"romfs.bin") || !strcmp(path,"runtime-index.bin") || !strcmp(path,".runtime-index.tmp") || !strcmp(path,"input-members.json") || !strcmp(path,".asset.tmp") ||
                 !strcmp(path,".receipt.tmp") || !strcmp(path,".manifest.tmp") || !strcmp(path,"manifest.json") || !strcmp(path,".lease"))) {
                 if (safe_unlink(dir,name)) bad=1;
             } else if (!exefs && strcmp(path,"receipt.bin") && strcmp(path,"romfs.bin") && strcmp(path,"runtime-index.bin") && strcmp(path,"input-members.json")) bad=1;
