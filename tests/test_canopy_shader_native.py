@@ -40,6 +40,21 @@ def original_compute_maxwell():
     return struct.pack('<4Q',0,0xe30000000007000f,0x50b0000000070f00,0x50b0000000070f00)
 
 
+def original_collection_spirv(count=64):
+    # Original structured compute module: an unused uint struct/function type,
+    # a switch whose labels merge immediately, then a one-incoming Phi. This
+    # exercises actual parser collection and CFG case/predecessor processing.
+    words=[0x07230203,0x10000,0,12,0,0x20011,1,0x3000e,0,1,
+           0x5000f,5,3,0x6e69616d,0,0x60010,3,17,1,1,1,
+           0x20013,1,0x30021,2,1,0x40015,5,32,0,0x4002b,5,6,0]
+    words += [((2+count)<<16)|30,8]+[5]*count
+    words += [((3+count)<<16)|33,9,1]+[5]*count
+    words += [0x50036,1,3,0,2,0x200f8,4,0x300f7,7,0,((3+2*count)<<16)|251,6,7]
+    for literal in range(count):words += [literal,7]
+    words += [0x200f8,7,0x500f5,5,11,6,4,0x100fd,0x10038]
+    return struct.pack('<'+'I'*len(words),*words)
+
+
 def original_request():
     key=hashlib.sha256(original_compute_maxwell()).hexdigest()
     return {'variant':key+'-'+hashlib.sha256(b'original answers').hexdigest()[:12],
@@ -132,6 +147,11 @@ class InProcessCrossTests(unittest.TestCase):
         cls.checkpoint=ctypes.CFUNCTYPE(ctypes.c_int,ctypes.c_void_p,ctypes.c_uint64,ctypes.c_uint64,ctypes.c_uint64)
         cls.controlled=cls.lib.canopy_spirv_cross_controlled
         cls.controlled.argtypes=cls.cross.argtypes+[cls.checkpoint,ctypes.c_void_p];cls.controlled.restype=ctypes.c_int
+        cls.walk_probe=folder/'walk-probe'
+        run=subprocess.run(['c++','-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address','-fno-omit-frame-pointer',
+            '-I',str(private),'-I',str(TOOLS),str(ROOT/'tests/canopy_shader_walk_probe.cpp'),str(cls.library),
+            '-Wl,-rpath,'+str(folder),'-o',str(cls.walk_probe)],capture_output=True,text=True,timeout=120)
+        if run.returncode:raise AssertionError(run.stdout+run.stderr)
 
     def call(self,data,capacity=65536):
         src=ctypes.create_string_buffer(data);out=ctypes.create_string_buffer(b'Z'*capacity,capacity);n=ctypes.c_size_t(999)
@@ -181,15 +201,39 @@ class InProcessCrossTests(unittest.TestCase):
         self.assertEqual(self.controlled(data,len(original_compute_spirv()),output,len(output),ctypes.byref(n),callback,None),0)
         self.assertTrue(any(nodes for _,nodes,_ in calls));self.assertTrue(any(tracked for _,_,tracked in calls))
 
+    def test_actual_cyclic_type_and_expression_walks_cancel_quota_and_repair(self):
+        for kind in (0,1):
+            for status in (5,6):
+                with self.subTest(kind=kind,status=status):
+                    run=subprocess.run([str(self.walk_probe),str(kind),str(status)],capture_output=True,text=True,timeout=15,
+                        env=dict(os.environ,ASAN_OPTIONS='abort_on_error=1:detect_leaks=1'))
+                    self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+                    self.assertEqual(run.stdout.strip(),'{"status":0}')
+
+    def test_input_sized_parser_and_cfg_collections_refuse_work_quota_and_cancel(self):
+        code=original_collection_spirv();status,normal,n=self.call(code);self.assertEqual(status,0)
+        self.assertIn(b'kernel void main0',normal[:n])
+        source=ctypes.create_string_buffer(code)
+        for refusal in (5,6):
+            total=[]
+            def poll(context,work,nodes,tracked):
+                total.append(work);return refusal if sum(total)>=200 else 0
+            callback=self.checkpoint(poll);length=ctypes.c_size_t(99);output=ctypes.create_string_buffer(b'Z'*65536,65536)
+            self.assertEqual(self.controlled(source,len(code),output,len(output),ctypes.byref(length),callback,None),refusal)
+            self.assertGreaterEqual(sum(total),200);self.assertEqual(length.value,0);self.assertEqual(output.raw,b'Z'*65536)
+        self.assertEqual(self.call(code),(status,normal,n))
+
     @unittest.skipUnless(os.environ.get('CANOPY_SPIRV_CROSS_CLI'),'Requires actual pinned CLI binary for independent Cross parity')
     def test_existing_cli_flags_byte_parity(self):
         with tempfile.TemporaryDirectory() as temp:
-            path=Path(temp);(path/'original.spv').write_bytes(original_compute_spirv())
-            subprocess.run([os.environ['CANOPY_SPIRV_CROSS_CLI'],'--msl','--msl-version','20300',
-                '--msl-argument-buffers','--msl-texture-buffer-native','--msl-pad-fragment-output',
-                str(path/'original.spv'),'--output',str(path/'output.metal')],check=True,timeout=30)
-            status,data,n=self.call(original_compute_spirv());self.assertEqual(status,0)
-            self.assertEqual(data[:n],(path/'output.metal').read_bytes())
+            path=Path(temp)
+            for code in (original_compute_spirv(),original_collection_spirv()):
+                (path/'original.spv').write_bytes(code)
+                subprocess.run([os.environ['CANOPY_SPIRV_CROSS_CLI'],'--msl','--msl-version','20300',
+                    '--msl-argument-buffers','--msl-texture-buffer-native','--msl-pad-fragment-output',
+                    str(path/'original.spv'),'--output',str(path/'output.metal')],check=True,timeout=30)
+                status,data,n=self.call(code);self.assertEqual(status,0)
+                self.assertEqual(data[:n],(path/'output.metal').read_bytes())
 
 
 class CrossStreamOwnershipTests(unittest.TestCase):

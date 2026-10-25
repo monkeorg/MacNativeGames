@@ -1,0 +1,307 @@
+--- a/spirv_cfg.cpp
++++ b/spirv_cfg.cpp
+@@ -172,7 +172,10 @@
+ 	{
+ 		const auto &cases = compiler.get_case_list(block);
+ 		for (const auto &target : cases)
++		{
++			canopy_cross_budget::step();
+ 			visit_branch(target.block);
++		}
+ 		if (block.default_block)
+ 			visit_branch(block.default_block);
+ 		break;
+@@ -402,7 +405,10 @@
+ 
+ 		DominatorBuilder builder(*this);
+ 		for (auto &edge : pred_itr->second)
++		{
++			canopy_cross_budget::step();
+ 			builder.add_block(edge);
++		}
+ 
+ 		uint32_t dominator = builder.get_dominator();
+ 		if (dominator == 0)
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -448,7 +448,10 @@
+ {
+ 	auto *expr = maybe_get<SPIRExpression>(chain);
+ 	while (expr && !expr->buffer_pointer && expr->loaded_from)
++	{
++		canopy_cross_budget::step();
+ 		expr = maybe_get<SPIRExpression>(expr->loaded_from);
++	}
+ 	return expr && expr->buffer_pointer ? expr : nullptr;
+ }
+ 
+@@ -4227,7 +4230,10 @@
+ 				{
+ 					// Find the outermost loop scope.
+ 					while (block->loop_dominator != BlockID(SPIRBlock::NoDominator))
++					{
++						canopy_cross_budget::step();
+ 						block = &get<SPIRBlock>(block->loop_dominator);
++					}
+ 
+ 					if (block->self != dominating_block)
+ 					{
+@@ -5700,7 +5706,10 @@
+ 
+ 				auto *element_type = &compiler.get<SPIRType>(descriptor_array_type_id);
+ 				while (compiler.is_array(*element_type))
++				{
++					canopy_cross_budget::step();
+ 					element_type = &compiler.get<SPIRType>(element_type->parent_type);
++				}
+ 
+ 				if (element_type->basetype == SPIRType::SampledImage)
+ 				{
+@@ -6181,7 +6190,10 @@
+ 	// Punch through all array layers.
+ 	auto *parent = &get<SPIRType>(type.parent_type);
+ 	while (is_array(*parent))
++	{
++		canopy_cross_budget::step();
+ 		parent = &get<SPIRType>(parent->parent_type);
++	}
+ 
+ 	return is_pointer(*parent);
+ }
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -1785,7 +1785,10 @@
+ 
+ 		auto *tmp = &get<SPIRType>(type.parent_type);
+ 		while (!tmp->array.empty())
++		{
++			canopy_cross_budget::step();
+ 			tmp = &get<SPIRType>(tmp->parent_type);
++		}
+ 
+ 		// Get the alignment of the base type, then maybe round up.
+ 		return max(minimum_alignment, type_to_packed_alignment(*tmp, flags, packing));
+@@ -17810,7 +17813,10 @@
+ 
+ 	const SPIRType *coop_type = &type;
+ 	while (is_pointer(*coop_type) || is_array(*coop_type))
++	{
++		canopy_cross_budget::step();
+ 		coop_type = &get<SPIRType>(coop_type->parent_type);
++	}
+ 
+ 	if (coop_type->op == OpTypeCooperativeMatrixKHR)
+ 	{
+@@ -17866,7 +17872,10 @@
+ 	// Array types are resolved in type_to_array_glsl.
+ 	const auto *non_array_type = &type;
+ 	while (is_array(*non_array_type))
++	{
++		canopy_cross_budget::step();
+ 		non_array_type = &get<SPIRType>(non_array_type->parent_type);
++	}
+ 
+ 	if (non_array_type->vecsize > 4 ||
+ 		(long_vector_enabled && non_array_type->vecsize == 1 && non_array_type->op == OpTypeVector))
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -3071,7 +3071,10 @@
+ 	if (usable_type->pointer)
+ 		usable_type = &get<SPIRType>(usable_type->parent_type);
+ 	while (is_array(*usable_type) || is_matrix(*usable_type))
++	{
++		canopy_cross_budget::step();
+ 		usable_type = &get<SPIRType>(usable_type->parent_type);
++	}
+ 
+ 	// If a builtin, force it to have the proper name.
+ 	if (is_builtin)
+@@ -3309,7 +3312,10 @@
+ 	if (usable_type->pointer)
+ 		usable_type = &get<SPIRType>(usable_type->parent_type);
+ 	while (is_array(*usable_type) || is_matrix(*usable_type))
++	{
++		canopy_cross_budget::step();
+ 		usable_type = &get<SPIRType>(usable_type->parent_type);
++	}
+ 
+ 	bool flatten_from_ib_var = false;
+ 	string flatten_from_ib_mbr_name;
+@@ -5055,7 +5061,10 @@
+ 			// Recursively mark structs as packed.
+ 			auto *struct_type = &mbr_type;
+ 			while (!struct_type->array.empty())
++			{
++				canopy_cross_budget::step();
+ 				struct_type = &get<SPIRType>(struct_type->parent_type);
++			}
+ 			mark_struct_members_packed(*struct_type);
+ 		}
+ 		else if (!is_scalar(mbr_type))
+@@ -5075,7 +5084,10 @@
+ 		{
+ 			auto *struct_type = &mbr_type;
+ 			while (!struct_type->array.empty())
++			{
++				canopy_cross_budget::step();
+ 				struct_type = &get<SPIRType>(struct_type->parent_type);
++			}
+ 
+ 			if (has_extended_decoration(struct_type->self, SPIRVCrossDecorationPhysicalTypePacked))
+ 				continue;
+@@ -5188,7 +5200,10 @@
+ 			{
+ 				auto *struct_type = &mbr_type;
+ 				while (!struct_type->array.empty())
++				{
++					canopy_cross_budget::step();
+ 					struct_type = &get<SPIRType>(struct_type->parent_type);
++				}
+ 
+ 				if (!has_decoration(struct_type->self, DecorationArrayStride))
+ 				{
+@@ -9744,7 +9759,10 @@
+ 
+ 	auto *type = &get<SPIRType>(result_type);
+ 	while (type && (is_pointer(*type) || is_array(*type)))
++	{
++		canopy_cross_budget::step();
+ 		type = maybe_get<SPIRType>(type->parent_type);
++	}
+ 
+ 	if (!type || type->op != OpTypeCooperativeMatrixKHR)
+ 	{
+@@ -11808,7 +11826,10 @@
+ 
+ 				const auto *backing_type = &get<SPIRType>(backing_var->basetype);
+ 				while (backing_type->op != OpTypeImage)
++				{
++					canopy_cross_budget::step();
+ 					backing_type = &get<SPIRType>(backing_type->parent_type);
++				}
+ 
+ 				auto img_type = *backing_type;
+ 				auto tmp_type = type;
+@@ -13819,7 +13840,10 @@
+ 	// If an image is part of an argument buffer translate this to a legal identifier.
+ 	string::size_type period = 0;
+ 	while ((period = expr.find_first_of('.', period)) != string::npos && period < index)
++	{
++		canopy_cross_budget::step();
+ 		expr[period] = '_';
++	}
+ 
+ 	if (index == string::npos)
+ 		return expr + swizzle_name_suffix;
+@@ -14670,7 +14694,10 @@
+ 	};
+ 
+ 	while (location_range_in_use(loc, count))
++	{
++		canopy_cross_budget::step();
+ 		loc++;
++	}
+ 
+ 	set_member_decoration(type_id, index, DecorationLocation, loc);
+ 
+@@ -14714,7 +14741,10 @@
+ 	};
+ 
+ 	while (location_range_in_use(loc, count))
++	{
++		canopy_cross_budget::step();
+ 		loc++;
++	}
+ 
+ 	set_member_decoration(type_id, index, DecorationLocation, loc);
+ 
+@@ -17461,7 +17491,10 @@
+ 			// Since this is not a pointer-to-pointer, ensure we've dug down to the base type.
+ 			// Some situations chain pointers even though they are not formally pointers-of-pointers.
+ 			while (is_pointer(*p_parent_type))
++			{
++				canopy_cross_budget::step();
+ 				p_parent_type = &get<SPIRType>(p_parent_type->parent_type);
++			}
+ 
+ 			// If we're emitting BDA, just use the templated type.
+ 			// Emitting builtin arrays need a lot of cooperation with other code to ensure
+@@ -17504,7 +17537,10 @@
+ 	{
+ 		const SPIRType *coop_type = &type;
+ 		while (coop_type && (is_pointer(*coop_type) || is_array(*coop_type)))
++		{
++			canopy_cross_budget::step();
+ 			coop_type = maybe_get<SPIRType>(coop_type->parent_type);
++		}
+ 
+ 		if (coop_type && coop_type->op == OpTypeCooperativeMatrixKHR)
+ 		{
+--- a/spirv_parser.cpp
++++ b/spirv_parser.cpp
+@@ -129,7 +129,10 @@
+ 	}
+ 
+ 	for (auto &i : instructions)
++	{
++		canopy_cross_budget::step();
+ 		parse(i);
++	}
+ 
+ 	for (auto &fixup : forward_pointer_fixups)
+ 	{
+@@ -436,7 +439,10 @@
+ 		uint32_t strlen_words = uint32_t((e.name.size() + 1 + 3) >> 2);
+ 
+ 		for (uint32_t i = strlen_words + 2; i < instruction.length; i++)
++		{
++			canopy_cross_budget::step();
+ 			e.interface_variables.push_back(ops[i]);
++		}
+ 
+ 		// Set the name of the entry point in case OpName is not provided later.
+ 		ir.set_name(ops[1], e.name);
+@@ -946,7 +952,10 @@
+ 		auto &type = set<SPIRType>(id, op);
+ 		type.basetype = SPIRType::Struct;
+ 		for (uint32_t i = 1; i < length; i++)
++		{
++			canopy_cross_budget::step();
+ 			type.member_types.push_back(ops[i]);
++		}
+ 
+ 		// Check if we have seen this struct type before, with just different
+ 		// decorations.
+@@ -986,7 +995,10 @@
+ 
+ 		auto &func = set<SPIRFunctionPrototype>(id, ret);
+ 		for (uint32_t i = 2; i < length; i++)
++		{
++			canopy_cross_budget::step();
+ 			func.parameter_types.push_back(ops[i]);
++		}
+ 		break;
+ 	}
+ 
+@@ -1083,7 +1095,10 @@
+ 		current_function->add_local_variable(id);
+ 
+ 		for (uint32_t i = 2; i + 2 <= length; i += 2)
++		{
++			canopy_cross_budget::step();
+ 			current_block->phi_variables.push_back({ ops[i], ops[i + 1], id });
++		}
+ 		break;
+ 	}
+ 
+@@ -1369,7 +1384,10 @@
+ 		if ((remaining_ops % 2) == 0)
+ 		{
+ 			for (uint32_t i = 2; i + 2 <= length; i += 2)
++			{
++				canopy_cross_budget::step();
+ 				current_block->cases_32bit.push_back({ ops[i], ops[i + 1] });
++			}
+ 		}
+ 
+ 		if ((remaining_ops % 3) == 0)

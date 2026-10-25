@@ -22,6 +22,24 @@
       },
       "patch": "0001-cooperative-resource-controls.patch",
       "sha256": "a712f1133392f5c0c9a35091e91914f7ce8665859f2e1c722f9dc17f3c3e37b7"
+    },
+    {
+      "after": {
+        "spirv_cfg.cpp": "dac9c1ed309b364dbf66d1ca654726fb509e9c17954bd5cbd669657a39ad4224",
+        "spirv_cross.cpp": "0e870affa3a715b284a31d246e2ab5529ddde1566aa4949df6fdaf8d5f94d25c",
+        "spirv_glsl.cpp": "b36cd06bea5485d88f6b1c4d9601188d4a2c104280718720f2272e8fd8d29094",
+        "spirv_msl.cpp": "b4cc26a8ad667603be6dcdaf91a48653195463d26fbfaa98903856bcd155077c",
+        "spirv_parser.cpp": "ebe00e20a46c8db5ea209578ce48fa1d21e59b58d05d962dc1bf4b5ae65e33f4"
+      },
+      "before": {
+        "spirv_cfg.cpp": "d2152fc77844c073ad7ab134c82fa3adb9721c9cae6072a1082245dd9bb7ce3f",
+        "spirv_cross.cpp": "cf31d8a5d258aae8fddb67b499213f683d3d10c1eb53cf3218d4064be00412d1",
+        "spirv_glsl.cpp": "d5e872920dc60247dac93e5bc72548f8750082535e03cf00acf71072ecf30021",
+        "spirv_msl.cpp": "85e2fa6bf522ec852d73d3c7efac8b3218bb05f2450b1f7c160fc0808a81f463",
+        "spirv_parser.cpp": "14cd83132eeedb2ac5dd567d2efb46ffed58abfa1501822e70442c23ce97d3be"
+      },
+      "patch": "0002-input-driven-unbraced-loops.patch",
+      "sha256": "f7ce2ea3bcb0fbca648eeebc57449a9810b5a6aaf81d30da5d2676354d7e7b68"
     }
   ],
   "schemaVersion": 1

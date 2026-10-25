@@ -1,4 +1,151 @@
 {
+  "boundedMacroWrappersExcluded": [
+    {
+      "originalInventoryAnchor": "spirv_msl.cpp:10085",
+      "reason": "Fixed do/while(false) macro wrapper; exactly one execution, not an input-driven loop."
+    },
+    {
+      "originalInventoryAnchor": "spirv_msl.cpp:10380",
+      "reason": "Fixed do/while(false) macro wrapper; exactly one execution, not an input-driven loop."
+    }
+  ],
+  "coveredUnbracedSites": [
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:446",
+      "originalSourceLine": 446
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:4194",
+      "originalSourceLine": 4195
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:5649",
+      "originalSourceLine": 5649
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:6127",
+      "originalSourceLine": 6127
+    },
+    {
+      "file": "spirv_parser.cpp",
+      "originalInventoryAnchor": "spirv_parser.cpp:128",
+      "originalSourceLine": 129
+    },
+    {
+      "file": "spirv_parser.cpp",
+      "originalInventoryAnchor": "spirv_parser.cpp:431",
+      "originalSourceLine": 432
+    },
+    {
+      "file": "spirv_parser.cpp",
+      "originalInventoryAnchor": "spirv_parser.cpp:940",
+      "originalSourceLine": 940
+    },
+    {
+      "file": "spirv_parser.cpp",
+      "originalInventoryAnchor": "spirv_parser.cpp:979",
+      "originalSourceLine": 979
+    },
+    {
+      "file": "spirv_parser.cpp",
+      "originalInventoryAnchor": "spirv_parser.cpp:1075",
+      "originalSourceLine": 1076
+    },
+    {
+      "file": "spirv_parser.cpp",
+      "originalInventoryAnchor": "spirv_parser.cpp:1361",
+      "originalSourceLine": 1361
+    },
+    {
+      "file": "spirv_cfg.cpp",
+      "originalInventoryAnchor": "spirv_cfg.cpp:167",
+      "originalSourceLine": 167
+    },
+    {
+      "file": "spirv_cfg.cpp",
+      "originalInventoryAnchor": "spirv_cfg.cpp:393",
+      "originalSourceLine": 393
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:1773",
+      "originalSourceLine": 1773
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:17688",
+      "originalSourceLine": 17688
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:17744",
+      "originalSourceLine": 17744
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:3050",
+      "originalSourceLine": 3050
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:3287",
+      "originalSourceLine": 3287
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:5017",
+      "originalSourceLine": 5017
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:5036",
+      "originalSourceLine": 5036
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:5146",
+      "originalSourceLine": 5146
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:9665",
+      "originalSourceLine": 9665
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:11728",
+      "originalSourceLine": 11728
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:13734",
+      "originalSourceLine": 13734
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:14582",
+      "originalSourceLine": 14583
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:14626",
+      "originalSourceLine": 14627
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:17365",
+      "originalSourceLine": 17367
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:17410",
+      "originalSourceLine": 17410
+    }
+  ],
   "explicitDepth": [
     "reachable-opcode traversal",
     "function emission",
@@ -10,13 +157,36 @@
     "StringStream append/allocation/final copy"
   ],
   "instrumentedBracedLoops": 357,
+  "instrumentedLoopCheckpoints": 384,
+  "instrumentedOriginallyUnbracedLoops": 27,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
+  "staticallyBoundedUnbracedSites": [
+    {
+      "originalInventoryAnchor": "spirv_cross.cpp:3676",
+      "reason": "Literal loop bounds execute at most three iterations; retained without a new throwing checkpoint."
+    },
+    {
+      "originalInventoryAnchor": "spirv_cross.cpp:3842",
+      "reason": "Literal loop bounds execute at most three iterations; retained without a new throwing checkpoint."
+    },
+    {
+      "originalInventoryAnchor": "spirv_cross.cpp:3848",
+      "reason": "Literal loop bounds execute at most three iterations; retained without a new throwing checkpoint."
+    },
+    {
+      "originalInventoryAnchor": "spirv_parser.cpp:1411",
+      "reason": "Literal loop bounds execute at most three iterations; retained without a new throwing checkpoint."
+    },
+    {
+      "originalInventoryAnchor": "spirv_glsl.cpp:9263",
+      "reason": "Literal loop bounds execute at most three iterations; retained without a new throwing checkpoint."
+    }
+  ],
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:356",
     "spirv_cross.cpp:365",
     "spirv_cross.cpp:414",
-    "spirv_cross.cpp:446",
     "spirv_cross.cpp:564",
     "spirv_cross.cpp:574",
     "spirv_cross.cpp:581",
@@ -46,7 +216,6 @@
     "spirv_cross.cpp:3848",
     "spirv_cross.cpp:3904",
     "spirv_cross.cpp:4036",
-    "spirv_cross.cpp:4194",
     "spirv_cross.cpp:4452",
     "spirv_cross.cpp:4473",
     "spirv_cross.cpp:4493",
@@ -57,25 +226,14 @@
     "spirv_cross.cpp:4996",
     "spirv_cross.cpp:5103",
     "spirv_cross.cpp:5505",
-    "spirv_cross.cpp:5649",
-    "spirv_cross.cpp:6127",
     "spirv_cross.cpp:6136",
-    "spirv_parser.cpp:128",
-    "spirv_parser.cpp:431",
-    "spirv_parser.cpp:940",
-    "spirv_parser.cpp:979",
-    "spirv_parser.cpp:1075",
-    "spirv_parser.cpp:1361",
     "spirv_parser.cpp:1411",
-    "spirv_cfg.cpp:167",
-    "spirv_cfg.cpp:393",
     "spirv_glsl.cpp:743",
     "spirv_glsl.cpp:792",
     "spirv_glsl.cpp:890",
     "spirv_glsl.cpp:1205",
     "spirv_glsl.cpp:1219",
     "spirv_glsl.cpp:1414",
-    "spirv_glsl.cpp:1773",
     "spirv_glsl.cpp:2224",
     "spirv_glsl.cpp:3005",
     "spirv_glsl.cpp:3339",
@@ -107,8 +265,6 @@
     "spirv_glsl.cpp:17264",
     "spirv_glsl.cpp:17268",
     "spirv_glsl.cpp:17577",
-    "spirv_glsl.cpp:17688",
-    "spirv_glsl.cpp:17744",
     "spirv_glsl.cpp:18294",
     "spirv_glsl.cpp:18953",
     "spirv_glsl.cpp:19181",
@@ -131,14 +287,9 @@
     "spirv_msl.cpp:1728",
     "spirv_msl.cpp:1856",
     "spirv_msl.cpp:2027",
-    "spirv_msl.cpp:3050",
-    "spirv_msl.cpp:3287",
     "spirv_msl.cpp:4143",
     "spirv_msl.cpp:4150",
     "spirv_msl.cpp:4265",
-    "spirv_msl.cpp:5017",
-    "spirv_msl.cpp:5036",
-    "spirv_msl.cpp:5146",
     "spirv_msl.cpp:5153",
     "spirv_msl.cpp:5303",
     "spirv_msl.cpp:5848",
@@ -148,30 +299,21 @@
     "spirv_msl.cpp:9159",
     "spirv_msl.cpp:9162",
     "spirv_msl.cpp:9256",
-    "spirv_msl.cpp:9665",
     "spirv_msl.cpp:9813",
-    "spirv_msl.cpp:10085",
-    "spirv_msl.cpp:10380",
     "spirv_msl.cpp:11617",
-    "spirv_msl.cpp:11728",
     "spirv_msl.cpp:12509",
     "spirv_msl.cpp:12771",
     "spirv_msl.cpp:13453",
     "spirv_msl.cpp:13612",
-    "spirv_msl.cpp:13734",
     "spirv_msl.cpp:13765",
     "spirv_msl.cpp:13789",
     "spirv_msl.cpp:14577",
-    "spirv_msl.cpp:14582",
     "spirv_msl.cpp:14621",
-    "spirv_msl.cpp:14626",
     "spirv_msl.cpp:15136",
     "spirv_msl.cpp:15553",
     "spirv_msl.cpp:16481",
     "spirv_msl.cpp:17244",
     "spirv_msl.cpp:17273",
-    "spirv_msl.cpp:17365",
-    "spirv_msl.cpp:17410",
     "spirv_msl.cpp:19225",
     "spirv_msl.cpp:19930",
     "spirv_msl.cpp:20378",
