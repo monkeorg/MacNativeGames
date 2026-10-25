@@ -240,11 +240,11 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
             NSDictionary *result = operation == MNG_PREPARE_OK ? @{
                 @"titleID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.title_id],
                 @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.application_id],
-                @"titleVersion":@(prepared.title_version), @"versionIdentified":@(prepared.version_identified != 0),
+                @"titleVersion":@(prepared.title_version), @"versionIdentified":prepared.version_identified ? @YES : @NO,
                 @"contentRole":@(prepared.content_role),
                 @"generationID":[NSString stringWithUTF8String:generation], @"jobID":job,
                 @"sourceSHA256":CPHex(prepared.source_sha256, 32), @"assetCount":@(prepared.asset_count), @"assetBytes":@(prepared.asset_bytes),
-                @"exefsVerified":@(prepared.exefs_verified != 0), @"romfsVerified":@(prepared.romfs_verified != 0),
+                @"exefsVerified":prepared.exefs_verified ? @YES : @NO, @"romfsVerified":prepared.romfs_verified ? @YES : @NO,
                 @"signatureVerified":@NO, @"executionVerified":@NO } : nil;
             NSError *error = operation == MNG_PREPARE_OK ? nil : CPError(operation, published || (commitAttempted && operation == MNG_PREPARE_IO));
             dispatch_async(dispatch_get_main_queue(), ^{

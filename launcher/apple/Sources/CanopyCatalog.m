@@ -71,12 +71,12 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
         NSDictionary *entry = @{@"titleID":titleID, @"generationID":[NSString stringWithUTF8String:generation],
             @"recipeID":result.version_identified ? @MNG_STORE_RECIPE_V2 : @MNG_STORE_RECIPE,
             @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)result.application_id],
-            @"titleVersion":@(result.title_version), @"versionIdentified":@(result.version_identified != 0),
+            @"titleVersion":@(result.title_version), @"versionIdentified":result.version_identified ? @YES : @NO,
             @"contentRole":@(result.content_role),
             @"displayName":[_settings displayNameForTitleID:titleID] ?: titleID,
             @"sourceSHA256":HexDigest(result.source_sha256), @"sourceSize":@(result.source_size),
             @"assetCount":@(result.asset_count), @"assetBytes":@(result.asset_bytes),
-            @"integrity":@{@"exefsVerified":@(result.exefs_verified != 0), @"romfsVerified":@(result.romfs_verified != 0), @"signatureVerified":@NO},
+            @"integrity":@{@"exefsVerified":result.exefs_verified ? @YES : @NO, @"romfsVerified":result.romfs_verified ? @YES : @NO, @"signatureVerified":@NO},
             @"preparationState":@"prepared", @"runtimeEligibility":@"unassessed"};
         [entries addObject:entry];
     }

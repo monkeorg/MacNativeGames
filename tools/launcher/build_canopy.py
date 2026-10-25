@@ -31,7 +31,7 @@ SOURCES = ('launcher/apple/Sources/CanopyApp.m',
            'launcher/src/mng_container.c', 'launcher/src/mng_file.c',
            'launcher/src/mng_crypto.c', 'launcher/src/mng_keys.c',
            'launcher/src/mng_content.c', 'launcher/src/mng_prepare.c', 'launcher/src/mng_store.c',
-           'launcher/src/mng_romfs.c',
+           'launcher/src/mng_romfs.c', 'launcher/src/mng_romfs_runtime.c',
            'launcher/src/mng_players.c', 'launcher/src/mng_session.c')
 HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
            'launcher/apple/Sources/CanopyCatalog.h',
@@ -42,7 +42,7 @@ HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
            'launcher/include/mng_container.h', 'launcher/include/mng_file.h',
            'launcher/include/mng_crypto.h', 'launcher/include/mng_keys.h',
            'launcher/include/mng_content.h', 'launcher/include/mng_prepare.h', 'launcher/include/mng_store.h',
-           'launcher/include/mng_romfs.h',
+           'launcher/include/mng_romfs.h', 'launcher/include/mng_romfs_runtime.h',
            'launcher/include/mng_players.h', 'launcher/include/mng_session.h')
 INPUTS = SOURCES + HEADERS + (BRAND,)
 MAX_INPUT_BYTES = 16 * 1024 * 1024

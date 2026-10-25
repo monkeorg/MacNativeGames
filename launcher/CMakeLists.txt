@@ -6,7 +6,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(canopy_core STATIC src/mng_container.c src/mng_file.c
     src/mng_crypto.c src/mng_keys.c src/mng_content.c src/mng_prepare.c src/mng_store.c
-    src/mng_romfs.c src/mng_players.c src/mng_session.c)
+    src/mng_romfs.c src/mng_romfs_runtime.c src/mng_players.c src/mng_session.c)
 if(NOT APPLE)
     find_package(OpenSSL REQUIRED)
     target_link_libraries(canopy_core PUBLIC OpenSSL::Crypto)
