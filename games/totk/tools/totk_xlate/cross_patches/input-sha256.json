@@ -50,6 +50,16 @@
       },
       "patch": "0003-ir-invalidation-loop-checkpoints.patch",
       "sha256": "e79cccfef32909e4e0793d2677b2eb0a1b2dc1af0e820250d3f03d2537ef0e3a"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "d120a8c7e2f26bb55ac632b244313408dd021214ba3708c8bcfc2cf3beb6dbbb"
+      },
+      "before": {
+        "spirv_cross.cpp": "c54d849ce0b7b26e3b3569846bfce6629e3cb083e9d8aa7b3cf635789a1c7036"
+      },
+      "patch": "0004-dependency-traversal-depth.patch",
+      "sha256": "a7fc15be738931eb89474eb6cd0a15d141d58d18d829538f70ad810071936bb6"
     }
   ],
   "schemaVersion": 1

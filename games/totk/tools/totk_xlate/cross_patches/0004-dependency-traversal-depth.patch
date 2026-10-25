@@ -1,0 +1,35 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -3576,11 +3576,16 @@
+ 	if (id == 0)
+ 		return;
+ 
++	canopy_cross_budget::depth_scope canopy_depth;
++
+ 	// Access chains used in multiple blocks mean hoisting all the variables used to construct the access chain as not all backends can use pointers.
+ 	auto itr = rvalue_forward_children.find(id);
+ 	if (itr != end(rvalue_forward_children))
+ 		for (auto child_id : itr->second)
++		{
++			canopy_cross_budget::step();
+ 			notify_variable_access(child_id, block);
++		}
+ 
+ 	if (id_is_phi_variable(id))
+ 		accessed_variables_to_block[id].insert(block);
+@@ -5075,11 +5080,15 @@
+ 
+ void Compiler::CombinedImageSamplerUsageHandler::add_hierarchy_to_comparison_ids(uint32_t id)
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	// Traverse the variable dependency hierarchy and tag everything in its path with comparison ids.
+ 	comparison_ids.insert(id);
+ 
+ 	for (auto &dep_id : dependency_hierarchy[id])
++	{
++		canopy_cross_budget::step();
+ 		add_hierarchy_to_comparison_ids(dep_id);
++	}
+ }
+ 
+ bool Compiler::CombinedImageSamplerUsageHandler::handle(Op opcode, const uint32_t *args, uint32_t length)
