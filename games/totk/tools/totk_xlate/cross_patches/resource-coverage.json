@@ -428,7 +428,8 @@
   ],
   "explicitArithmetic": [
     "type-location vector-size narrowing, member-count addition and array-factor multiplication (caller location offsets and specialization evaluation excluded)",
-    "MSL used-location spans and automatic builtin search advancement reserve the existing unknown-location sentinel (upstream caller offset arithmetic excluded)"
+    "MSL used-location spans and automatic builtin search advancement reserve the existing unknown-location sentinel (upstream caller offset arithmetic excluded)",
+    "eight interface base-offset/cursor additions in three MSL flattening methods and GLSL accumulated-member lookup refuse the unknown sentinel before arithmetic (other location math excluded)"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
