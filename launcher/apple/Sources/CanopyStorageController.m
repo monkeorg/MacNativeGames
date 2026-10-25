@@ -113,7 +113,7 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if(section==0)return [NSString stringWithFormat:@"%@\nSelect data to verify its logical size or change the current selection. Verification checks assets, not gameplay compatibility. Current, previous and active versions are protected.",_status];
-    if(section==1)return @"Resume by reselecting the original preparation mode, source and local keys. Native verification must match the retained job; a listed ID does not identify its input kind. Add-ons resume through their exact base's Add-ons screen. Only unpublished jobs can be discarded. Saves and supplied source files are preserved.";
+    if(section==1)return @"Recorded add-on jobs open their exact verified base's Add-ons flow after verification. Legacy jobs require original mode and inputs. Unavailable or corrupt resume metadata never falls back to generic preparation. Only unpublished jobs can be discarded; saves and supplied sources are preserved.";
     NSArray *issues=_storage.snapshot[@"issues"];
     NSString *details=issues.count?[[issues componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"]:@"";
     return [details stringByAppendingString:@"Sizes are logical file lengths, not disk allocation or promised free space. Clear keeps the seed; remove targets one identity. In-use caches cannot be cleared or removed. Unknown or corrupt entries are preserved."];
@@ -134,7 +134,12 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
         cell.textLabel.text=[NSString stringWithFormat:@"%@ • %@",row[@"titleID"],position];
         NSString *checked=[row[@"verification"] isEqual:@"verified"]?@"Assets checked":@"Hash check required";
         cell.detailTextLabel.text=[NSString stringWithFormat:@"%@ • %@\nLogical assets: %@",identifier,checked,STBytes(row[@"logicalAssetBytes"])];
-    } else if(path.section==1) {cell.textLabel.text=@"Unfinished preparation";cell.detailTextLabel.text=identifier;}
+    } else if(path.section==1) {
+        NSString *kind=row[@"resumeKind"];
+        cell.textLabel.text=[kind isEqual:@"addon"]?@"Unfinished add-on preparation":@"Unfinished preparation";
+        NSString *route=[kind isEqual:@"addon"]?@"Verify exact base before resuming":[kind isEqual:@"legacy"]?@"Reselect original mode and inputs":@"Resume unavailable; metadata could not be verified";
+        cell.detailTextLabel.text=[NSString stringWithFormat:@"%@ • %@",identifier,route];
+    }
     else {cell.textLabel.text=[NSString stringWithFormat:@"%@ • %@",row[@"titleID"],identifier];
         cell.detailTextLabel.text=[row[@"usageState"] isEqual:@"available"]?[NSString stringWithFormat:@"Seed %@ • generated cache %@",STBytes(row[@"seedBytes"]),STBytes(row[@"runtimeBytes"])]:@"Cache could not be verified for management. Existing files were preserved.";}
     return cell;
@@ -183,6 +188,28 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
     if(presented)[presented dismissViewControllerAnimated:YES completion:present];
     else present();
 }
+- (void)resolveAddonResume:(NSDictionary *)row intent:(NSUInteger)intent sheet:(UIViewController *)sheet {
+    if(_storage.busy || _ownedUI!=sheet || ![self intentValid:intent] || self.presentedViewController || ![self canMutate] || !self.resumeAddonPreparation)return;
+    if(![row[@"identifier"] isKindOfClass:NSString.class])return;
+    NSString *job=[row[@"identifier"] copy];
+    if(!mng_selection_job_valid(job.UTF8String))return;
+    _status=@"Verifying the recorded add-on job and its exact base generation…";
+    BOOL accepted=[_storage resolveAddonResumeJob:job completion:^(NSDictionary *route,NSError *error){
+        [self refresh];
+        // Keep the originating sheet alive while hashing, but never revive its
+        // intent after navigation, a scene change or a different presentation.
+        if(self->_storage.busy || self->_ownedUI!=sheet || ![self intentValid:intent] || self.presentedViewController || ![self canMutate])return;
+        if(error || ![route[@"jobIdentifier"] isEqual:job]) {
+            self->_ownedUI=nil;
+            [self message:@"This add-on job could not be resolved against its recorded base. Existing work was preserved; reload Storage before retrying."];return;
+        }
+        void (^resume)(NSDictionary *)=[self.resumeAddonPreparation copy];
+        self->_ownedUI=nil;
+        if(resume)resume([route copy]);
+    }];
+    if(!accepted)_status=@"Storage could not accept add-on resume verification. Reload before retrying.";
+    [self refresh];
+}
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];if(_storage.busy||![self activeOwner]||self.presentedViewController)return;
     NSArray *rows=[self rows:path.section];if((NSUInteger)path.row>=rows.count)return;NSDictionary *row=[rows[(NSUInteger)path.row] copy];
@@ -198,7 +225,14 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
             [sheet addAction:[UIAlertAction actionWithTitle:@"Remove unused prepared data" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *button){(void)button;if(!weakSheet||self->_ownedUI!=weakSheet||![self intentValid:intent])return;
                 [self confirm:CanopyStorageRemoveGeneration row:row title:@"Remove this prepared data?" message:@"Only this unused prepared data is removed. Current, rollback and active versions are checked again and protected. Saves and supplied source files are preserved." intent:intent];}]];
     } else if(path.section==1) {
-        if(self.resumePreparation) [sheet addAction:[UIAlertAction actionWithTitle:@"Resume with reselected inputs" style:UIAlertActionStyleDefault handler:^(UIAlertAction *button){
+        if([row[@"resumeKind"] isEqual:@"addon"] && self.resumeAddonPreparation)[sheet addAction:[UIAlertAction actionWithTitle:@"Resume add-on with original inputs" style:UIAlertActionStyleDefault handler:^(UIAlertAction *button){
+            (void)button;UIViewController *origin=weakSheet;
+            if(!origin || self->_ownedUI!=origin || ![self intentValid:intent])return;
+            void (^resolve)(void)=^{[self resolveAddonResume:row intent:intent sheet:origin];};
+            if(self.presentedViewController==origin)[origin dismissViewControllerAnimated:YES completion:resolve];
+            else if(!self.presentedViewController)resolve();
+        }]];
+        if([row[@"resumeKind"] isEqual:@"legacy"] && self.resumePreparation) [sheet addAction:[UIAlertAction actionWithTitle:@"Resume with reselected inputs" style:UIAlertActionStyleDefault handler:^(UIAlertAction *button){
             (void)button;if(!weakSheet||self->_ownedUI!=weakSheet||![self intentValid:intent])return;NSString *job=row[@"identifier"];
             if(self->_storage.busy||!mng_selection_job_valid(job.UTF8String)||
                 UIApplication.sharedApplication.applicationState!=UIApplicationStateActive||

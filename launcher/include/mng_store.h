@@ -10,6 +10,28 @@
 #define MNG_STORE_MAX_ASSETS 128u
 #define MNG_STORE_MAX_BYTES (UINT64_C(64) << 30)
 struct mng_store;
+#define MNG_STORE_MAX_JOB_INTENTS 128u
+#define MNG_STORE_JOB_ADDON 1u
+struct mng_store_job_intent {
+    unsigned mode;
+    uint64_t application_id,addon_title_id;
+    char base_generation_id[65];
+};
+/* Closed, checksummed private resume routing metadata, never source/key paths or
+ * publication authority. Absent metadata is legacy; unknown/corrupt metadata is
+ * an error, never treated as absence. Requires an existing exact private job.
+ * On failure both outputs remain unchanged; on absent success only present=0. */
+enum mng_prepare_status mng_store_read_job_intent(struct mng_store *,const char *job_id,
+    struct mng_store_job_intent *out,int *present);
+/* Verify the exact identified base ONCE under this retained native store lock,
+ * begin/resume the job, then persist/confirm its exact tuple before any asset
+ * write. Existing tuple conflicts refuse. Ordinary begin may inspect a typed
+ * job but its sink/commit refuses until this method confirms the intent.
+ * verified_base is optional and unchanged on failure. Pending valid intents
+ * protect the exact base generation from removal until commit/discard. */
+enum mng_prepare_status mng_store_begin_addon(struct mng_store *,const char *job_id,
+    uint64_t application_id,const char *base_generation_id,uint64_t addon_title_id,
+    struct mng_prepare_result *verified_base);
 struct mng_store_io_metrics {
     uint64_t streamed_bytes,written_bytes,cloned_logical_bytes,compared_equal_bytes,resumed_bytes;
     uint64_t cloned_assets,clone_fallback_assets;

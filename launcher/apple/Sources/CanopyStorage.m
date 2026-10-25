@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -84,9 +85,16 @@ static NSString *STPrevious(int title,BOOL *valid) {
     close(fd);NSString *value=ok?[[NSString alloc] initWithBytes:bytes length:64 encoding:NSUTF8StringEncoding]:nil;
     *valid=STHex(value,64);return *valid?value:nil;
 }
+static NSString *STDigest(const unsigned char bytes[32]) {char text[65];for(unsigned i=0;i<32;i++)snprintf(text+2*i,3,"%02x",bytes[i]);return [NSString stringWithUTF8String:text];}
+static NSDictionary *STAddonIntent(NSString *job,const struct mng_store_job_intent *intent) {
+    return @{@"mode":@"addon",@"jobIdentifier":job,
+        @"applicationID":[NSString stringWithFormat:@"%016llx",(unsigned long long)intent->application_id],
+        @"baseGenerationID":[NSString stringWithUTF8String:intent->base_generation_id],
+        @"addonTitleID":[NSString stringWithFormat:@"%016llx",(unsigned long long)intent->addon_title_id]};
+}
 static NSDictionary *STEmpty(void) {return @{@"generations":@[],@"jobs":@[],@"shaders":@[],@"issues":@[],@"complete":@YES};}
 static NSError *STError(NSInteger code) {
-    NSString *message=code==2?@"Storage is busy or the selected target is protected. Retry after the active job or session ends.":
+    NSString *message=code==2?@"Storage is busy or the selected target is protected. Review current/rollback selections, active leases and retained preparation jobs before retrying.":
         code==4?@"The selected prepared assets did not pass verification. Existing data was preserved.":
         @"The storage operation could not be confirmed. It may have partially completed. Current was read again where possible; refresh before retrying.";
     return [NSError errorWithDomain:@"CanopyStorage" code:code userInfo:@{NSLocalizedDescriptionKey:message}];
@@ -154,7 +162,12 @@ static NSString *STAction(CanopyStorageAction action) {
                 if(!STHex(job,32)){STIssue(issues,@"An unknown preparation-job entry was preserved.");continue;}
                 int fd=STChild(jobRoot,job.UTF8String);
                 if(fd<0){STIssue(issues,@"A linked or nonprivate preparation job was preserved.");continue;}close(fd);
-                [jobs addObject:@{@"identifier":job}];
+                struct mng_store_job_intent intent={0};int present=0;
+                enum mng_prepare_status routing=mng_store_read_job_intent(store,job.UTF8String,&intent,&present);
+                NSMutableDictionary *row=[@{@"identifier":job,@"resumeKind":routing==MNG_PREPARE_OK?(present?@"addon":@"legacy"):@"unavailable"} mutableCopy];
+                if(routing==MNG_PREPARE_OK&&present)row[@"resumeIntent"]=STAddonIntent(job,&intent);
+                else if(routing!=MNG_PREPARE_OK)STIssue(issues,@"A preparation's resume context could not be verified. Its data was preserved; no different mode was inferred.");
+                [jobs addObject:[row copy]];
             }
             if(titles>=0)close(titles);if(jobRoot>=0)close(jobRoot);
         }
@@ -199,6 +212,33 @@ static NSString *STAction(CanopyStorageAction action) {
     if(_busy||!completion)return NO;_busy=YES;
     dispatch_async(_queue,^{@autoreleasepool{NSDictionary *snapshot=[self scan];
         dispatch_async(dispatch_get_main_queue(),^{self->_snapshot=snapshot;self->_busy=NO;completion(snapshot,nil);});}});return YES;
+}
+- (BOOL)resolveAddonResumeJob:(NSString *)jobIdentifier completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion {
+    NSAssert(NSThread.isMainThread,@"Storage main-thread owner");
+    if(_busy||!completion||!STHex(jobIdentifier,32))return NO;
+    _busy=YES;NSString *job=[jobIdentifier copy];
+    dispatch_async(_queue,^{@autoreleasepool{
+        int root=STRoot(self->_prepared);struct mng_store *store=NULL;
+        enum mng_prepare_status status=root<0?MNG_PREPARE_IO:mng_store_open(root,&store);
+        struct mng_store_job_intent intent={0};int present=0;struct mng_prepare_result base={0};NSDictionary *route=nil;
+        if(status==MNG_PREPARE_OK)status=mng_store_read_job_intent(store,job.UTF8String,&intent,&present);
+        if(status==MNG_PREPARE_OK&&!present)status=MNG_PREPARE_UNSUPPORTED;
+        if(status==MNG_PREPARE_OK)status=mng_store_verify(store,intent.application_id,intent.base_generation_id,&base);
+        if(status==MNG_PREPARE_OK&&(base.title_id!=intent.application_id||base.application_id!=intent.application_id||base.version_identified!=1||base.source_kind||
+            (base.content_role!=0x80&&base.content_role!=0x81)||base.exefs_verified!=1||base.romfs_verified!=1))status=MNG_PREPARE_UNSUPPORTED;
+        if(status==MNG_PREPARE_OK) {
+            NSMutableDictionary *resolved=[STAddonIntent(job,&intent) mutableCopy];[resolved removeObjectForKey:@"mode"];
+            NSString *title=resolved[@"applicationID"],*generation=resolved[@"baseGenerationID"];
+            resolved[@"verifiedBaseEntry"]=@{@"titleID":title,@"applicationID":title,@"generationID":generation,
+                @"titleVersion":@(base.title_version),@"versionIdentified":@YES,@"contentRole":@(base.content_role),
+                @"sourceSize":@(base.source_size),@"sourceSHA256":STDigest(base.source_sha256),
+                @"assetCount":@(base.asset_count),@"assetBytes":@(base.asset_bytes),@"preparationState":@"prepared",
+                @"integrity":@{@"exefsVerified":@YES,@"romfsVerified":@YES,@"signatureVerified":@NO},@"runtimeEligibility":@"unassessed"};
+            route=[resolved copy];
+        }
+        mng_store_close(store);if(root>=0)close(root);NSError *error=status==MNG_PREPARE_OK?nil:STError(status==MNG_PREPARE_INTEGRITY?4:3);
+        dispatch_async(dispatch_get_main_queue(),^{self->_busy=NO;completion(route,error);});
+    }});return YES;
 }
 - (NSDictionary *)runAction:(CanopyStorageAction)action identifier:(NSString *)identifier title:(NSString *)title error:(NSError **)error {
     NSMutableDictionary *operation=[@{@"action":STAction(action),@"identifier":identifier,@"outcome":@"unavailable"} mutableCopy];

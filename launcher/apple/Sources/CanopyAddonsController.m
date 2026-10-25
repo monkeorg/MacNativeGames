@@ -27,7 +27,13 @@ static NSString *CAText(id value) {return !value||value==NSNull.null?@"Unavailab
     BOOL _reloading,_catalogFailed,_cancelRequested,_resuming,_previousPop,_suppressedPop;
 }
 - (instancetype)initWithBaseEntry:(NSDictionary *)base preparedRootURL:(NSURL *)prepared globalCacheRootURL:(NSURL *)cache settings:(CanopySettings *)settings {
+    return [self initWithBaseEntry:base preparedRootURL:prepared globalCacheRootURL:cache settings:settings resumeJobIdentifier:nil addonTitleID:nil];
+}
+- (instancetype)initWithBaseEntry:(NSDictionary *)base preparedRootURL:(NSURL *)prepared globalCacheRootURL:(NSURL *)cache settings:(CanopySettings *)settings
+    resumeJobIdentifier:(NSString *)jobIdentifier addonTitleID:(NSString *)addonTitleID {
+    if((jobIdentifier!=nil)!=(addonTitleID!=nil)||(jobIdentifier&&(!CAHex(jobIdentifier,32)||!CATitle(addonTitleID)||[addonTitleID isEqual:base[@"titleID"]])))return nil;
     if((self=[super initWithStyle:UITableViewStyleInsetGrouped])) {
+        _resumeJob=[jobIdentifier copy];_resumeAddon=[addonTitleID copy];
         (void)settings; // Factory compatibility; this IDs-only screen reads no user metadata.
         _base=[base copy];_prepared=[prepared copy];_cache=[cache copy];_rows=@[];_issues=@[];
         _status=@"Prepared add-ons are not activated by this screen.";
@@ -180,7 +186,7 @@ static NSString *CAText(id value) {return !value||value==NSNull.null?@"Unavailab
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if(section==0)return [NSString stringWithFormat:@"%@\n%@\n%@",_status,_progressText?:@"",[_issues componentsJoinedByString:@"\n"]];
-    return [NSString stringWithFormat:@"Base %@ • generation %@\nPrepared assets are not activated. The current TOTK host has no add-on binding. Installation does not grant mount, execution or gameplay support. Sources, keys, saves and account identities are outside storage cleanup. Resume retains IDs only in this screen's memory; select original source and keys again.",CAText(_base[@"titleID"]),CAText(_base[@"generationID"])];
+    return [NSString stringWithFormat:@"Base %@ • generation %@\nPrepared assets are not activated. The current TOTK host has no add-on binding. Installation does not grant mount, execution or gameplay support. Sources, keys, saves and account identities are outside storage cleanup. Storage retains only the exact resume IDs; select the original source and keys again.",CAText(_base[@"titleID"]),CAText(_base[@"generationID"])];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"addon"];

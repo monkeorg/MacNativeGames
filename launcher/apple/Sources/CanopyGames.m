@@ -1136,6 +1136,30 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
             }];
             else [current presentModeAtEpoch:epoch];
         };
+        __weak CanopyStorageController *resumeSource=storage;
+        storage.resumeAddonPreparation=^(NSDictionary *route) {
+            CanopyGamesController *current=owner;CanopyStorageController *sender=resumeSource;
+            if(!current || !sender || current.navigationController.topViewController!=sender ||
+                sender.presentedViewController || !sender.viewIfLoaded.window.isKeyWindow ||
+                sender.viewIfLoaded.window.windowScene.activationState!=UISceneActivationStateForegroundActive ||
+                UIApplication.sharedApplication.applicationState!=UIApplicationStateActive || [current working] ||
+                [CanopySessionController nativeSessionOwnsProcess])return;
+            NSString *job=route[@"jobIdentifier"],*application=route[@"applicationID"],*generation=route[@"baseGenerationID"],*addon=route[@"addonTitleID"];
+            NSDictionary *base=route[@"verifiedBaseEntry"];
+            if(![job isKindOfClass:NSString.class] || !mng_selection_job_valid(job.UTF8String) ||
+                ![CanopySettings isValidTitleID:application] || ![CanopySettings isValidTitleID:addon] ||
+                [application isEqual:@"0000000000000000"] || [addon isEqual:@"0000000000000000"] || [addon isEqual:application] ||
+                ![generation isKindOfClass:NSString.class] || !mng_selection_hex_valid(generation.UTF8String,64) ||
+                ![base isKindOfClass:NSDictionary.class] || ![base[@"titleID"] isEqual:application] ||
+                ![base[@"generationID"] isEqual:generation] || [base[@"preparedKind"] isEqual:@"addOn"])return;
+            NSURL *globalCache=[[current->_preparedRoot URLByDeletingLastPathComponent] URLByAppendingPathComponent:@"Caches" isDirectory:YES];
+            CanopyAddonsController *addons=[[CanopyAddonsController alloc] initWithBaseEntry:[base copy]
+                preparedRootURL:current->_preparedRoot globalCacheRootURL:globalCache settings:current->_settings
+                resumeJobIdentifier:[job copy] addonTitleID:[addon copy]];
+            if(!addons)return;
+            addons.mutationAllowed=^BOOL {CanopyGamesController *live=owner;return live && ![live working] && ![CanopySessionController nativeSessionOwnsProcess];};
+            [current.navigationController pushViewController:addons animated:YES];
+        };
         [self.navigationController pushViewController:storage animated:YES];
     }
     else if (path.row == 5) [self.navigationController pushViewController:CanopyMakeDiagnosticsController(_diagnostics,[self diagnosticSources]) animated:YES];
