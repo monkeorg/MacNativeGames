@@ -386,6 +386,20 @@
       },
       "patch": "0034-final-collection-loop-checkpoints.patch",
       "sha256": "3050364f798cc4659b9b1c4584935ce513b3cb173167cbe8b4338764a9faa091"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "8ee9516b6cce1fa51a4357efaca354cd9e7af2776c9417ebae52697a2c12a177",
+        "spirv_cross_containers.hpp": "cda89144a455ba2606ed808ad4d91472d19781c3b03b8de5e4fa329bfe6f476f",
+        "spirv_cross_parsed_ir.cpp": "791024217aa78f791492c15dffebcf9a337f3fc64b1dbf4e50ad016866fed3da"
+      },
+      "before": {
+        "spirv_cross.cpp": "8259e7cdc8d808fae38dabba584f835174739d4912401493f8dcb3ec31709644",
+        "spirv_cross_containers.hpp": "bfd5fbbb963eda49f4d5d9138147b2a2d566fe0ba9aaa0f1a363938db4b1e965",
+        "spirv_cross_parsed_ir.cpp": "01c57f8e4ec880a71b03622a40758a787449ef26ee6a314b1b5f3fbf72ded1b4"
+      },
+      "patch": "0035-member-metadata-growth-bounds.patch",
+      "sha256": "ef15fb67b75f05924e03192a312d6ed21fd20d8151b0d8354d23dbfdfdf741dc"
     }
   ],
   "schemaVersion": 1

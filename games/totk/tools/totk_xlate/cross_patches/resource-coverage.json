@@ -4,6 +4,11 @@
       "function": "parser_type_vector_copy_bytes",
       "patch": "0029-parser-type-copy-precharges.patch",
       "reason": "A count precheck limits count to 256 MiB / sizeof(element), capacity starts at8 and doubles with checked arithmetic: at most25 iterations for sizeof(element)>=1. No checkpoint or original-loop inventory credit. Not a generic allocator/noexcept modification."
+    },
+    {
+      "function": "precharge_member_metadata_growth",
+      "patch": "0035-member-metadata-growth-bounds.patch",
+      "reason": "required <=262144, actual N0 capacity starts at least1 on growth and doubles under size/payload checks: at most18 iterations. No checkpoint or original-loop inventory credit; allocator/noexcept operations unchanged."
     }
   ],
   "boundedMacroWrappersExcluded": [
@@ -717,7 +722,8 @@
     "two array-dimension query overloads reject empty/default narrowing and mismatched/indexed metadata before access (zero dimension values and existing default-spec evaluation preserved)",
     "get_metal_resource_index only: dimension narrowing/product, remapped texture-plus-plane and four numeric cursor additions (exact UINT32_MAX and zero strides preserved; not full resource validity)",
     "Parser type-copy precharges: four default-N8 SmallVector copied payload capacities, copied-element work and immediate array append growth; checked per-copy256MiB and cumulative existing budget before Variant/ObjectPool transitions, no allocator/noexcept changes",
-    "fill_composite_constant non-array/non-Struct matrix/vector fixed[4] bounds and minimum initializer availability before target mutation (caller CompositeInsert indices/IDs excluded)"
+    "fill_composite_constant non-array/non-Struct matrix/vector fixed[4] bounds and minimum initializer availability before target mutation (caller CompositeInsert indices/IDs excluded)",
+    "Three ParsedIR member metadata writers: uint64 index-plus-one, size_t/reserve/count/256MiB checks before meta[]; actual N0 capacity replacement payload, old-row moves/new-row work and delta nodes precharged before resize; local combined-decoration type member index guard after metadata bounds, annotations may precede types"
   ],
   "explicitDepth": [
     "reachable-opcode traversal",
