@@ -33,7 +33,12 @@ static UITableViewCell *GamesCell(UITableView *table, NSString *title, NSString 
 }
 static NSString *GamesDisplayName(NSDictionary *entry, CanopySettings *settings) {
     NSString *title = entry[@"titleID"];
-    return [settings displayNameForTitleID:title] ?: CanopyGameNameForTitleID(title) ?: entry[@"displayName"] ?: title;
+    NSString *saved = [settings displayNameForTitleID:title];
+    // Legacy preference-only rows used titleID as a generated name. The schema
+    // cannot distinguish an intentional literal titleID name, so both use the
+    // default label here. This display fallback never rewrites metadata.
+    if ([saved isEqual:title]) saved = nil;
+    return saved ?: CanopyGameNameForTitleID(title) ?: entry[@"displayName"] ?: title;
 }
 static NSString *GamesVersion(NSDictionary *entry) {
     return CanopyGameVersionLabel(entry[@"titleID"], [entry[@"titleVersion"] unsignedIntValue], [entry[@"versionIdentified"] boolValue]);
