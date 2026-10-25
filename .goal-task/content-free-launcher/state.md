@@ -9,8 +9,13 @@ building on it. Preserve the draft dependency chain and existing app behavior.
 No tests, probes, builds, CI dispatches, new tests, private inputs, installs,
 merges or releases in this continuation. Source review is not runtime evidence.
 
-Latest published source: `7d112a2e5af94b6388b912c4eee4bac1934ef963`, draft #154,
-`fix/canopy-terminal-audio-silence`, depends on #153 → #152 → #151.
+Latest published source: `2f5d3baf459ffad9087cb4f7afa37eba174813b6`, draft #155,
+`fix/canopy-backup-retirement-recovery`, depends on #154 → #153 → #152 → #151.
+#155 replaces direct backup deletion with fully preflighted, inode/hash-bound,
+recorded retirement and surviving-subset recovery. Retry durability, original
+path limits, mandatory backups, profile seals and transaction-first recovery
+were independently source-reviewed by execution/root. Unbuilt and untested;
+no fault-injection or physical acceptance.
 #153 / `ad8da5875842f6cc1df70db4314b95fae2ffa028` connects actual per-title
 mouse policy, settings, capture/event admission and stale callback invalidation.
 #154 connects irreversible output suspension to real main-worker cleanup;
@@ -30,14 +35,14 @@ Active ownership (shared worktree; stage exact reviewed files only):
 - storage_audit: native durable add-on job intent plus Storage/Addons backend
   adapters (D3/D4/D5).
 - product_audit: connected StorageController/Games exact-base add-on routing
-  (D3/D4/D5), awaiting actual backend headers before final alignment/review.
-- artifact_audit: bounded SaveStore backup retirement/recovery (D7), existing
-  profile lock/seal/mandatory-backup authority preserved.
+  (D3/D4/D5), API aligned and frozen for independent review.
+- artifact_audit: independent review of storage/product durable add-on slice;
+  own SaveStore retirement implementation is published, not self-approved.
 - execution_audit/root: independent reviews; risky storage/translator
   slices need two independent reviewers. Authors cannot approve themselves.
 
-Newly established source gaps also queued: interrupted save-backup deletion
-recovery (D7); real MK8DX integration from pinned original MIT host/HLE source
+The interrupted save-backup deletion gap is source-fixed in #155, not exercised.
+Real MK8DX integration from pinned original MIT host/HLE source is active
 (D11), including seat isolation and truthful controller-support handling.
 Public original upstream metadata/source exists; the earlier blanket claim that
 no MK source exists is superseded. Nintendo-derived code/assets/shaders remain
