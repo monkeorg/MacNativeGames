@@ -435,6 +435,12 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
 }
 
 static void refresh_gamepads(void) {
+#if TARGET_OS_IPHONE
+    // The frontend clears input after atomically dropping focus. A later mouse
+    // release or controller callback must not repopulate that cleared state.
+    // Foreground sampling resumes on the next normal refresh callback.
+    if (!runtime_front_focus()) return;
+#endif
     RuntimeGamepadState next = {0};
     uint64_t physical = (uint64_t)mouseButtons << CONTROLLER_MOUSE_FIRST;
     for (GCController *controller in GCController.controllers) {
@@ -627,5 +633,14 @@ void runtime_gamepad_read(RuntimeGamepadState *out) {
     out->rx = stronger_axis(out->rx, mouseRX); out->ry = stronger_axis(out->ry, mouseRY);
     if (touchState.connected) out->connected = 1;
     pressedEdges = 0;
+#if TARGET_OS_IPHONE
+    // Focus can already be gone before the main-thread clear/cancel callbacks
+    // finish. Suppress controls while preserving device connection metadata;
+    // the queues consumed above are not replayed on foreground return.
+    if (!runtime_front_focus()) {
+        out->buttons = 0;
+        out->lx = out->ly = out->rx = out->ry = 0;
+    }
+#endif
     pthread_mutex_unlock(&gamepadLock);
 }
