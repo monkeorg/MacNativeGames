@@ -1,0 +1,26 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -2906,7 +2906,10 @@
+ {
+ 	SmallVector<EntryPoint> entries;
+ 	for (auto &entry : ir.entry_points)
++	{
++		canopy_cross_budget::step();
+ 		entries.push_back({ entry.second.orig_name, entry.second.model });
++	}
+ 	return entries;
+ }
+ 
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -4498,7 +4498,10 @@
+ 				exprs.reserve(array_size);
+ 				auto &c = get<SPIRConstant>(var.initializer);
+ 				for (uint32_t j = 0; j < array_size; j++)
++				{
++					canopy_cross_budget::step();
+ 					exprs.push_back(to_expression(get<SPIRConstant>(c.subconstants[j]).subconstants[i]));
++				}
+ 				statement("const ", type_to_glsl(array_type), " ", lut_name, type_to_array_glsl(array_type, 0), " = ",
+ 				          type_to_glsl_constructor(array_type), "(", merge(exprs, ", "), ");");
+ 			}
