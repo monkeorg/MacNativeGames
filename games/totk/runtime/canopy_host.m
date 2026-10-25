@@ -31,6 +31,111 @@ int canopy_host_read_display_state(struct mng_display_state *out) {
         MNG_DISPLAY_PATCHES_VALIDATED:MNG_DISPLAY_PENDING;}
     *out=state;return 0;
 }
+#if TARGET_OS_IPHONE || defined(CANOPY_WORKER_NATIVE_PROBE)
+#include "thread_compat.h"
+#include <errno.h>
+#include <limits.h>
+/* One process-owned main worker and one process-lifetime observer. The latter
+ * deliberately stays parked after joining: this is observation, not ownership
+ * of every runtime helper and never evidence that the process can relaunch. */
+static pthread_mutex_t lifecycle_lock=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t lifecycle_changed=PTHREAD_COND_INITIALIZER;
+static struct canopy_totk_lifecycle_state lifecycle_state={
+    CANOPY_TOTK_LIFECYCLE_ABI,sizeof(struct canopy_totk_lifecycle_state),CANOPY_TOTK_MAIN_NOT_STARTED,0,0,0,0,0,0,0,0};
+static pthread_t main_worker;
+static int worker_claimed,worker_created,worker_launch_failed,main_did_return,main_result;
+static int (*main_entry)(void *);
+static void *main_argument;
+static _Atomic int worker_running;
+static void main_worker_cleanup(void *unused) {
+    (void)unused;
+    /* This boundary is reached only by a real return or pthread_exit on the
+     * main worker. It requests no guest exit and retains all child ownership. */
+    runtime_canopy_threads_close_admission();
+    pthread_mutex_lock(&lifecycle_lock);
+    lifecycle_state.main_returned=(uint32_t)main_did_return;
+    lifecycle_state.main_return_code=main_did_return?main_result:0;
+    if(lifecycle_state.phase!=CANOPY_TOTK_MAIN_OBSERVATION_FAILED)
+        lifecycle_state.phase=CANOPY_TOTK_MAIN_CLEANUP_OBSERVED;
+    atomic_store_explicit(&worker_running,0,memory_order_release);
+    pthread_cond_broadcast(&lifecycle_changed);
+    pthread_mutex_unlock(&lifecycle_lock);
+}
+static void *main_worker_entry(void *unused) {
+    (void)unused;
+    /* start holds this lock across create/publication. A fast worker therefore
+     * cannot have cleanup/JOINED overwritten by a later RUNNING publication. */
+    pthread_mutex_lock(&lifecycle_lock);
+    int (*entry)(void *)=main_entry;void *argument=main_argument;
+    pthread_mutex_unlock(&lifecycle_lock);
+    pthread_cleanup_push(main_worker_cleanup,NULL);
+    int result=entry(argument);
+    pthread_mutex_lock(&lifecycle_lock);
+    main_did_return=1;main_result=result;
+    pthread_mutex_unlock(&lifecycle_lock);
+    pthread_cleanup_pop(1);
+    return NULL;
+}
+static void *main_worker_observer(void *unused) {
+    (void)unused;
+    pthread_mutex_lock(&lifecycle_lock);
+    while(!worker_created && !worker_launch_failed)pthread_cond_wait(&lifecycle_changed,&lifecycle_lock);
+    int created=worker_created;pthread_t worker=main_worker;
+    pthread_mutex_unlock(&lifecycle_lock);
+    if(created) {
+        int result=pthread_join(worker,NULL); /* Includes all actual TLS destructors. */
+        pthread_mutex_lock(&lifecycle_lock);
+        if(result) {lifecycle_state.phase=CANOPY_TOTK_MAIN_OBSERVATION_FAILED;lifecycle_state.join_error=(uint32_t)result;}
+        else {lifecycle_state.phase=CANOPY_TOTK_MAIN_JOINED;lifecycle_state.main_joined=1;}
+        pthread_cond_broadcast(&lifecycle_changed);
+        pthread_mutex_unlock(&lifecycle_lock);
+    }
+    pthread_mutex_lock(&lifecycle_lock);
+    for(;;)pthread_cond_wait(&lifecycle_changed,&lifecycle_lock);
+    return NULL;
+}
+/* Actual private start_host and the original-source native probe use exactly
+ * this component. Caller owns entry/context for the single process lifetime. */
+static int launch_main_worker(int (*entry)(void *),void *argument,size_t stack_size) {
+    if(!entry || stack_size<(size_t)PTHREAD_STACK_MIN)return -1;
+    pthread_attr_t worker_attributes,observer_attributes;
+    if(pthread_attr_init(&worker_attributes))return -1;
+    if(pthread_attr_setstacksize(&worker_attributes,stack_size)) {pthread_attr_destroy(&worker_attributes);return -1;}
+    if(pthread_attr_init(&observer_attributes)) {pthread_attr_destroy(&worker_attributes);return -1;}
+    if(pthread_attr_setdetachstate(&observer_attributes,PTHREAD_CREATE_DETACHED)) {
+        pthread_attr_destroy(&observer_attributes);pthread_attr_destroy(&worker_attributes);return -1;
+    }
+    pthread_mutex_lock(&lifecycle_lock);
+    if(worker_claimed) {
+        pthread_mutex_unlock(&lifecycle_lock);pthread_attr_destroy(&observer_attributes);pthread_attr_destroy(&worker_attributes);return -1;
+    }
+    worker_claimed=1;main_entry=entry;main_argument=argument;
+    pthread_t observer;
+    int result=pthread_create(&observer,&observer_attributes,main_worker_observer,NULL);
+    if(!result) {
+        result=pthread_create(&main_worker,&worker_attributes,main_worker_entry,NULL);
+        if(!result) {
+            worker_created=1;lifecycle_state.phase=CANOPY_TOTK_MAIN_RUNNING;
+            atomic_store_explicit(&worker_running,1,memory_order_release);
+        } else worker_launch_failed=1;
+        pthread_cond_broadcast(&lifecycle_changed);
+    }
+    pthread_mutex_unlock(&lifecycle_lock);
+    pthread_attr_destroy(&observer_attributes);pthread_attr_destroy(&worker_attributes);
+    return result?-1:0;
+}
+int canopy_host_read_lifecycle_state(struct canopy_totk_lifecycle_state *out) {
+    NSCAssert(NSThread.isMainThread,@"Lifecycle observation belongs on main thread");
+    if(!out || out->abi!=CANOPY_TOTK_LIFECYCLE_ABI || out->size!=sizeof(*out))return -1;
+    pthread_mutex_lock(&lifecycle_lock);struct canopy_totk_lifecycle_state state=lifecycle_state;
+    pthread_mutex_unlock(&lifecycle_lock);
+    struct canopy_threads_state children={CANOPY_THREADS_ABI,sizeof(children),0,0,0,0,0};
+    if(runtime_canopy_threads_snapshot(&children))return -1;
+    state.owned_guest_children=children.owned_children;state.joining_guest_children=children.joining_children;
+    state.guest_join_failures=children.join_failures;state.guest_admission_closed=children.admission_closed;
+    *out=state;return 0;
+}
+#endif
 #if TARGET_OS_IPHONE
 #import <QuartzCore/CAMetalLayer.h>
 #import <UIKit/UIKit.h>
@@ -80,17 +185,15 @@ static int display_hash_valid(const char *hash) {
 extern int totk_host_main(int,char **);
 extern void runtime_ios_attach_layer(CAMetalLayer *,UIView *);
 extern void runtime_ios_set_host_active(int);
-static _Atomic int started,worker_running;
+static _Atomic int started;
 static BOOL audio_interrupted;
 static char *module_path,*verified_seed_path;
 int runtime_canopy_shader_seed_verified(const char *path) {
     return path && verified_seed_path && !strcmp(path,verified_seed_path);
 }
-static void *run_host(void *unused) {
+static int run_host(void *unused) {
     (void)unused;char *argv[]={"Canopy",module_path,"boot",NULL};
-    (void)totk_host_main(3,argv);
-    atomic_store(&worker_running,0);
-    return NULL; /* SDK Start normally never returns. No teardown is implied. */
+    return totk_host_main(3,argv); /* Normally never returns; observation is not teardown. */
 }
 static int put_path(const char *key,const char *root,const char *leaf) {
     char path[4096];
@@ -188,13 +291,8 @@ static int start_host(const struct canopy_totk_start *s) {
     for(unsigned i=0;i<3 && fps_overlay_hud_mode()!=s->hud_mode;i++)fps_overlay_toggle_hints();
     if(fps_overlay_hud_mode()!=s->hud_mode)return -1;
     /* Preserve the actual existing iOS host's 64 MiB native worker stack. */
-    pthread_attr_t attributes;int result=pthread_attr_init(&attributes);
-    if(result)return -1;
-    result=pthread_attr_setstacksize(&attributes,64u<<20);
-    pthread_t thread;if(!result){atomic_store(&worker_running,1);result=pthread_create(&thread,&attributes,run_host,NULL);}
-    pthread_attr_destroy(&attributes);if(result){atomic_store(&worker_running,0);return -1;}
-    /* Process-owned worker: no detached-thread or reusable-destroy claim. */
-    return 0;
+    return launch_main_worker(run_host,NULL,64u<<20);
+    /* Main and its observer remain process-owned; no reusable-destroy claim. */
 }
 const struct canopy_totk_host *totk_canopy_host_v1(void) {
     if(!CANOPY_HOST_TITLE_ID || strlen(CANOPY_HOST_ORIGINAL_MAIN_SHA256)!=64 ||
@@ -208,7 +306,8 @@ const struct canopy_totk_host *totk_canopy_host_v1(void) {
         fps_overlay_hud_mode,fps_overlay_toggle_hints,clear_input,runtime_ios_set_host_active,input,
         {MNG_DISPLAY_ABI,sizeof(struct canopy_totk_display),{MNG_DISPLAY_ABI,sizeof(struct mng_display_profile),CANOPY_DISPLAY_FLAGS},
          CANOPY_DISPLAY_FLAGS&MNG_DISPLAY_SCENE_1080?CANOPY_HOST_DISPLAY_HEAP_SHA256:NULL,
-         CANOPY_DISPLAY_FLAGS&MNG_DISPLAY_FOUR_THREE?CANOPY_HOST_DISPLAY_LAYOUT_SHA256:NULL,canopy_host_read_display_state}};
+         CANOPY_DISPLAY_FLAGS&MNG_DISPLAY_FOUR_THREE?CANOPY_HOST_DISPLAY_LAYOUT_SHA256:NULL,canopy_host_read_display_state},
+        {CANOPY_TOTK_LIFECYCLE_ABI,sizeof(struct canopy_totk_lifecycle),canopy_host_read_lifecycle_state}};
     return &host;
 }
 #else

@@ -94,8 +94,30 @@ static const struct canopy_totk_host *CRHost(void) {
        !CRHex(CRString(h->runtime_index_sha256),64) || !CRHex(CRString(h->shader_seed_manifest_sha256),64) ||
        !CRString(h->shader_chain).length || CRString(h->shader_chain).length>128 || !CRString(h->game_version).length ||
        !h->start || !h->fps_supported || !h->set_fps || !h->get_fps || !h->taa_supported || !h->set_taa || !h->get_taa ||
-       !h->get_hud || !h->cycle_hud || !h->clear_input || !h->set_focus || !h->input || !CRDisplayHost(h))return NULL;
+       !h->get_hud || !h->cycle_hud || !h->clear_input || !h->set_focus || !h->input || !CRDisplayHost(h) ||
+       h->lifecycle.abi_version!=CANOPY_TOTK_LIFECYCLE_ABI || h->lifecycle.size!=sizeof(h->lifecycle) || !h->lifecycle.read_state)return NULL;
     return h;
+}
+static BOOL CRReadLifecycle(const struct canopy_totk_host *host,struct canopy_totk_lifecycle_state *out) {
+    struct canopy_totk_lifecycle_state state={0};state.abi=CANOPY_TOTK_LIFECYCLE_ABI;state.size=sizeof(state);
+    if(!host || host->lifecycle.read_state(&state) || state.abi!=CANOPY_TOTK_LIFECYCLE_ABI || state.size!=sizeof(state) ||
+       state.phase>CANOPY_TOTK_MAIN_OBSERVATION_FAILED || state.main_returned>1 || state.main_joined>1 ||
+       state.guest_admission_closed>1 || state.joining_guest_children>state.owned_guest_children ||
+       (!state.main_returned && state.main_return_code) || (state.main_joined && state.join_error) ||
+       (state.main_joined!=(state.phase==CANOPY_TOTK_MAIN_JOINED?1u:0u)) ||
+       (state.phase<=CANOPY_TOTK_MAIN_RUNNING && (state.main_returned || state.main_joined || state.join_error)) ||
+       ((state.phase==CANOPY_TOTK_MAIN_CLEANUP_OBSERVED || state.phase==CANOPY_TOTK_MAIN_JOINED) && !state.guest_admission_closed))return NO;
+    *out=state;return YES;
+}
+static NSString *CRLifecyclePhase(uint32_t phase) {
+    switch(phase) {
+        case CANOPY_TOTK_MAIN_NOT_STARTED:return @"notStarted";
+        case CANOPY_TOTK_MAIN_RUNNING:return @"running";
+        case CANOPY_TOTK_MAIN_CLEANUP_OBSERVED:return @"cleanupObserved";
+        case CANOPY_TOTK_MAIN_JOINED:return @"mainJoined";
+        case CANOPY_TOTK_MAIN_OBSERVATION_FAILED:return @"observationFailed";
+    }
+    return @"unavailable";
 }
 static NSURL *CRTrustedDirectory(NSURL *url) {
     /* Foundation standardization may spell Darwin's physical /private/var
@@ -309,6 +331,8 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 }
 @interface CanopyRuntime ()
 - (NSString *)displayValidation;
+- (BOOL)observeMainWorker:(NSError **)error;
+- (void)captureFailedWorker;
 - (NSDictionary *)displayOutcomeForKey:(NSString *)key value:(id)value;
 @end
 @implementation CanopyRuntime {
@@ -323,7 +347,8 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     uint64_t _sequence,_timestamp,_deviceID;
     struct mng_display_config _displayConfig;
     CGSize _displayViewSize;
-    id _displayHostView;
+    id _displayHostView,_graphicsSurface;
+    id<MTLDevice> _graphicsDevice;
     NSDictionary *_displayDesired;
 }
 - (instancetype)initWithPreparedRootURL:(NSURL *)root {
@@ -336,6 +361,10 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 - (NSDictionary *)settingStates{return _settingStates;}
 - (NSDictionary *)diagnosticMetrics {
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
+    struct canopy_totk_lifecycle_state lifecycle={0};
+    BOOL observed=_nativeEntryInvoked && CRReadLifecycle(_host,&lifecycle);
+    if(_nativeEntryInvoked && ([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]) &&
+       (!observed || lifecycle.phase!=CANOPY_TOTK_MAIN_RUNNING))[self captureFailedWorker];
     NSMutableDictionary *metrics=[NSMutableDictionary dictionaryWithDictionary:_shaderLease.metrics ?: @{}];
     metrics[@"nativeEntryInvoked"]=@(_nativeEntryInvoked);
     if(_nativeEntryInvoked && ([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]))metrics[@"frameLimit"]=@(_host->get_fps());
@@ -343,6 +372,16 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         metrics[@"displayValidation"]=[self displayValidation];
         metrics[@"displaySelectedWidth"]=@(_displayConfig.width);metrics[@"displaySelectedHeight"]=@(_displayConfig.height);
         metrics[@"displayFixedResolution"]=_displayConfig.fixed_resolution?@YES:@NO;metrics[@"displayExperimental"]=_displayConfig.experimental?@YES:@NO;
+    }
+    if(_nativeEntryInvoked) {
+        if(observed) {
+            metrics[@"mainWorkerPhase"]=CRLifecyclePhase(lifecycle.phase);
+            metrics[@"mainReturned"]=lifecycle.main_returned?@YES:@NO;metrics[@"mainJoined"]=lifecycle.main_joined?@YES:@NO;
+            metrics[@"guestAdmissionClosed"]=lifecycle.guest_admission_closed?@YES:@NO;
+            metrics[@"ownedGuestChildren"]=@(lifecycle.owned_guest_children);metrics[@"joiningGuestChildren"]=@(lifecycle.joining_guest_children);
+            metrics[@"guestJoinFailures"]=@(lifecycle.guest_join_failures);metrics[@"mainJoinError"]=@(lifecycle.join_error);
+            if(lifecycle.main_returned)metrics[@"mainReturnCode"]=@(lifecycle.main_return_code);
+        } else metrics[@"mainWorkerPhase"]=@"unavailable";
     }
     return [metrics copy];
 }
@@ -486,6 +525,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
                 completion(NO,CRError(4,@"The native game view bounds are unavailable. Retry startup."));return;
             }
             self->_displayConfig=selected.config;self->_displayViewSize=currentViewSize;self->_displayHostView=view;
+            self->_graphicsSurface=surface;self->_graphicsDevice=selectedDevice;
             self->_displayDesired=@{@"renderHeight":desired[@"renderHeight"],@"aspect":desired[@"aspect"]};
             struct canopy_totk_start start={assets.fileSystemRepresentation,assets.fileSystemRepresentation,
                 indexDirectory.fileSystemRepresentation,generation.fileSystemRepresentation,saves.fileSystemRepresentation,
@@ -493,12 +533,16 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
                 language.UTF8String,fps,taa,hud,
                 (__bridge void *)surface,(__bridge void *)view,(__bridge void *)selectedDevice,selected.config};
             self->_nativeEntryInvoked=YES;self->_state=@"starting";
-            if(self->_host->start(&start)){self->_state=@"failed";completion(NO,CRError(5,@"Native startup failed; this single-use process cannot safely relaunch."));return;}
+            if(self->_host->start(&start)){[self captureFailedWorker];completion(NO,CRError(5,@"Native startup failed; this single-use process cannot safely relaunch."));return;}
+            NSError *lifecycleError=nil;
+            if(![self observeMainWorker:&lifecycleError]) {completion(NO,lifecycleError);return;}
             NSString *validation=[self displayValidation];
             if(![validation isEqual:@"pending"] && ![validation isEqual:@"patchesValidated"]) {
-                self->_state=@"failed";completion(NO,CRError(5,@"Native startup did not acknowledge its display configuration; safe teardown is unavailable."));return;
+                [self captureFailedWorker];completion(NO,CRError(5,@"Native startup did not acknowledge its display configuration; safe teardown is unavailable."));return;
             }
-            self->_state=@"inputCaptured";[self applyDesiredSettings:desired];completion(YES,nil);
+            self->_state=@"inputCaptured";[self applyDesiredSettings:desired];
+            if([self->_state isEqual:@"failed"]) {completion(NO,CRError(5,@"The native main worker ended before startup completed; session protections remain owned."));return;}
+            completion(YES,nil);
         });
     });
     return YES;
@@ -509,6 +553,18 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         if(error)*error=CRError(3,@"Native startup preparation is not pending.");return NO;
     }
     atomic_store(&_preflightCancelled,1);_state=@"cancelling";return YES;
+}
+- (void)captureFailedWorker {
+    _host->clear_input();_host->set_focus(0);_deviceID=0;_state=@"failed";
+    /* The main worker is only one owner. No lease, device, view, module or save
+     * protection is released; cleanup observation is not a stop or join ACK. */
+}
+- (BOOL)observeMainWorker:(NSError **)error {
+    struct canopy_totk_lifecycle_state lifecycle={0};
+    if(_nativeEntryInvoked && CRReadLifecycle(_host,&lifecycle) && lifecycle.phase==CANOPY_TOTK_MAIN_RUNNING)return YES;
+    if(_nativeEntryInvoked)[self captureFailedWorker];
+    if(error)*error=CRError(5,@"The native main worker ended or its lifecycle could not be observed; session protections remain owned until process exit.");
+    return NO;
 }
 - (NSString *)displayValidation {
     struct mng_display_state state={0};state.abi=MNG_DISPLAY_ABI;state.size=sizeof(state);
@@ -540,6 +596,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 }
 - (NSDictionary *)applyDesiredSettings:(NSDictionary *)settings {
     NSAssert(NSThread.isMainThread,@"Runtime settings belong on main thread");
+    if(_nativeEntryInvoked && ([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]))[self observeMainWorker:NULL];
     NSMutableDictionary *states=[NSMutableDictionary dictionary];
     NSMutableDictionary *displayDesired=[(_displayDesired ?: @{}) mutableCopy];
     for(NSString *key in @[@"renderHeight",@"aspect"])if(settings[key])displayDesired[key]=settings[key];
@@ -547,7 +604,9 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     BOOL active=_nativeEntryInvoked && ([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]);
     for(NSString *key in settings) {
         id value=settings[key];NSDictionary *outcome=CROutcome(@"unsupported",value,nil,@"The native host has no application hook for this setting.");
-        if(active && ([key isEqual:@"renderHeight"] || [key isEqual:@"aspect"])) {
+        if(_nativeEntryInvoked && !active) {
+            outcome=CROutcome(@"rejected",value,_settingStates[key][@"effectiveValue"],@"The native main worker is unavailable; session protections remain owned.");
+        } else if(active && ([key isEqual:@"renderHeight"] || [key isEqual:@"aspect"])) {
             outcome=[self displayOutcomeForKey:key value:value];
         } else if(active && [key isEqual:@"fpsLimit"]) {
             if(!CRNumber(value) || ![@[@30,@40,@60] containsObject:value] || !_host->fps_supported([value unsignedIntValue]))outcome=CROutcome(@"rejected",value,@(_host->get_fps()),@"This frame limit is unavailable on the active native display profile.");
@@ -569,17 +628,20 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 }
 - (BOOL)captureInput:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Runtime input belongs on main thread");
+    if(_nativeEntryInvoked && ![self observeMainWorker:error])return NO;
     if(!_nativeEntryInvoked || (![_state isEqual:@"active"] && ![_state isEqual:@"inputCaptured"])) {
         if(error)*error=CRError(3,@"No active native input target is available.");return NO;}
     _host->clear_input();_host->set_focus(0);_state=@"inputCaptured";return YES;
 }
 - (BOOL)restoreInput:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Runtime input belongs on main thread");
+    if(_nativeEntryInvoked && ![self observeMainWorker:error])return NO;
     if(![_state isEqual:@"inputCaptured"]){if(error)*error=CRError(3,@"Native input was not captured.");return NO;}
     _host->clear_input();_host->set_focus(1);_state=@"active";return YES;
 }
 - (BOOL)submitInput:(const struct mng_session_input *)input error:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Runtime input belongs on main thread");
+    if(_nativeEntryInvoked && ![self observeMainWorker:error])return NO;
     struct timespec time={0};clock_gettime(CLOCK_MONOTONIC,&time);
     uint64_t now=(uint64_t)time.tv_sec*UINT64_C(1000000000)+(uint64_t)time.tv_nsec;
     BOOL valid=input && [_state isEqual:@"active"] && input->sequence && input->sequence>_sequence && input->timestamp_ns &&
@@ -602,6 +664,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 - (BOOL)tick:(NSError **)error {
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
     if([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]) {
+        if(![self observeMainWorker:error])return NO;
         NSMutableDictionary *states=[_settingStates mutableCopy];
         for(NSString *key in @[@"renderHeight",@"aspect"])if(_displayDesired[key])states[key]=[self displayOutcomeForKey:key value:_displayDesired[key]];
         _settingStates=[states copy];
