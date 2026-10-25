@@ -7,6 +7,9 @@
 #include "language.h"
 #include <stdlib.h>
 #include <stdatomic.h>
+#if TARGET_OS_IPHONE
+extern int runtime_canopy_audio_output_suspend(void);
+#endif
 static _Atomic int display_patches_validated;
 void canopy_host_game_patches_validated(void) { atomic_store_explicit(&display_patches_validated,1,memory_order_release); }
 static __strong id<MTLDevice> retained_renderer_device;
@@ -62,6 +65,9 @@ static void main_worker_cleanup(void *unused) {
     atomic_store_explicit(&worker_running,0,memory_order_release);
     pthread_cond_broadcast(&lifecycle_changed);
     pthread_mutex_unlock(&lifecycle_lock);
+#if TARGET_OS_IPHONE
+    (void)runtime_canopy_audio_output_suspend(); /* Silence latch, not teardown proof. */
+#endif
 }
 static void *main_worker_entry(void *unused) {
     (void)unused;
