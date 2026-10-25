@@ -170,6 +170,18 @@
       },
       "patch": "0014-msl-location-span-bounds.patch",
       "sha256": "5cd2d4e518c6144b63b7edcfea7a96fa868faccc2855574dbe08b0e32313a83a"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "447f5479fef73e964e11216206cbd9ca0a1973dcf51d011a102b7ee9fe2eb274",
+        "spirv_glsl.cpp": "036a86aab55fb0a8053c223b52d358c8257ec26745e2d68cb2ab60dc4b41d1a5"
+      },
+      "before": {
+        "spirv_cross.cpp": "8e7ebc81f8f18eb90bd39dd58dfd788c91b8b8f85fa2d1f0b8e87ae072b30243",
+        "spirv_glsl.cpp": "9f6284ea141e3b5e6b5e9871334223fb5b4b67cd9f3b53a00eb87160bf881023"
+      },
+      "patch": "0015-flag-capability-loop-checkpoints.patch",
+      "sha256": "f826eedf84ec828573b7707928e9c07aff3f83549c568ae4aa22ed5a21797f85"
     }
   ],
   "schemaVersion": 1
