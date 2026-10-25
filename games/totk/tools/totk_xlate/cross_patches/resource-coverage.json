@@ -656,6 +656,46 @@
       "file": "spirv_msl.cpp",
       "originalInventoryAnchor": "spirv_msl.cpp:19930",
       "originalSourceLine": 19930
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:3505",
+      "originalSourceLine": 3505
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:3794",
+      "originalSourceLine": 3794
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:3904",
+      "originalSourceLine": 3910
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:4493",
+      "originalSourceLine": 4493
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:743",
+      "originalSourceLine": 745
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:890",
+      "originalSourceLine": 893
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:4161",
+      "originalSourceLine": 4163
+    },
+    {
+      "file": "spirv_glsl.cpp",
+      "originalInventoryAnchor": "spirv_glsl.cpp:21251",
+      "originalSourceLine": 21253
     }
   ],
   "explicitArithmetic": [
@@ -697,8 +737,8 @@
     "Parser direct raw-ID self-alias refusal before source lookup and Variant replacement for OpTypeArray/RuntimeArray/Pointer only; UntypedPointer and distinct-pointee forward resolution unchanged, not a global ID/redefinition validator"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 485,
-  "instrumentedOriginallyUnbracedLoops": 128,
+  "instrumentedLoopCheckpoints": 493,
+  "instrumentedOriginallyUnbracedLoops": 136,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -755,23 +795,16 @@
       "reason": "Exactly 16 iterations: analyze_argument_buffers resets the source-defined uint32_t argument_buffer_ids[kMaxArgumentBuffers] array, with kMaxArgumentBuffers=16. Stable inventory anchor20378 points to the function comments; actual original range-for line20385. Source unchanged; no checkpoint added."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 21,
+  "unbracedLoopsInputDependentOrUnprovenCount": 13,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:2746",
-    "spirv_cross.cpp:3505",
     "spirv_cross.cpp:3676",
-    "spirv_cross.cpp:3794",
     "spirv_cross.cpp:3842",
     "spirv_cross.cpp:3848",
-    "spirv_cross.cpp:3904",
-    "spirv_cross.cpp:4493",
     "spirv_cross.cpp:5103",
     "spirv_parser.cpp:1411",
-    "spirv_glsl.cpp:743",
     "spirv_glsl.cpp:792",
-    "spirv_glsl.cpp:890",
     "spirv_glsl.cpp:3005",
-    "spirv_glsl.cpp:4161",
     "spirv_glsl.cpp:4433",
     "spirv_glsl.cpp:4953",
     "spirv_glsl.cpp:6095",
@@ -782,7 +815,6 @@
     "spirv_glsl.cpp:20694",
     "spirv_glsl.cpp:20775",
     "spirv_glsl.cpp:20782",
-    "spirv_glsl.cpp:21251",
     "spirv_msl.cpp:1728",
     "spirv_msl.cpp:1856",
     "spirv_msl.cpp:4143",
@@ -792,7 +824,7 @@
     "spirv_msl.cpp:19225",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 34,
+  "unbracedLoopsNotInstrumentedCount": 26,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",

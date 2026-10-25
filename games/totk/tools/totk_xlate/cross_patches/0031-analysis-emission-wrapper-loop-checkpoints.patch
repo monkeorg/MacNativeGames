@@ -1,0 +1,104 @@
+--- a/spirv_cross.cpp
++++ b/spirv_cross.cpp
+@@ -3672,7 +3672,10 @@
+ 		notify_variable_access(block.condition, block.self);
+ 		auto &cases = compiler.get_case_list(block);
+ 		for (auto &target : cases)
+-			test_phi(target.block);
++		{
++			canopy_cross_budget::step();
++			test_phi(target.block);
++		}
+ 		if (block.default_block)
+ 			test_phi(block.default_block);
+ 		break;
+@@ -3969,7 +3972,10 @@
+ 	case OpExtInst:
+ 	{
+ 		for (uint32_t i = 4; i < length; i++)
+-			notify_variable_access(args[i], current_block->self);
++		{
++			canopy_cross_budget::step();
++			notify_variable_access(args[i], current_block->self);
++		}
+ 		notify_variable_access(args[1], current_block->self);
+ 
+ 		uint32_t extension_set = args[2];
+@@ -4088,7 +4094,10 @@
+ 		// but worst case, it does not affect the correctness of the compile.
+ 		// Exhaustive analysis would be better here, but it's not worth it for now.
+ 		for (uint32_t i = 0; i < length; i++)
+-			notify_variable_access(args[i], current_block->self);
++		{
++			canopy_cross_budget::step();
++			notify_variable_access(args[i], current_block->self);
++		}
+ 		break;
+ 	}
+ 	}
+@@ -4692,7 +4701,10 @@
+ 	if (opcode == OpEmitVertex || opcode == OpEndPrimitive)
+ 	{
+ 		for (auto *func : function_stack)
+-			func->emits_geometry = true;
++		{
++			canopy_cross_budget::step();
++			func->emits_geometry = true;
++		}
+ 	}
+ 
+ 	return true;
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -751,8 +751,11 @@
+ 
+ 	// KHR one is likely to get promoted at some point, so if we don't see an explicit SPIR-V extension, assume KHR.
+ 	for (auto &ext : ir.declared_extensions)
+-		if (ext == "SPV_NV_fragment_shader_barycentric")
+-			barycentric_is_nv = true;
++	{
++		canopy_cross_budget::step();
++		if (ext == "SPV_NV_fragment_shader_barycentric")
++			barycentric_is_nv = true;
++	}
+ }
+ 
+ void CompilerGLSL::require_polyfill(Polyfill polyfill, bool relaxed)
+@@ -901,7 +904,10 @@
+ 			// emit_function recursively emits callees, so internal helpers
+ 			// are picked up too.
+ 			for (auto export_id : ir.library_exported_functions)
+-				emit_function(get<SPIRFunction>(export_id), Bitset());
++			{
++				canopy_cross_budget::step();
++				emit_function(get<SPIRFunction>(export_id), Bitset());
++			}
+ 		}
+ 		else
+ 			emit_function(get<SPIRFunction>(ir.default_entry_point), Bitset());
+@@ -4216,7 +4222,10 @@
+ 		// Output buffer reference blocks.
+ 		// Buffer reference blocks can reference themselves to support things like linked lists.
+ 		for (auto type : physical_storage_non_block_pointer_types)
+-			emit_buffer_reference_block(type, false);
++		{
++			canopy_cross_budget::step();
++			emit_buffer_reference_block(type, false);
++		}
+ 
+ 		ir.for_each_typed_id<SPIRType>([&](uint32_t id, SPIRType &type) {
+ 			if (is_physical_pointer_to_buffer_block(type))
+@@ -21571,8 +21580,11 @@
+ 
+ 	// Fallback to unknown mapping.
+ 	for (auto &mapping : descriptor_heap_mappings)
+-		if (mapping.type == ResourceTypeUnknown)
+-			return join("set = ", mapping.desc_set, ", binding = ", mapping.binding);
++	{
++		canopy_cross_budget::step();
++		if (mapping.type == ResourceTypeUnknown)
++			return join("set = ", mapping.desc_set, ", binding = ", mapping.binding);
++	}
+ 
+ 	return "descriptor_heap";
+ }
