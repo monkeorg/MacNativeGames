@@ -46,6 +46,7 @@ struct mng_store {
     struct asset assets[MNG_STORE_MAX_ASSETS];
     struct mng_sha256 *hash;
     int reuse_root,reuse_lease,cloned;
+    uint64_t cloned_overlap;
     uint64_t reuse_title,reuse_application;
     size_t reuse_count;
     struct asset reuse_assets[MNG_STORE_MAX_ASSETS];
@@ -489,24 +490,27 @@ static int same_snapshot(const struct stat *a,const struct stat *b) {
 static int clone_candidate(struct mng_store *s,const char *path,uint64_t size) {
     if(s->reuse_root<0)return 0;
     const struct asset *candidate=NULL;
-    for(size_t i=0;i<s->reuse_count;i++)if(!strcmp(path,s->reuse_assets[i].path)&&s->reuse_assets[i].size==size){candidate=s->reuse_assets+i;break;}
+    for(size_t i=0;i<s->reuse_count;i++)if(!strcmp(path,s->reuse_assets[i].path)){candidate=s->reuse_assets+i;break;}
     if(!candidate)return 0;
+    uint64_t old_size=candidate->size;off_t target_size=(off_t)size;
+    if(target_size<0 || (uint64_t)target_size!=size)return -1;
     const char *name;int parent=asset_parent(s->reuse_root,path,0,&name);
     if(parent<0)return -1;
     int source=openat(parent,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);close(parent);
     struct stat before={0},after={0},temp={0};
-    int bad=source<0||regular(source,size,&before)||(uint64_t)before.st_size!=size||before.st_uid!=geteuid();
+    int bad=source<0||regular(source,old_size,&before)||(uint64_t)before.st_size!=old_size||before.st_uid!=geteuid();
     if(bad){if(source>=0)close(source);return -1;}
     if(!fstatat(s->job,".asset.tmp",&temp,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT){close(source);return -1;}
+    if(poll_cancel(s)){close(source);return -1;}
     int result=-1;
 #ifdef __APPLE__
     result=fclonefileat(source,s->job,".asset.tmp",0);
     if(!result){int readonly=openat(s->job,".asset.tmp",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
-        if(readonly<0||regular(readonly,size,&temp)||(uint64_t)temp.st_size!=size||temp.st_uid!=geteuid()||fchmod(readonly,0600))bad=1;
+        if(readonly<0||regular(readonly,old_size,&temp)||(uint64_t)temp.st_size!=old_size||temp.st_uid!=geteuid()||fchmod(readonly,0600))bad=1;
         s->output=bad?-1:openat(s->job,".asset.tmp",O_RDWR|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
         struct stat reopened={0};
-        if(s->output<0||regular(s->output,size,&reopened)||reopened.st_dev!=temp.st_dev||reopened.st_ino!=temp.st_ino||
-            (uint64_t)reopened.st_size!=size||reopened.st_uid!=geteuid()||(reopened.st_mode&0777)!=0600)bad=1;
+        if(s->output<0||regular(s->output,old_size,&reopened)||reopened.st_dev!=temp.st_dev||reopened.st_ino!=temp.st_ino||
+            (uint64_t)reopened.st_size!=old_size||reopened.st_uid!=geteuid()||(reopened.st_mode&0777)!=0600)bad=1;
         if(readonly>=0)close(readonly);}
 #elif defined(__linux__)
     s->output=openat(s->job,".asset.tmp",O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
@@ -517,12 +521,20 @@ static int clone_candidate(struct mng_store *s,const char *path,uint64_t size) {
         close(s->output);s->output=-1;}
 #endif
     if(fstat(source,&after)||!same_snapshot(&before,&after))bad=1;
-    close(source);
-    if(bad)return -1;
-    if(result){struct stat unexpected;if(!fstatat(s->job,".asset.tmp",&unexpected,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT)return -1;
+    if(bad){close(source);return -1;}
+    if(result){close(source);struct stat unexpected;if(!fstatat(s->job,".asset.tmp",&unexpected,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT)return -1;
         s->metrics.clone_fallback_assets++;return 0;}
-    if(regular(s->output,size,&temp)||(uint64_t)temp.st_size!=size||temp.st_uid!=geteuid())return -1;
-    s->metrics.cloned_assets++;s->metrics.cloned_logical_bytes+=size;return 1;
+    if(regular(s->output,old_size,&temp)||(uint64_t)temp.st_size!=old_size||temp.st_uid!=geteuid()||
+        (temp.st_mode&077)||(temp.st_dev==before.st_dev&&temp.st_ino==before.st_ino)){close(source);return -1;}
+    /* This records the verified old snapshot actually cloned, even if later
+     * resize/stream/commit fails. Never mutate or truncate the source lease. */
+    s->metrics.cloned_assets++;s->metrics.cloned_logical_bytes+=old_size;
+    if(poll_cancel(s)||(old_size!=size&&ftruncate(s->output,target_size))||poll_cancel(s)){close(source);return -1;}
+    struct stat resized={0};
+    if(regular(s->output,size,&resized)||(uint64_t)resized.st_size!=size||resized.st_uid!=geteuid()||
+        resized.st_mode!=temp.st_mode||resized.st_dev!=temp.st_dev||resized.st_ino!=temp.st_ino||
+        fstat(source,&after)||!same_snapshot(&before,&after)){close(source);return -1;}
+    close(source);s->cloned_overlap=old_size<size?old_size:size;return 1;
 }
 static int payload_write(struct mng_store *s,const unsigned char *bytes,size_t length,uint64_t offset,int positional) {
     while(length){if(poll_cancel(s))return -1;
@@ -543,7 +555,7 @@ static int sink_begin(void *context, const char *path, uint64_t size) {
         (!strncmp(path,"exefs/",6) && size>(UINT64_C(512)<<20)) || mng_sha256_init(&s->hash)) {
         s->failed=1; return -1;
     }
-    strcpy(s->pending,path); s->expected=size; s->written=0; s->replay=existing+1;s->cloned=0;
+    strcpy(s->pending,path); s->expected=size; s->written=0; s->replay=existing+1;s->cloned=0;s->cloned_overlap=0;
     if (existing>=0) return 0;
     const char *name;
     s->destination=asset_parent(s->job,path,1,&name);
@@ -567,16 +579,17 @@ static int sink_write(void *context, const void *bytes, size_t length) {
     if (poll_cancel(s) || s->failed || !s->hash || length>s->expected-s->written || (!bytes && length)) { s->failed=1; return -1; }
     const unsigned char *incoming=bytes;size_t at=0;
     while(at<length){size_t n=length-at>65536?65536:length-at;
+        if(s->cloned&&s->written<s->cloned_overlap&&n>s->cloned_overlap-s->written)n=(size_t)(s->cloned_overlap-s->written);
         if(poll_cancel(s)||mng_sha256_update(s->hash,incoming+at,n)){s->failed=1;return -1;}
         if(s->replay)s->metrics.resumed_bytes+=n;
-        else if(s->cloned){size_t got=0;
+        else if(s->cloned&&s->written<s->cloned_overlap){size_t got=0;
             while(got<n){if(poll_cancel(s)){s->failed=1;return -1;}
                 ssize_t read_bytes=pread(s->output,s->compare+got,n-got,(off_t)(s->written+got));
                 if(read_bytes<0&&errno==EINTR)continue;
                 if(read_bytes<=0||(size_t)read_bytes>n-got){s->failed=1;return -1;}got+=(size_t)read_bytes;}
             if(!memcmp(s->compare,incoming+at,n))s->metrics.compared_equal_bytes+=n;
             else if(payload_write(s,incoming+at,n,s->written,1)){s->failed=1;return -1;}
-        }else if(payload_write(s,incoming+at,n,s->written,0)){s->failed=1;return -1;}
+        }else if(payload_write(s,incoming+at,n,s->written,s->cloned)){s->failed=1;return -1;}
         s->written+=n;at+=n;s->metrics.streamed_bytes+=n;
     }
     return 0;

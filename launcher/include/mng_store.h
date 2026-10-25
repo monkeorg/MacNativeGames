@@ -32,8 +32,11 @@ void mng_store_set_cancel_check(struct mng_store *store,
  * (title0,generationNULL) clears it. Retained until clear/close. New commits must
  * have the same title and canonical application owner. Missing candidates must
  * be distinguished by callers from invalid existing candidates, never silently
- * treating an integrity failure as absence. Same-path/same-size assets may use
- * platform COW clone into NEW staging only. Unsupported clones stream normally;
+ * treating an integrity failure as absence. Same-path assets may use platform
+ * COW clone of their old size into NEW staging only, then resize that private
+ * descriptor to the checked target size. Only the retained overlap is compared;
+ * every appended byte (including zeros) streams normally. Resize failures are
+ * terminal for the job, never a post-clone fallback. Unsupported clones stream normally;
  * all incoming bytes and final staged assets are still hashed and verified. */
 /* Optional verified_source is furnished from the same complete verification
  * that holds the retained lease; unchanged on failure. Calls are serialized. */
@@ -42,7 +45,10 @@ enum mng_prepare_status mng_store_set_reuse_generation(struct mng_store *,uint64
 /* Reset on begin; payload counters only, excluding metadata writes. Streamed
  * counts successful sink writes; written counts actual successful write/pwrite
  * bytes, including partial writes before failure. Cloned is logical snapshot
- * length; compared_equal counts matching cloned spans whose writes were skipped.
+ * OLD snapshot length before resizing (and may exceed a smaller target);
+ * compared_equal counts matching retained spans whose writes were skipped.
+ * Zero extension earns no reuse credit. A verified clone is counted even if a
+ * later resize/stream/commit fails. Counters never imply successful publication.
  * Resumed counts verified completed-job replay, not cross-generation reuse.
  * None measures physical allocation, saved disk space or successful publication. */
 void mng_store_get_io_metrics(const struct mng_store *,struct mng_store_io_metrics *);
