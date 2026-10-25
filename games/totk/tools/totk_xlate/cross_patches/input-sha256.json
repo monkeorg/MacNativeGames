@@ -342,6 +342,18 @@
       },
       "patch": "0030-parser-self-alias-refusals.patch",
       "sha256": "cd4627eff976d456da2aae838550362c73203f05c29e55b7814ea0a46bdc8196"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "2a72609c2976ecd6b54c06d527d41e2b78a657079a28124b8e109972c748edcd",
+        "spirv_glsl.cpp": "749222714a516b5843f5b3b6220ec8f0aaf30f65aed38bca2c1138165fd45091"
+      },
+      "before": {
+        "spirv_cross.cpp": "7f85a5f703ef4421928b5917f8a18ad11c3b01f89e1a85bc6404fa2a53cfbc9c",
+        "spirv_glsl.cpp": "1f0cc56c5ab28616f1ba3befd55cd41fcc19dbde1a3fe5ee8f35fe92d4d3134e"
+      },
+      "patch": "0031-analysis-emission-wrapper-loop-checkpoints.patch",
+      "sha256": "487e4ba5310433e2317e5a046d8fb17defc07106627e02146d023a705a2f8a35"
     }
   ],
   "schemaVersion": 1
