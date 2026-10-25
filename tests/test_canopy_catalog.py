@@ -1,4 +1,6 @@
 """Exercise real prepared-store/catalog and title settings using macOS Foundation."""
+import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import shutil
@@ -34,6 +36,15 @@ class CanopyCatalogTests(unittest.TestCase):
                    *objects, '-framework', 'Foundation', '-framework', 'CoreFoundation',
                    '-o', str(cls.probe)])
 
+    @classmethod
+    def build_folder_cli(cls):
+        cls.cli=cls.root/'canopy-cli'
+        names=('mng_container','mng_file','mng_crypto','mng_keys','mng_prepare','mng_store',
+               'mng_content','mng_bktr','mng_folder','mng_romfs')
+        cls.build(['xcrun','clang','-std=c11','-D_DARWIN_C_SOURCE','-Wall','-Wextra','-Werror',
+                   '-I',str(ROOT/'launcher/include'),str(ROOT/'launcher/cli/main.c'),
+                   *(str(ROOT/'launcher/src'/(name+'.c')) for name in names),'-o',str(cls.cli)])
+
     @staticmethod
     def build(command):
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
@@ -68,6 +79,49 @@ class CanopyCatalogTests(unittest.TestCase):
 
     def test_catalog_reads_real_verified_generations_and_isolates_corruption(self):
         self.scenario('catalog')
+
+    @unittest.skipUnless(importlib.util.find_spec('cryptography'),'encrypted folder fixture requires cryptography')
+    def test_catalog_observes_actual_folder_generations_and_honest_provenance(self):
+        import test_game_containers as fixture
+        from test_canopy_folder import nso,npdm
+        from test_canopy_romfs import romfs
+        self.build_folder_cli()
+        with tempfile.TemporaryDirectory(dir=self.root) as temporary:
+            directory=Path(temporary).resolve();prepared=directory/'prepared';keys=directory/'invented.keys'
+            keys.write_text('\n'.join(f'{name} = {value.hex()}' for name,value in (
+                ('header_key',fixture.HEADER),('key_area_key_application_00',fixture.AREA),('titlekek_00',fixture.TITLEKEK))))
+            source_records={}
+            for kind in ('nca','assets'):
+                source=directory/kind;source.mkdir()
+                if kind=='nca':
+                    files={'program.nca':fixture.nca(managed=True),'common.tik':fixture.ticket()}
+                else:
+                    (source/'exefs').mkdir();(source/'romfs').mkdir()
+                    files={'exefs/main':nso(),'exefs/main.npdm':npdm(),'romfs/romfs.bin':romfs([('original',b'fixture')])[0]}
+                for path,data in files.items():(source/path).write_bytes(data)
+                run=subprocess.run([str(self.cli),'prepare',str(source),'--store',str(prepared),
+                    *(['--keys',str(keys)] if kind=='nca' else [])],capture_output=True,text=True,timeout=30)
+                self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+                report=json.loads(run.stdout);source_records[report['title_id']]=(report,files)
+            run=subprocess.run([str(self.probe),'folder',str(directory)],capture_output=True,text=True,timeout=30)
+            self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+            observed=json.loads(run.stdout);self.assertEqual(observed['status'],'pass')
+            self.assertEqual(len(observed['entries']),2)
+            for entry in observed['entries']:
+                report,files=source_records[entry['titleID']]
+                self.assertEqual(entry['generationID'],report['generation'])
+                self.assertEqual(entry['memberInventorySHA256'],report['member_inventory_sha256'])
+                self.assertEqual(entry['sourceMemberCount'],len(files))
+                self.assertEqual(entry['sourceMemberBytes'],sum(map(len,files.values())))
+                root=prepared/'titles'/entry['titleID']/'generations'/entry['generationID']
+                self.assertEqual(entry['memberInventorySHA256'],hashlib.sha256((root/'input-members.json').read_bytes()).hexdigest())
+                self.assertNotIn('sourceSHA256',entry);self.assertNotIn('sourceSize',entry)
+                self.assertIs(entry['integrity']['exefsVerified'],entry['sourceKind']=='nca-folder')
+                self.assertIs(entry['integrity']['romfsVerified'],entry['sourceKind']=='nca-folder')
+                self.assertIs(entry['integrity']['assetHashesVerified'],True)
+                self.assertIs(entry['integrity']['romfsStructureVerified'],entry['sourceKind']=='asset-folder')
+            for secret in (str(directory),fixture.HEADER.hex(),fixture.TITLEKEK.hex()):
+                self.assertNotIn(secret,run.stdout+run.stderr)
 
     def test_catalog_busy_does_not_replace_existing_snapshot(self):
         self.scenario('busy')

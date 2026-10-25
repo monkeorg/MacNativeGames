@@ -174,10 +174,32 @@ static void CatalogScenario(NSURL *directory, NSString *scenario) {
         Check([catalog reload:&error] && catalog.entries.count==1,"metadata reset removed generations");
     }
 }
+static void FolderCatalogScenario(NSURL *directory) {
+    CanopySettings *settings=Settings(Child(directory,@"metadata"));
+    CanopyCatalog *catalog=Catalog(Child(directory,@"prepared"),settings);
+    Check(catalog.entries.count==2 && !catalog.issues.count,"actual folder generations missing");
+    for(NSDictionary *entry in catalog.entries) {
+        BOOL raw=[entry[@"sourceKind"] isEqual:@"asset-folder"];
+        Check(raw || [entry[@"sourceKind"] isEqual:@"nca-folder"],"folder source kind");
+        Check([entry[@"recipeID"] isEqual:@MNG_STORE_RECIPE_V4],"folder recipe");
+        Check(!entry[@"sourceSHA256"] && !entry[@"sourceSize"],"fake physical folder identity");
+        Check([entry[@"memberInventorySHA256"] length]==64 && [entry[@"sourceMemberCount"] unsignedIntValue]>0 &&
+            [entry[@"sourceMemberBytes"] unsignedLongLongValue]>0,"folder inventory identity");
+        Check([entry[@"runtimeEligibility"] isEqual:@"unassessed"] && [entry[@"preparationState"] isEqual:@"prepared"],"folder execution claim");
+        NSDictionary *integrity=entry[@"integrity"];
+        Check([integrity[@"assetHashesVerified"] isEqual:@YES] && [integrity[@"signatureVerified"] isEqual:@NO],"folder hash/auth distinction");
+        Check([integrity[@"exefsVerified"] isEqual:(raw ? @NO:@YES)] &&
+            [integrity[@"romfsVerified"] isEqual:(raw ? @NO:@YES)] &&
+            [integrity[@"romfsStructureVerified"] isEqual:(raw ? @YES:@NO)],"folder integrity distinction");
+    }
+    NSData *json=JSON(@{@"status":@"pass",@"entries":catalog.entries});
+    fwrite(json.bytes,1,json.length,stdout);putchar('\n');
+}
 int main(int argc, char **argv) {
     @autoreleasepool {
         Check(argc==3,"arguments"); NSString *scenario=[NSString stringWithUTF8String:argv[1]];
         NSURL *root=[NSURL fileURLWithPath:[NSString stringWithUTF8String:argv[2]] isDirectory:YES];
+        if ([scenario isEqual:@"folder"]) { FolderCatalogScenario(root);return 0; }
         if ([scenario isEqual:@"settings"]) SettingsRoundtrip(root);
         else if ([scenario isEqual:@"options"]) Options(root);
         else if ([scenario isEqual:@"partial"]) Partial(root);

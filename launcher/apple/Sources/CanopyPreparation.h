@@ -19,6 +19,12 @@ NS_ASSUME_NONNULL_BEGIN
               keysURL:(NSURL *)keys jobIdentifier:(nullable NSString *)identifier
            completion:(void (^)(NSDictionary<NSString *, id> * _Nullable result,
                                 NSError * _Nullable error))completion;
+/// Supported NCA folder (keys required) or exefs/ + romfs/romfs.bin layout
+/// (no keys). Identity is a canonical consumed-member inventory, not a file SHA.
+- (BOOL)startFolderURL:(NSURL *)folder keysURL:(nullable NSURL *)keys
+        jobIdentifier:(nullable NSString *)identifier
+           completion:(void (^)(NSDictionary<NSString *, id> * _Nullable result,
+                                NSError * _Nullable error))completion;
 /// Requests cancellation, including native verification. Completion is the
 /// authority: a request after publication may still return a successful result.
 - (void)cancel;

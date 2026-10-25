@@ -3,6 +3,7 @@
 #include "mng_store.h"
 #include "mng_crypto.h"
 #include "mng_keys.h"
+#include "mng_folder.h"
 #include <stdatomic.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +17,9 @@
 @interface CanopyPreparation ()
 - (BOOL)cancellationRequested;
 - (void)reportPhase:(NSString *)phase done:(uint64_t)done total:(uint64_t)total epoch:(NSUInteger)epoch;
+- (BOOL)startInputURL:(NSURL *)source updateURL:(NSURL * _Nullable)updateURL keysURL:(NSURL * _Nullable)keysURL
+    folder:(BOOL)folder jobIdentifier:(NSString * _Nullable)identifier
+    completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion;
 @end
 
 struct preparation_context {
@@ -89,7 +93,20 @@ static BOOL CPMatchesPreparation(const struct mng_prepare_result *a, const struc
         a->update_source_size == b->update_source_size && !memcmp(a->update_source_sha256, b->update_source_sha256, 32) &&
         a->patch_title_id == b->patch_title_id && a->base_title_version == b->base_title_version &&
         a->asset_count == b->asset_count && a->asset_bytes == b->asset_bytes &&
-        a->exefs_verified == b->exefs_verified && a->romfs_verified == b->romfs_verified;
+        a->exefs_verified == b->exefs_verified && a->romfs_verified == b->romfs_verified &&
+        a->source_kind == b->source_kind && a->source_member_bytes == b->source_member_bytes &&
+        a->source_member_count == b->source_member_count && a->asset_hashes_verified == b->asset_hashes_verified &&
+        a->romfs_structure_verified == b->romfs_structure_verified &&
+        !memcmp(a->member_inventory_sha256,b->member_inventory_sha256,32);
+}
+static int CPFolderCanonical(void *context,const char *utf8,char *out,size_t capacity) {
+    (void)context;
+    NSString *name=[NSString stringWithUTF8String:utf8];if(!name)return -1;
+    NSString *folded=[[name precomposedStringWithCanonicalMapping] stringByFoldingWithOptions:NSCaseInsensitiveSearch
+        locale:[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]];
+    NSData *bytes=[[folded precomposedStringWithCanonicalMapping] dataUsingEncoding:NSUTF8StringEncoding];
+    if(!bytes || bytes.length>=capacity)return -1;
+    memcpy(out,bytes.bytes,bytes.length);out[bytes.length]=0;return 0;
 }
 static NSError *CPError(enum mng_prepare_status status, BOOL published) {
     NSString *message;
@@ -182,23 +199,30 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
     return [self startSourceURL:source updateURL:nil keysURL:keysURL jobIdentifier:identifier completion:completion];
 }
 - (BOOL)startSourceURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
+    return [self startInputURL:source updateURL:updateURL keysURL:keysURL folder:NO jobIdentifier:identifier completion:completion];
+}
+- (BOOL)startFolderURL:(NSURL *)folder keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
+    return [self startInputURL:folder updateURL:nil keysURL:keysURL folder:YES jobIdentifier:identifier completion:completion];
+}
+- (BOOL)startInputURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL folder:(BOOL)folder jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
     NSAssert(NSThread.isMainThread, @"Canopy preparation is owned by the main thread");
-    if (_busy || !source.isFileURL || !keysURL.isFileURL || (updateURL && !updateURL.isFileURL) || !completion || (identifier && !CPJobID(identifier))) return NO;
+    if (_busy || !source.isFileURL || (keysURL ? !keysURL.isFileURL : !folder) ||
+        (updateURL && (folder || !updateURL.isFileURL)) || !completion || (identifier && !CPJobID(identifier))) return NO;
     _busy = YES; ++_epoch; NSUInteger epoch = _epoch;
     _jobIdentifier = identifier ?: [[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
     NSString *job = [_jobIdentifier copy];
     atomic_store(&_cancelled, 0);
     dispatch_async(_queue, ^{
         @autoreleasepool {
-            enum mng_prepare_status status = MNG_PREPARE_KEY;
-            struct mng_keys *keys = [self readKeys:keysURL status:&status];
+            enum mng_prepare_status status = keysURL ? MNG_PREPARE_KEY : MNG_PREPARE_OK;
+            struct mng_keys *keys = keysURL ? [self readKeys:keysURL status:&status] : NULL;
             __block struct mng_prepare_result prepared = {0};
             __block struct mng_store *store = NULL;
             char generation[65] = {0};
             BOOL published = NO;
             BOOL commitAttempted = NO;
             __block enum mng_prepare_status operation = status;
-            if (keys && ![self cancellationRequested]) {
+            if (status == MNG_PREPARE_OK && ![self cancellationRequested]) {
                 NSError *directoryError = nil;
                 if (![NSFileManager.defaultManager createDirectoryAtURL:self->_directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&directoryError]) operation = MNG_PREPARE_IO;
                 else {
@@ -219,23 +243,43 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
                     BOOL scoped = [source startAccessingSecurityScopedResource];
                     BOOL updateScoped = updateURL ? [updateURL startAccessingSecurityScopedResource] : NO;
                     NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
-                    [self useCoordinator:coordinator]; NSError *coordinationError = nil;
+                    [self useCoordinator:coordinator]; __block NSError *coordinationError = nil;
                     void (^readInputs)(NSURL *, NSURL * _Nullable) = ^(NSURL *readURL, NSURL * _Nullable readUpdateURL) {
-                        int fd = open(readURL.fileSystemRepresentation, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+                        int fd = open(readURL.fileSystemRepresentation, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | (folder ? O_DIRECTORY : 0));
                         if (fd < 0) { operation = MNG_PREPARE_IO; return; }
                         int updateFD = readUpdateURL ? open(readUpdateURL.fileSystemRepresentation, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK) : -1;
                         if (readUpdateURL && updateFD < 0) { close(fd); operation = MNG_PREPARE_IO; return; }
                         struct preparation_context context = { self, store, mng_store_sink(store), epoch, 0, {0} };
                         struct mng_asset_sink sink = { &context, CPBegin, CPWrite, CPEnd, CPStopped, CPProgress };
                         struct mng_key_provider provider = mng_keys_provider(keys);
-                        operation = readUpdateURL ? mng_prepare_latest_update_fd(fd, updateFD, &provider, &sink, &prepared) :
+                        if (folder) {
+                            enum mng_folder_kind kind;
+                            operation=mng_folder_kind_fd(fd,&kind);
+                            struct mng_folder_callbacks callbacks={NULL,CPFolderCanonical};
+                            if(operation==MNG_PREPARE_OK) operation=kind==MNG_FOLDER_NCA && !keys ? MNG_PREPARE_KEY :
+                                mng_prepare_folder_fd(fd,kind,keys ? &provider : NULL,&callbacks,&sink,&prepared);
+                        } else operation = readUpdateURL ? mng_prepare_latest_update_fd(fd, updateFD, &provider, &sink, &prepared) :
                             mng_prepare_fd(fd, &provider, &sink, &prepared);
                         if (updateFD >= 0) close(updateFD);
                         close(fd);
                     };
                     if (![self cancellationRequested]) {
-                        if (updateURL) [coordinator coordinateReadingItemAtURL:source options:0 readingItemAtURL:updateURL options:0
-                            error:&coordinationError byAccessor:readInputs];
+                        if (updateURL) {
+                            // Coordinate both read intents together. There is no
+                            // two-reading-item synchronous NSFileCoordinator API.
+                            NSFileAccessIntent *baseIntent=[NSFileAccessIntent readingIntentWithURL:source options:0];
+                            NSFileAccessIntent *updateIntent=[NSFileAccessIntent readingIntentWithURL:updateURL options:0];
+                            NSOperationQueue *accessQueue=[NSOperationQueue new]; accessQueue.maxConcurrentOperationCount=1;
+                            dispatch_semaphore_t finished=dispatch_semaphore_create(0);
+                            [coordinator coordinateAccessWithIntents:@[baseIntent,updateIntent] queue:accessQueue byAccessor:^(NSError *error) {
+                                @autoreleasepool {
+                                    coordinationError=error;
+                                    if (!error && ![self cancellationRequested]) readInputs(baseIntent.URL,updateIntent.URL);
+                                }
+                                dispatch_semaphore_signal(finished);
+                            }];
+                            dispatch_semaphore_wait(finished,DISPATCH_TIME_FOREVER);
+                        }
                         else [coordinator coordinateReadingItemAtURL:source options:0 error:&coordinationError byAccessor:^(NSURL *readURL) {
                             readInputs(readURL, nil);
                         }];
@@ -263,7 +307,7 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
             if (!commitAttempted && operation != MNG_PREPARE_OK && [self cancellationRequested]) operation = MNG_PREPARE_CANCELLED;
             [self->_lock lock]; self->_nativeStore = NULL; self->_coordinator = nil; [self->_lock unlock];
             mng_keys_free(keys); mng_store_close(store);
-            NSDictionary *result = operation == MNG_PREPARE_OK ? @{
+            NSMutableDictionary *result = operation == MNG_PREPARE_OK ? [@{
                 @"titleID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.title_id],
                 @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.application_id],
                 @"titleVersion":@(prepared.title_version), @"versionIdentified":prepared.version_identified ? @YES : @NO,
@@ -273,9 +317,18 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
                 @"patchTitleID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.patch_title_id],
                 @"updateSourceSHA256":CPHex(prepared.update_source_sha256, 32), @"updateSourceSize":@(prepared.update_source_size),
                 @"generationID":[NSString stringWithUTF8String:generation], @"jobID":job,
-                @"sourceSHA256":CPHex(prepared.source_sha256, 32), @"assetCount":@(prepared.asset_count), @"assetBytes":@(prepared.asset_bytes),
+                @"sourceSHA256":CPHex(prepared.source_sha256, 32), @"sourceSize":@(prepared.source_size),
+                @"assetCount":@(prepared.asset_count), @"assetBytes":@(prepared.asset_bytes),
                 @"exefsVerified":prepared.exefs_verified ? @YES : @NO, @"romfsVerified":prepared.romfs_verified ? @YES : @NO,
-                @"signatureVerified":@NO, @"executionVerified":@NO } : nil;
+                @"signatureVerified":@NO, @"executionVerified":@NO } mutableCopy] : nil;
+            if (result && prepared.source_kind) {
+                [result removeObjectForKey:@"sourceSHA256"]; [result removeObjectForKey:@"sourceSize"];
+                result[@"sourceKind"]=prepared.source_kind==MNG_PREPARE_NCA_FOLDER ? @"nca-folder" : @"asset-folder";
+                result[@"memberInventorySHA256"]=CPHex(prepared.member_inventory_sha256,32);
+                result[@"sourceMemberBytes"]=@(prepared.source_member_bytes); result[@"sourceMemberCount"]=@(prepared.source_member_count);
+                result[@"assetHashesVerified"]=prepared.asset_hashes_verified ? @YES : @NO;
+                result[@"romfsStructureVerified"]=prepared.romfs_structure_verified ? @YES : @NO;
+            }
             NSError *error = operation == MNG_PREPARE_OK ? nil : CPError(operation, published || (commitAttempted && operation == MNG_PREPARE_IO));
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (self->_epoch != epoch) return;

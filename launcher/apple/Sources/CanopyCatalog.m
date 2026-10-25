@@ -68,8 +68,8 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
             [issues addObject:[NSString stringWithFormat:@"Title %@ has no valid verified current generation.", titleID]]; continue;
         }
         if (result.title_id != title) { [issues addObject:@"A verified generation returned an inconsistent title identity."]; continue; }
-        NSDictionary *entry = @{@"titleID":titleID, @"generationID":[NSString stringWithUTF8String:generation],
-            @"recipeID":result.update_applied ? @MNG_STORE_RECIPE_V3 : result.version_identified ? @MNG_STORE_RECIPE_V2 : @MNG_STORE_RECIPE,
+        NSMutableDictionary *entry = [@{@"titleID":titleID, @"generationID":[NSString stringWithUTF8String:generation],
+            @"recipeID":result.source_kind ? @MNG_STORE_RECIPE_V4 : result.update_applied ? @MNG_STORE_RECIPE_V3 : result.version_identified ? @MNG_STORE_RECIPE_V2 : @MNG_STORE_RECIPE,
             @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)result.application_id],
             @"titleVersion":@(result.title_version), @"versionIdentified":result.version_identified ? @YES : @NO,
             @"contentRole":@(result.content_role),
@@ -81,8 +81,18 @@ static NSString *HexDigest(const unsigned char bytes[32]) {
             @"sourceSHA256":HexDigest(result.source_sha256), @"sourceSize":@(result.source_size),
             @"assetCount":@(result.asset_count), @"assetBytes":@(result.asset_bytes),
             @"integrity":@{@"exefsVerified":result.exefs_verified ? @YES : @NO, @"romfsVerified":result.romfs_verified ? @YES : @NO, @"signatureVerified":@NO},
-            @"preparationState":@"prepared", @"runtimeEligibility":@"unassessed"};
-        [entries addObject:entry];
+            @"preparationState":@"prepared", @"runtimeEligibility":@"unassessed"} mutableCopy];
+        if (result.source_kind) {
+            [entry removeObjectForKey:@"sourceSHA256"]; [entry removeObjectForKey:@"sourceSize"];
+            entry[@"sourceKind"]=result.source_kind==MNG_PREPARE_NCA_FOLDER ? @"nca-folder" : @"asset-folder";
+            entry[@"memberInventorySHA256"]=HexDigest(result.member_inventory_sha256);
+            entry[@"sourceMemberBytes"]=@(result.source_member_bytes); entry[@"sourceMemberCount"]=@(result.source_member_count);
+            NSMutableDictionary *integrity=[entry[@"integrity"] mutableCopy];
+            integrity[@"assetHashesVerified"]=result.asset_hashes_verified ? @YES : @NO;
+            integrity[@"romfsStructureVerified"]=result.romfs_structure_verified ? @YES : @NO;
+            entry[@"integrity"]=[integrity copy];
+        }
+        [entries addObject:[entry copy]];
     }
     closedir(directory); mng_store_close(store); close(root);
     if (!okay) return CatalogError(error, @"The prepared library exceeds 500 entries or could not be read completely. Existing catalog state was retained.");

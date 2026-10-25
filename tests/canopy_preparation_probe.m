@@ -12,15 +12,17 @@ int main(int argc,char **argv) {
         Check(argc==6 || argc==7,"arguments");
         Check(NSThread.isMainThread,"main owner");
         NSString *mode=@(argv[1]);
+        BOOL folder=[mode hasPrefix:@"folder-"];
+        if(folder)mode=[mode substringFromIndex:7];
         NSURL *source=[NSURL fileURLWithPath:@(argv[2])];
-        NSURL *keys=[NSURL fileURLWithPath:@(argv[3])];
+        NSURL *keys=strcmp(argv[3],"-") ? [NSURL fileURLWithPath:@(argv[3])]:nil;
         NSURL *store=[NSURL fileURLWithPath:@(argv[4]) isDirectory:YES];
         NSString *identifier=strcmp(argv[5],"-") ? @(argv[5]):nil;
         NSURL *update=argc==7 ? [NSURL fileURLWithPath:@(argv[6])]:nil;
         CanopyPreparation *job=[[CanopyPreparation alloc] initWithPreparedRootURL:store];
         Check(!job.busy,"initial busy");
         __block BOOL completed=NO,cancelSent=NO;
-        __block NSUInteger progressCalls=0;
+        __block NSUInteger progressCalls=0,copyFinishes=0;
         __block NSDictionary *result=nil;
         __block NSError *failure=nil;
         __weak CanopyPreparation *weakJob=job;
@@ -30,19 +32,24 @@ int main(int argc,char **argv) {
             progressCalls++;
             /* ExeFS assets are already complete when IVFC verification starts;
              * cancellation leaves a resumable job with real completed files. */
-            if([mode isEqual:@"cancel"] && !cancelSent && [phase isEqual:(update ? @"hash-update-source":@"verify-ivfc")]) {
+            if(folder && [phase isEqual:@"copy-plaintext-assets"] && done==total)copyFinishes++;
+            BOOL cancelPhase=[phase isEqual:(update ? @"hash-update-source":@"verify-ivfc")] ||
+                (folder && [phase isEqual:@"copy-plaintext-assets"] && copyFinishes>=2);
+            if([mode isEqual:@"cancel"] && !cancelSent && cancelPhase) {
                 cancelSent=YES;[weakJob cancel];
             }
         };
-        BOOL started=[job startSourceURL:source updateURL:update keysURL:keys jobIdentifier:identifier
-            completion:^(NSDictionary<NSString *,id> *value,NSError *error) {
+        void (^completion)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable)=^(NSDictionary<NSString *,id> *value,NSError *error) {
                 Check(NSThread.isMainThread,"completion thread");
                 Check(!completed,"duplicate completion");
                 Check(!weakJob.busy,"completion busy");
                 result=value;failure=error;completed=YES;
-            }];
+            };
+        BOOL started=folder ? [job startFolderURL:source keysURL:keys jobIdentifier:identifier completion:completion] :
+            [job startSourceURL:source updateURL:update keysURL:keys jobIdentifier:identifier completion:completion];
         Check(started,"job rejected");
         Check(job.busy,"accepted job busy");
+        if([mode isEqual:@"cancel-immediate"]) {cancelSent=YES;[job cancel];}
         Check(job.jobIdentifier.length==32,"assigned job identity");
         if(identifier)Check([job.jobIdentifier isEqual:identifier],"explicit job identity");
         if([mode isEqual:@"busy"]) {

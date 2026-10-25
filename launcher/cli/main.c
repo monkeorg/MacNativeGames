@@ -8,6 +8,7 @@
 #include "mng_crypto.h"
 #include "mng_keys.h"
 #include "mng_store.h"
+#include "mng_folder.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -144,8 +145,9 @@ static int prepare_command(int argc,char **argv) {
     struct mng_prepare_result prepared={0};
     int input=-1,update=-1,root=-1,result=4,publication_attempted=0,cancelled_result=0;const char *failure="prepare_failed";
     enum mng_prepare_status status;
+    enum mng_folder_kind folder_kind=0;
     char generated_job[33],generation[65],source_hash[65];
-    if(argc<7 || argc>13 || !(argc&1))return error("usage",2);
+    if(argc<5 || argc>13 || !(argc&1))return error("usage",2);
     for(int i=3;i<argc;i+=2) {
         if(!strcmp(argv[i],"--keys") && !key_path)key_path=argv[i+1];
         else if(!strcmp(argv[i],"--store") && !store_path)store_path=argv[i+1];
@@ -154,7 +156,7 @@ static int prepare_command(int argc,char **argv) {
         else if(!strcmp(argv[i],"--version") && !version)version=argv[i+1];
         else return error("usage",2);
     }
-    if(!key_path || !store_path || (job && !job_valid(job)) || (version && !update_path))return error("usage",2);
+    if(!store_path || (job && !job_valid(job)) || (version && !update_path))return error("usage",2);
     uint32_t target_version=0;
     int exact_version=version && strcmp(version,"latest");
     if(exact_version) {
@@ -174,14 +176,24 @@ static int prepare_command(int argc,char **argv) {
     }
     struct sigaction action={0};action.sa_handler=interrupt_handler;sigemptyset(&action.sa_mask);
     if(sigaction(SIGINT,&action,NULL))return error("signal_failed",4);
-    if(read_keys(key_path,&keys)){failure="keys_invalid";goto done;}
     input=open(argv[2],O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
     if(input<0){failure="open_failed";goto done;}
     struct stat info;
-    if(fstat(input,&info) || !S_ISREG(info.st_mode)){failure="invalid_source";goto done;}
+    if(fstat(input,&info) || (!S_ISREG(info.st_mode) && !S_ISDIR(info.st_mode))){failure="invalid_source";goto done;}
+    if(S_ISDIR(info.st_mode)) {
+        if(update_path){failure="unsupported_folder_update";goto done;}
+        status=mng_folder_kind_fd(input,&folder_kind);
+        if(status!=MNG_PREPARE_OK){failure=mng_prepare_status_name(status);goto done;}
+    }
+    if(folder_kind!=MNG_FOLDER_ASSETS) {
+        if(!key_path){failure="usage";result=2;goto done;}
+        if(read_keys(key_path,&keys)){failure="keys_invalid";goto done;}
+    }
     if(update_path) {
         update=open(update_path,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
-        if(update<0 || fstat(update,&info) || !S_ISREG(info.st_mode)){failure="invalid_update_source";goto done;}
+        if(update<0 || fstat(update,&info)){failure="invalid_update_source";goto done;}
+        if(S_ISDIR(info.st_mode)){failure="unsupported_folder_update";goto done;}
+        if(!S_ISREG(info.st_mode)){failure="invalid_update_source";goto done;}
     }
     if(mkdir(store_path,0700) && errno!=EEXIST){failure="store_open_failed";goto done;}
     root=open(store_path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
@@ -194,7 +206,9 @@ static int prepare_command(int argc,char **argv) {
     struct cancel_sink wrapped={mng_store_sink(store),store};
     struct mng_asset_sink sink={&wrapped,asset_begin,asset_write,asset_end,cancelled,progress};
     struct mng_key_provider provider=mng_keys_provider(keys);
-    if(update_path) status=exact_version ? mng_prepare_update_fd(input,update,&provider,&sink,target_version,&prepared):
+    if(folder_kind) status=mng_prepare_folder_fd(input,folder_kind,
+        folder_kind==MNG_FOLDER_ASSETS ? NULL:&provider,NULL,&sink,&prepared);
+    else if(update_path) status=exact_version ? mng_prepare_update_fd(input,update,&provider,&sink,target_version,&prepared):
         mng_prepare_latest_update_fd(input,update,&provider,&sink,&prepared);
     else status=mng_prepare_fd(input,&provider,&sink,&prepared);
     if(interrupted)status=MNG_PREPARE_CANCELLED;
@@ -205,14 +219,25 @@ static int prepare_command(int argc,char **argv) {
         status=mng_store_commit(store,&prepared,generation);
     }
     if(status!=MNG_PREPARE_OK){cancelled_result=status==MNG_PREPARE_CANCELLED;failure=mng_prepare_status_name(status);goto done;}
-    digest_hex(prepared.source_sha256,32,source_hash);
     printf("{\"title_id\":\"%016" PRIx64 "\",\"generation\":\"%s\",\"job\":\"%s\","
-           "\"source_sha256\":\"%s\",\"asset_count\":%" PRIu64 ",\"asset_bytes\":%" PRIu64 ","
+           "\"asset_count\":%" PRIu64 ",\"asset_bytes\":%" PRIu64 ","
            "\"exefs_verified\":%s,\"romfs_verified\":%s,\"signature_verified\":false,\"execution_verified\":false,"
            "\"application_id\":\"%016" PRIx64 "\",\"title_version\":%" PRIu32 ",\"version_identified\":%s,\"update_applied\":%s",
-           prepared.title_id,generation,job,source_hash,prepared.asset_count,prepared.asset_bytes,
+           prepared.title_id,generation,job,prepared.asset_count,prepared.asset_bytes,
            prepared.exefs_verified?"true":"false",prepared.romfs_verified?"true":"false",prepared.application_id,
            prepared.title_version,prepared.version_identified?"true":"false",prepared.update_applied?"true":"false");
+    if(prepared.source_kind) {
+        digest_hex(prepared.member_inventory_sha256,32,source_hash);
+        printf(",\"source_kind\":\"%s\",\"member_inventory_sha256\":\"%s\","
+               "\"source_member_count\":%" PRIu32 ",\"source_member_bytes\":%" PRIu64 ","
+               "\"asset_hashes_verified\":%s,\"romfs_structure_verified\":%s",
+               prepared.source_kind==MNG_PREPARE_NCA_FOLDER ? "nca-folder":"asset-folder",source_hash,
+               prepared.source_member_count,prepared.source_member_bytes,
+               prepared.asset_hashes_verified ? "true":"false",prepared.romfs_structure_verified ? "true":"false");
+    } else {
+        digest_hex(prepared.source_sha256,32,source_hash);
+        printf(",\"source_kind\":\"container\",\"source_sha256\":\"%s\"",source_hash);
+    }
     if(prepared.update_applied) {
         char update_hash[65];digest_hex(prepared.update_source_sha256,32,update_hash);
         printf(",\"base_title_version\":%" PRIu32 ",\"patch_title_id\":\"%016" PRIx64 "\","
