@@ -152,6 +152,11 @@ class InProcessCrossTests(unittest.TestCase):
             '-I',str(private),'-I',str(TOOLS),str(ROOT/'tests/canopy_shader_walk_probe.cpp'),str(cls.library),
             '-Wl,-rpath,'+str(folder),'-o',str(cls.walk_probe)],capture_output=True,text=True,timeout=120)
         if run.returncode:raise AssertionError(run.stdout+run.stderr)
+        cls.flush_probe=folder/'flush-probe'
+        run=subprocess.run(['c++','-std=c++11','-Wall','-Wextra','-Werror','-fsanitize=address','-fno-omit-frame-pointer',
+            '-I',str(private),'-I',str(TOOLS),str(ROOT/'tests/canopy_shader_flush_probe.cpp'),str(cls.library),
+            '-Wl,-rpath,'+str(folder),'-o',str(cls.flush_probe)],capture_output=True,text=True,timeout=120)
+        if run.returncode:raise AssertionError(run.stdout+run.stderr)
 
     def call(self,data,capacity=65536):
         src=ctypes.create_string_buffer(data);out=ctypes.create_string_buffer(b'Z'*capacity,capacity);n=ctypes.c_size_t(999)
@@ -206,6 +211,15 @@ class InProcessCrossTests(unittest.TestCase):
             for status in (5,6):
                 with self.subTest(kind=kind,status=status):
                     run=subprocess.run([str(self.walk_probe),str(kind),str(status)],capture_output=True,text=True,timeout=15,
+                        env=dict(os.environ,ASAN_OPTIONS='abort_on_error=1:detect_leaks=1'))
+                    self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+                    self.assertEqual(run.stdout.strip(),'{"status":0}')
+
+    def test_all_ten_actual_ir_invalidation_loops_quota_cancel_unwind_and_fresh_success(self):
+        for kind in range(10):
+            for status in (5,6):
+                with self.subTest(kind=kind,status=status):
+                    run=subprocess.run([str(self.flush_probe),str(kind),str(status)],capture_output=True,text=True,timeout=15,
                         env=dict(os.environ,ASAN_OPTIONS='abort_on_error=1:detect_leaks=1'))
                     self.assertEqual(run.returncode,0,run.stdout+run.stderr)
                     self.assertEqual(run.stdout.strip(),'{"status":0}')
