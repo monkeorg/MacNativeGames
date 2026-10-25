@@ -1,6 +1,7 @@
 #import "game_menu.h"
 #import "launcher_settings.h"
 #import "launcher.h"
+#import "settings_navigation.h"
 #import "mouse_input.h"
 #import "keyboard_input.h"
 #import "touch_pad.h"
@@ -58,7 +59,7 @@
     } HUDChanged:^{
         [weakSelf applyHUDPreferences];
     }];
-    self.settingsNavigation = [[UINavigationController alloc] initWithRootViewController:settings];
+    self.settingsNavigation = [[TOTKSettingsNavigation alloc] initWithRoot:settings close:^{ [weakSelf closeMenu]; }];
     UINavigationBarAppearance *appearance = [UINavigationBarAppearance new];
     [appearance configureWithTransparentBackground];
     self.settingsNavigation.navigationBar.standardAppearance = appearance;
@@ -87,8 +88,8 @@
         [self.gear.heightAnchor constraintEqualToConstant:44],
         [self.card.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
         [self.card.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor], width, height,
-        [self.card.widthAnchor constraintLessThanOrEqualToConstant:744],
-        [self.card.heightAnchor constraintLessThanOrEqualToConstant:840],
+        [self.card.widthAnchor constraintLessThanOrEqualToConstant:720],
+        [self.card.heightAnchor constraintLessThanOrEqualToConstant:760],
         [self.card.widthAnchor constraintLessThanOrEqualToAnchor:safe.widthAnchor constant:-24],
         [self.card.heightAnchor constraintLessThanOrEqualToAnchor:safe.heightAnchor constant:-24],
     ]];

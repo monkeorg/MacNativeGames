@@ -21,7 +21,7 @@ static inline UIView *TOTKSettingsBackground(void) {
 static inline void TOTKStyleSettingsPage(UITableViewController *page) {
     UITableView *table = page.tableView;
     table.backgroundColor = UIColor.clearColor;
-    table.backgroundView = TOTKSettingsBackground();
+    table.backgroundView = nil;
     table.cellLayoutMarginsFollowReadableWidth = YES;
     table.rowHeight = UITableViewAutomaticDimension;
     table.estimatedRowHeight = 56;

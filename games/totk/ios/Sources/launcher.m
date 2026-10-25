@@ -2,6 +2,7 @@
 #import "launcher_settings.h"
 #import "resolution_settings.h"
 #import "menu_style.h"
+#import "settings_choices.h"
 #import "save_editor.h"
 #import "keyboard_input.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -92,24 +93,20 @@ static void show_restart_required(UIViewController *controller) {
     [tableView deselectRowAtIndexPath:path animated:YES];
     if (!self.editingNextLaunch && getenv("TOTK_CONTROLS")) return;
     NSString *button = [self buttonAtPath:path];
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:control_button_title(button) message:@"Choose the Switch button to hold." preferredStyle:UIAlertControllerStyleActionSheet];
-    for (NSString *target in TOTKLauncherControlTargets()) {
-        NSString *title = [target isEqual:@"default"] ? @"Default" : [target isEqual:@"none"] ? @"None" : target.uppercaseString;
-        [sheet addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            (void)action;
-            NSString *previous = TOTKLauncherControlBinding(NSUserDefaults.standardUserDefaults,button);
-            [NSUserDefaults.standardUserDefaults setObject:target forKey:[@"TOTK_LAUNCHER_BIND_" stringByAppendingString:button]];
-            [self.tableView reloadData];
-            if (![previous isEqual:target]) {
-                if (self.changed) self.changed();
-                if (self.editingNextLaunch && ![target isEqual:self.runningBindings[button]]) show_restart_required(self);
-            }
-        }]];
-    }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    sheet.popoverPresentationController.sourceView = tableView;
-    sheet.popoverPresentationController.sourceRect = [tableView rectForRowAtIndexPath:path];
-    [self presentViewController:sheet animated:YES completion:nil];
+    NSArray *targets=TOTKLauncherControlTargets();
+    NSMutableArray *titles=[NSMutableArray array];
+    for (NSString *target in targets) [titles addObject:[target isEqual:@"default"] ? @"Default" : [target isEqual:@"none"] ? @"None" : target.uppercaseString];
+    NSUInteger current=[targets indexOfObject:TOTKLauncherControlBinding(NSUserDefaults.standardUserDefaults,button)];
+    TOTKChooseSetting(self,control_button_title(button),titles,current<titles.count ? titles[current] : nil,nil,^(NSUInteger index) {
+        NSString *target=targets[index];
+        NSString *previous=TOTKLauncherControlBinding(NSUserDefaults.standardUserDefaults,button);
+        [NSUserDefaults.standardUserDefaults setObject:target forKey:[@"TOTK_LAUNCHER_BIND_" stringByAppendingString:button]];
+        [self.tableView reloadData];
+        if (![previous isEqual:target]) {
+            if (self.changed) self.changed();
+            if (self.editingNextLaunch && ![target isEqual:self.runningBindings[button]]) show_restart_required(self);
+        }
+    });
 }
 - (BOOL)prefersStatusBarHidden { return YES; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
@@ -143,23 +140,18 @@ static void show_restart_required(UIViewController *controller) {
     [tableView deselectRowAtIndexPath:path animated:YES];
     TOTKClearKeyboardInput();
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:TOTKKeyboardActions()[path.row]
-        message:@"Choose a physical key. Keys assigned to other actions are unavailable. Escape and Command are reserved."
-        preferredStyle:UIAlertControllerStyleActionSheet];
-    for (NSNumber *key in TOTKKeyboardSupportedKeys()) {
-        UIAlertAction *choice = [UIAlertAction actionWithTitle:TOTKKeyboardKeyTitle(key.unsignedIntValue) style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            (void)action;
-            if (TOTKKeyboardSetBinding(defaults,path.row,key.unsignedIntValue)) [self.tableView reloadData];
-        }];
-        for (NSUInteger i=0; key.unsignedIntValue && i<TOTKKeyboardActions().count; i++) {
-            if (i != (NSUInteger)path.row && TOTKKeyboardBinding(defaults,i) == key.unsignedIntValue) choice.enabled = NO;
-        }
-        [sheet addAction:choice];
+    NSArray<NSNumber *> *keys=TOTKKeyboardSupportedKeys();
+    NSMutableArray *titles=[NSMutableArray array];
+    NSMutableIndexSet *disabled=[NSMutableIndexSet indexSet];
+    for (NSUInteger index=0;index<keys.count;index++) {
+        unsigned key=keys[index].unsignedIntValue;
+        [titles addObject:TOTKKeyboardKeyTitle(key)];
+        for (NSUInteger i=0;key && i<TOTKKeyboardActions().count;i++)
+            if (i!=(NSUInteger)path.row && TOTKKeyboardBinding(defaults,i)==key) [disabled addIndex:index];
     }
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    sheet.popoverPresentationController.sourceView = tableView;
-    sheet.popoverPresentationController.sourceRect = [tableView rectForRowAtIndexPath:path];
-    [self presentViewController:sheet animated:YES completion:nil];
+    TOTKChooseSetting(self,TOTKKeyboardActions()[path.row],titles,TOTKKeyboardKeyTitle(TOTKKeyboardBinding(defaults,path.row)),disabled,^(NSUInteger index) {
+        if (TOTKKeyboardSetBinding(defaults,path.row,keys[index].unsignedIntValue)) [self.tableView reloadData];
+    });
 }
 - (BOOL)prefersStatusBarHidden { return YES; }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations { return UIInterfaceOrientationMaskLandscape; }
@@ -195,8 +187,6 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
         _HUDChanged = [HUDChanged copy];
         _runningPreferences = startup_preferences(NSUserDefaults.standardUserDefaults);
         self.title = @"Settings";
-        self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemClose target:self action:@selector(resumeGame)];
-        self.navigationItem.rightBarButtonItem.accessibilityLabel = @"Close game menu";
     }
     return self;
 }
@@ -208,50 +198,21 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = _inGame ? UIColor.clearColor : UIColor.systemGroupedBackgroundColor;
-    UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:[UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular]];
-    card.accessibilityIdentifier = @"TOTKPrelaunchCard";
-    card.translatesAutoresizingMaskIntoConstraints = NO;
-    card.layer.cornerRadius = 32;
-    card.clipsToBounds = YES;
-    [self.view addSubview:card];
+    self.view.backgroundColor = UIColor.clearColor;
     self.tableView = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStyleInsetGrouped];
     self.tableView.backgroundColor = UIColor.clearColor;
     self.tableView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.tableView.dataSource = self;
-    self.tableView.delegate = self;
-    self.tableView.rowHeight = UITableViewAutomaticDimension;
-    self.tableView.estimatedRowHeight = 56;
-    self.tableView.cellLayoutMarginsFollowReadableWidth = YES;
-    self.tableView.sectionHeaderTopPadding = 12;
-    [card.contentView addSubview:self.tableView];
-    UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
-    NSLayoutConstraint *width = [card.widthAnchor constraintEqualToAnchor:safe.widthAnchor constant:-24];
-    width.priority = UILayoutPriorityDefaultHigh;
-    NSLayoutConstraint *height = [card.heightAnchor constraintEqualToAnchor:safe.heightAnchor constant:-24];
-    height.priority = UILayoutPriorityDefaultHigh;
+    self.tableView.dataSource = self; self.tableView.delegate = self;
+    self.tableView.rowHeight = UITableViewAutomaticDimension; self.tableView.estimatedRowHeight = 56;
+    self.tableView.cellLayoutMarginsFollowReadableWidth = YES; self.tableView.sectionHeaderTopPadding = 12;
+    [self.view addSubview:self.tableView];
     [NSLayoutConstraint activateConstraints:@[
-        [card.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
-        [card.centerYAnchor constraintEqualToAnchor:safe.centerYAnchor],
-        [card.topAnchor constraintGreaterThanOrEqualToAnchor:safe.topAnchor constant:12],
-        [card.bottomAnchor constraintLessThanOrEqualToAnchor:safe.bottomAnchor constant:-12],
-        [card.leadingAnchor constraintGreaterThanOrEqualToAnchor:safe.leadingAnchor constant:12],
-        [card.trailingAnchor constraintLessThanOrEqualToAnchor:safe.trailingAnchor constant:-12],
-        [card.widthAnchor constraintLessThanOrEqualToConstant:720], width,
-        [card.heightAnchor constraintLessThanOrEqualToConstant:760], height,
-        [self.tableView.leadingAnchor constraintEqualToAnchor:card.contentView.leadingAnchor],
-        [self.tableView.trailingAnchor constraintEqualToAnchor:card.contentView.trailingAnchor],
-        [self.tableView.topAnchor constraintEqualToAnchor:card.contentView.topAnchor],
-        [self.tableView.bottomAnchor constraintEqualToAnchor:card.contentView.bottomAnchor],
+        [self.tableView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.tableView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [self.tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
     ]];
-    self.tableView.allowsFocus = YES;
-    self.tableView.remembersLastFocusedIndexPath = YES;
-    self.navigationItem.largeTitleDisplayMode = UINavigationItemLargeTitleDisplayModeNever;
-    self.navigationController.navigationBar.prefersLargeTitles = NO;
-    UINavigationBarAppearance *appearance = [UINavigationBarAppearance new];
-    [appearance configureWithTransparentBackground];
-    self.navigationController.navigationBar.standardAppearance = appearance;
-    self.navigationController.navigationBar.scrollEdgeAppearance = appearance;
+    self.tableView.allowsFocus = YES; self.tableView.remembersLastFocusedIndexPath = YES;
     [self refreshRestartFooter];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
@@ -403,18 +364,13 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     if (![previous isEqual:current] && ![current isEqual:_runningPreferences[key]]) show_restart_required(self);
 }
 - (void)choose:(NSArray<NSString *> *)titles path:(NSIndexPath *)path selected:(void (^)(NSUInteger))selected {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    [titles enumerateObjectsUsingBlock:^(NSString *title, NSUInteger index, BOOL *stop) {
-        (void)stop; [sheet addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *a) {
-            (void)a;
-            NSString *key = [self startupKeyForPath:path];
-            id previous = key ? startup_preferences(NSUserDefaults.standardUserDefaults)[key] : nil;
-            selected(index); [self.tableView reloadData]; [self refreshRestartFooter];
-            if (key) [self startupSettingChangedAtPath:path previousValue:previous];
-        }]];
-    }];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [self anchor:sheet path:path]; [self presentViewController:sheet animated:YES completion:nil];
+    UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:path];
+    TOTKChooseSetting(self,cell.textLabel.text,titles,cell.detailTextLabel.text,nil,^(NSUInteger index) {
+        NSString *key = [self startupKeyForPath:path];
+        id previous = key ? startup_preferences(NSUserDefaults.standardUserDefaults)[key] : nil;
+        selected(index); [self.tableView reloadData]; [self refreshRestartFooter];
+        if (key) [self startupSettingChangedAtPath:path previousValue:previous];
+    });
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];

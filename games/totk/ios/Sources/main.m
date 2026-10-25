@@ -13,6 +13,7 @@
 #import "touch_pad.h"
 #import "launcher.h"
 #import "launcher_settings.h"
+#import "settings_navigation.h"
 #import "game_menu.h"
 #import "mouse_input.h"
 
@@ -166,7 +167,7 @@ void runtime_shortcut_help_toggle(void) {}
         g_root_controller = [TOTKGameController new];
         g_active_window.rootViewController = g_root_controller;
     }];
-    g_root_controller = [[UINavigationController alloc] initWithRootViewController:launcher];
+    g_root_controller = [[TOTKSettingsPanel alloc] initWithRoot:launcher];
     self.window.rootViewController = g_root_controller;
     [self.window makeKeyAndVisible];
 }

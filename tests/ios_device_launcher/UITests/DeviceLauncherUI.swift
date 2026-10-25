@@ -99,17 +99,9 @@ final class DeviceLauncherUI: XCTestCase {
     }
 
     private func cancelSettingsPopover() {
-        let cancel = app.buttons["Cancel"]
-        if cancel.exists && cancel.isHittable {
-            cancel.tap()
-        } else {
-            // iPad action-sheet popovers omit Cancel. UIKit dismisses them on an outside tap.
-            let window = app.windows.firstMatch
-            let card = app.otherElements["TOTKGameMenuCard"]
-            XCTAssertGreaterThan(card.frame.minX - window.frame.minX, 4)
-            window.coordinate(withNormalizedOffset: CGVector(
-                dx: (card.frame.minX - window.frame.minX) / window.frame.width / 2, dy: 0.5)).tap()
-        }
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        expectHittable(back)
+        back.tap()
         expectHittable(app.buttons["Close game menu"])
         XCTAssertTrue(app.navigationBars["Settings"].exists)
         XCTAssertFalse(app.otherElements["TOTKTouchControls"].isHittable)
@@ -140,6 +132,27 @@ final class DeviceLauncherUI: XCTestCase {
         XCTAssertLessThanOrEqual(app.tables.firstMatch.frame.width, 961)
         XCTAssertGreaterThan(app.windows.firstMatch.frame.width, app.windows.firstMatch.frame.height)
         record("Compact prelaunch glass card")
+    }
+
+    func test00bSharedPanelBoundsWithoutPlay() {
+        let card = app.otherElements["TOTKPrelaunchCard"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        let original = card.frame
+        cell("Resolution & scaling").tap()
+        XCTAssertTrue(app.navigationBars["Resolution"].waitForExistence(timeout: 5))
+        XCTAssertEqual(card.frame.width, original.width, accuracy: 1)
+        XCTAssertEqual(card.frame.height, original.height, accuracy: 1)
+        cell("Mode").tap()
+        XCTAssertTrue(app.navigationBars["Mode"].waitForExistence(timeout: 5))
+        XCTAssertEqual(card.frame.width, original.width, accuracy: 1)
+        XCTAssertEqual(card.frame.height, original.height, accuracy: 1)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Resolution"].waitForExistence(timeout: 5))
+        app.buttons["Back to main menu"].tap()
+        XCTAssertTrue(app.navigationBars["Tears of the Kingdom"].waitForExistence(timeout: 5))
+        XCTAssertTrue(cell("Play").exists)
+        XCTAssertFalse(app.buttons["Game menu"].exists)
+        record("Shared panel bounds and integrated navigation without Play")
     }
 
     func test01PreferencesLayoutAndLifecycle() {

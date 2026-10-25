@@ -1,6 +1,7 @@
 #import "resolution_settings.h"
 #import "launcher_settings.h"
 #import "menu_style.h"
+#import "settings_choices.h"
 #include "../../runtime/runtime.h"
 #include <math.h>
 
@@ -17,11 +18,6 @@
     [super viewDidLoad];
     self.title = @"Multiplier";
     self.view.backgroundColor = UIColor.clearColor;
-    UIView *background = TOTKSettingsBackground();
-    background.frame = self.view.bounds;
-    background.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self.view addSubview:background];
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel target:self action:@selector(cancel)];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(done)];
     _value = [UILabel new];
     _value.font = [UIFont preferredFontForTextStyle:UIFontTextStyleTitle2];
@@ -64,11 +60,15 @@
     _value.text = [NSString stringWithFormat:@"%.3g×",self.factor];
     _slider.accessibilityValue = _value.text;
 }
-- (void)cancel { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (void)cancel { [self.navigationController popViewControllerAnimated:YES]; }
 - (void)done {
     double factor = self.factor;
     void (^saved)(double) = self.saved;
-    [self dismissViewControllerAnimated:YES completion:^{ if (saved) saved(factor); }];
+    UINavigationController *navigation = self.navigationController;
+    [navigation popViewControllerAnimated:YES];
+    id<UIViewControllerTransitionCoordinator> transition = navigation.transitionCoordinator;
+    if (transition) [transition animateAlongsideTransition:nil completion:^(id<UIViewControllerTransitionCoordinatorContext> context) { (void)context; if (saved) saved(factor); }];
+    else if (saved) saved(factor);
 }
 @end
 
@@ -144,6 +144,12 @@
     if (activity & 4) [passes addObject:@"output"];
     return passes.count ? [@"Recent MetalFX activity: " stringByAppendingString:[passes componentsJoinedByString:@" / "]] : @"No recent MetalFX frames";
 }
+- (NSString *)effectiveMultiplier {
+    TOTKGraphicsPlan plan;
+    if (![self graphicsPlan:&plan]) return @"Unavailable";
+    double fit=fmin((double)plan.displayWidth/plan.canvasWidth,(double)plan.displayHeight/plan.canvasHeight);
+    return [NSString stringWithFormat:@"%.2f×",fit*plan.canvasHeight/plan.inputHeight];
+}
 - (NSString *)modeTitle:(NSString *)mode {
     return @{@"input-output":@"Input + output",@"input-scale":@"Input + multiplier",@"output-scale":@"Output + multiplier"}[mode];
 }
@@ -167,7 +173,9 @@
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 3; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return section == 1 ? self.configurationRows.count : 2;
+    (void)tableView;
+    if (section==1) return self.configurationRows.count;
+    return section==2 && [TOTKLauncherResolutionMode(NSUserDefaults.standardUserDefaults) isEqual:@"input-output"] ? 3 : 2;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return (@[@"Setup",@"Resolution",@"Status"])[section];
@@ -202,11 +210,11 @@
         else cell.detailTextLabel.text = runtime_ios_spatial_upscaling_supported()
             ? (TOTKLauncherSpatialUpscaling(defaults) ? @"MetalFX Spatial" : @"Game scaling") : @"Game scaling · MetalFX unavailable";
     } else {
-        cell.textLabel.text = path.row == 0 ? @"Configured" : @"Activity";
-        cell.detailTextLabel.text = path.row == 0 ? self.summary : self.activity;
+        cell.textLabel.text = (@[@"Configured",@"Activity",@"Effective multiplier"])[path.row];
+        cell.detailTextLabel.text = path.row == 0 ? self.summary : path.row == 1 ? self.activity : self.effectiveMultiplier;
     }
     NSDictionary *symbols = @{@"Mode":@"slider.horizontal.3",@"Aspect":@"aspectratio",@"Input":@"square.arrow.down",
-        @"Output":@"display",@"Multiplier":@"multiply",@"Scaler":@"sparkles",@"Configured":@"rectangle.on.rectangle",@"Activity":@"waveform.path"};
+        @"Output":@"display",@"Multiplier":@"multiply",@"Effective multiplier":@"multiply",@"Scaler":@"sparkles",@"Configured":@"rectangle.on.rectangle",@"Activity":@"waveform.path"};
     cell.accessibilityIdentifier = [@"resolution." stringByAppendingString:cell.textLabel.text.lowercaseString];
     TOTKStyleSettingsCell(cell,symbols[cell.textLabel.text]);
     return cell;
@@ -223,17 +231,8 @@
     if (![before isEqual:TOTKLauncherGraphicsPreferences(defaults)] && _changed) _changed();
 }
 - (void)choose:(NSArray<NSString *> *)titles path:(NSIndexPath *)path selected:(void (^)(NSUInteger))selected {
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
-    [titles enumerateObjectsUsingBlock:^(NSString *title, NSUInteger index, BOOL *stop) {
-        (void)stop;
-        [sheet addAction:[UIAlertAction actionWithTitle:title style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-            (void)action; selected(index);
-        }]];
-    }];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    sheet.popoverPresentationController.sourceView = self.tableView;
-    sheet.popoverPresentationController.sourceRect = [self.tableView rectForRowAtIndexPath:path];
-    [self presentViewController:sheet animated:YES completion:nil];
+    UITableViewCell *cell=[self.tableView cellForRowAtIndexPath:path];
+    TOTKChooseSetting(self,cell.textLabel.text,titles,cell.detailTextLabel.text,nil,selected);
 }
 - (void)saveInputHeight:(NSInteger)height {
     [self save:^(NSUserDefaults *defaults) {
@@ -309,11 +308,7 @@
         TOTKResolutionFactor *factor = [TOTKResolutionFactor new];
         factor.factor = TOTKLauncherUpscaleFactor(NSUserDefaults.standardUserDefaults);
         factor.saved = ^(double value) { [self save:^(NSUserDefaults *defaults) { [defaults setDouble:value forKey:@"TOTK_LAUNCHER_UPSCALE_FACTOR"]; } resetScene:NO]; };
-        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:factor];
-        nav.modalPresentationStyle = UIModalPresentationPopover; nav.preferredContentSize = CGSizeMake(420,310);
-        nav.popoverPresentationController.sourceView = self.tableView;
-        nav.popoverPresentationController.sourceRect = [self.tableView rectForRowAtIndexPath:path];
-        [self presentViewController:nav animated:YES completion:nil];
+        [self.navigationController pushViewController:factor animated:YES];
     } else {
         [self choose:runtime_ios_spatial_upscaling_supported() ? @[@"Game scaling",@"MetalFX Spatial"] : @[@"Game scaling"] path:path selected:^(NSUInteger index) {
             [self save:^(NSUserDefaults *defaults) { [defaults setBool:index == 1 forKey:@"TOTK_LAUNCHER_SPATIAL_UPSCALING"]; } resetScene:NO];
