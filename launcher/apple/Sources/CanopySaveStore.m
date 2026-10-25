@@ -269,7 +269,9 @@ static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
 @interface CanopySaveEditPreview ()
 @property(nonatomic,readwrite,copy) NSString *relativePath;
 @property(nonatomic,readwrite,copy) NSData *originalData;
-@property(nonatomic,copy) NSString *stage,*digest,*slot;
+@property(nonatomic,copy) NSString *stage;
+@property(nonatomic,copy) NSString *digest;
+@property(nonatomic,copy) NSString *slot;
 @property(nonatomic,copy) NSDictionary *manifest;
 @property(nonatomic) BOOL valid;
 - (instancetype)initPrivate;
