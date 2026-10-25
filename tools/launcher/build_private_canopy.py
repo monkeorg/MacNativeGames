@@ -20,10 +20,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-TOTK = Path('games/totk')
-VERSIONS = {'v121': '1.2.1', 'v143': '1.4.3'}
 RECIPE = 'canopy-private-native-ios26-icon-v2'
-MODULES = ('main', 'subsdk0', 'sdk')
 FRAMEWORKS = ('UIKit', 'Metal', 'MetalFX', 'Foundation', 'QuartzCore', 'ImageIO',
               'CoreGraphics', 'CoreText', 'UniformTypeIdentifiers', 'CoreFoundation',
               'AudioToolbox', 'GameController', 'AVFAudio', 'Security', 'WebKit', 'CoreHaptics')
@@ -43,6 +40,23 @@ def load_helper(name, relative):
 
 PUBLIC = load_helper('canopy_public_builder', 'tools/launcher/build_canopy.py')
 APPLE = load_helper('canopy_apple_sources', 'games/totk/ios/tools/build_sources.py')
+PROFILE_HELPER = 'tools/launcher/game_profiles.py'
+# Bind the observation to the exact source bytes executed, bypassing bytecode
+# caches and a later path reread. PUBLIC/APPLE retain their existing loaders.
+PROFILE_HELPER_BYTES = PUBLIC.public_input(ROOT, PROFILE_HELPER)
+if len(PROFILE_HELPER_BYTES) > 1 << 20:
+    raise ValueError('registry helper exceeds source bound')
+PROFILE_HELPER_SHA256 = hashlib.sha256(PROFILE_HELPER_BYTES).hexdigest()
+_profile_spec = importlib.util.spec_from_file_location('canopy_game_profiles', ROOT / PROFILE_HELPER)
+PROFILES = importlib.util.module_from_spec(_profile_spec)
+exec(compile(PROFILE_HELPER_BYTES, str(ROOT / PROFILE_HELPER), 'exec'), PROFILES.__dict__)
+DEFAULT_GAME = PROFILES.game_profile(ROOT)
+TOTK = Path(DEFAULT_GAME['sourceDirectory'])
+DEFAULT_VERSION = DEFAULT_GAME['defaultVersion']
+VERSIONS = {v['alias']: v['_expected']['display_version'] for v in DEFAULT_GAME['versions']}
+MODULES = tuple(DEFAULT_GAME['modules'])
+DISPLAY_VERSION = next(v['alias'] for v in DEFAULT_GAME['versions']
+                       if PROFILES.DISPLAY[v['displayProfile']] != 0)
 
 
 def require(condition, message):
@@ -87,19 +101,18 @@ def digest(path, destination=None, expected=None, limit=64 << 30):
 
 
 def expected_profile(repo, version):
-    require(version in VERSIONS, 'unsupported private native profile')
-    profile = json.loads(PUBLIC.public_input(repo, str(TOTK / f'assets/expected-v{VERSIONS[version]}.json')))
-    require(profile['title_id'].lower() == '0100f2c0115b6000', 'unexpected recipe title identity')
-    return profile
+    return PROFILES.version_profile(repo, version)[1]['_expected']
 
 
 def source_names(repo, version):
     """Reuse the production runtime/NVN directory selection and public app list."""
+    game, selected = PROFILES.version_profile(repo, version)
+    source_root = Path(game['sourceDirectory'])
     names = set(PUBLIC.SOURCES)
-    excluded = {'frontend.m', 'game_patches_botw.c',
-                'game_patches.c' if version == 'v143' else 'game_patches_v143.c'}
-    for directory in (TOTK / 'runtime', TOTK / 'third_party/d2r_gfx/gfx/nvn',
-                      TOTK / 'third_party/d2r_gfx/gfx/tex'):
+    excluded = {'frontend.m', 'game_patches_botw.c'} | {
+        v['patchSource'] for v in game['versions'] if v['patchSource'] != selected['patchSource']}
+    for directory in (source_root / 'runtime', source_root / 'third_party/d2r_gfx/gfx/nvn',
+                      source_root / 'third_party/d2r_gfx/gfx/tex'):
         for path in sorted((repo / directory).iterdir()):
             if path.suffix in ('.c', '.m', '.S') and path.name not in excluded:
                 names.add(str(path.relative_to(repo)))
@@ -108,7 +121,10 @@ def source_names(repo, version):
 
 
 def display_option(version, enabled):
-    require(not enabled or version == 'v143', '--display-settings supports only TOTK1.4.3')
+    if enabled:
+        selected = PROFILES.version_profile(ROOT, version)[1]
+        require(PROFILES.DISPLAY[selected['displayProfile']] != 0,
+                '--display-settings supports only TOTK1.4.3')
 
 
 def exporter_environment(modules, display_settings=False):
@@ -119,13 +135,15 @@ def exporter_environment(modules, display_settings=False):
     return result
 
 
-def build_plan(repo=ROOT, version='v121', identifier='org.monkeorg.canopy', display_settings=False):
+def build_plan(repo=ROOT, version=DEFAULT_VERSION, identifier='org.monkeorg.canopy', display_settings=False):
     display_option(version, display_settings)
     PUBLIC.bundle_identifier(identifier)
     profile = expected_profile(repo, version)
+    game, selected = PROFILES.version_profile(repo, version)
     sources = source_names(repo, version)
     plan = {'recipe': RECIPE, 'status': 'plan only; no private inputs or Apple compilation used',
-            'bundleIdentifier': identifier, 'version': VERSIONS[version], 'titleID': profile['title_id'].lower(),
+            'bundleIdentifier': identifier, 'version': profile['display_version'], 'titleID': profile['title_id'].lower(),
+            'gameProfile': game['gameID'], 'registrySHA256': game['_registrySHA256'],
             'originalMainSHA256': profile['exefs_sha256']['main'],
             'romfsSHA256': profile['romfs']['sha256'], 'sources': list(sources),
             'entry': 'launcher/apple/Sources/CanopyApp.m',
@@ -140,7 +158,7 @@ def build_plan(repo=ROOT, version='v121', identifier='org.monkeorg.canopy', disp
             'limitations': ['A build is not game compatibility, signing or device acceptance.',
                             'The current native host is single use and cannot safely stop or relaunch.']}
     if display_settings:
-        plan['displaySettings'] = {'profile': 'v143-signed-720-1080-four-three-v1',
+        plan['displaySettings'] = {'profile': selected['displayProfile'],
             'exporterEnvironment': dict(DISPLAY_EXPORT), 'maximumScene': '1920x1080',
             'aspectLayout': '1440x1080',
             'resources': [DISPLAY_HEAP + '/manifest.tsv', DISPLAY_LAYOUT + '/manifest.tsv'],
@@ -248,16 +266,16 @@ def validate_display_tree(folder, index, image, extra_files=()):
             'memberBytes': member_bytes, 'treeBytes': total}
 
 
-def generate_display_resources(stage_tree, data, run):
+def generate_display_resources(stage_tree, data, run, version=DISPLAY_VERSION):
     """Execute only the public staged generators on the verified staged image."""
     output = data / 'romfs-patches-out';layout = data / DISPLAY_LAYOUT
     require(output.is_dir() and not any(output.iterdir()) and not layout.exists(),
             'display resources require fresh output directories')
     run([sys.executable, str(stage_tree / 'scripts/make_output_res_overlay.py'), '1920x1080',
-         '--scene', '1920x1080', '--version', 'v143', '--output-root', str(output)])
-    run([sys.executable, str(stage_tree / 'scripts/make_romfs_patches.py'), '--version', 'v143',
+         '--scene', '1920x1080', '--version', version, '--output-root', str(output)])
+    run([sys.executable, str(stage_tree / 'scripts/make_romfs_patches.py'), '--version', version,
          '--aspect', '1440x1080', '--output-dir', str(layout)])
-    source = stage_tree / 'extracted/v143/romfs'
+    source = stage_tree / 'extracted' / version / 'romfs'
     index_document = json.loads(stable_bytes(source / 'index.json', 256 << 20))
     require(isinstance(index_document, dict) and isinstance(index_document.get('files'), list) and len(index_document['files']) <= 1000000,
             'display generation requires the verified extraction inventory')
@@ -274,7 +292,7 @@ def generate_display_resources(stage_tree, data, run):
     metadata = json.loads(metadata_bytes)
     script = stage_tree / 'scripts/make_output_res_overlay.py'
     require(isinstance(metadata, dict) and metadata.get('script') == script.name and
-            metadata.get('script_sha256') == digest(script, limit=4 << 20) and metadata.get('version') == 'v143' and
+            metadata.get('script_sha256') == digest(script, limit=4 << 20) and metadata.get('version') == version and
             metadata.get('size') == '1920x1080' and metadata.get('scene') == '1920x1080' and
             metadata.get('heapdef') is None and metadata.get('heapdef_sha256') is None and
             type(metadata.get('extra_kib')) is int and metadata['extra_kib'] > 0,
@@ -402,10 +420,12 @@ def stage_codecs(source, destination):
 
 def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, display_profile=None):
     display_option(version, display_profile is not None)
+    selected = PROFILES.version_profile(stage, version)[1]
+    require(profile == selected['_expected'], 'compiler profile differs from staged registry')
     generated = stage / TOTK / ('build/' + version)
     base = [toolchain['clang'], '-target', 'arm64-apple-ios26.0', '-isysroot', toolchain['sdk'],
             '-O2', '-mcpu=apple-a15', '-Wall', '-Wextra', '-Werror=implicit-function-declaration',
-            '-DCANOPY_HOST_RUNTIME=1', '-DTOTK_GAME_' + version.upper() + '=1',
+            '-DCANOPY_HOST_RUNTIME=1', '-D' + selected['compileDefine'] + '=1',
             '-DCANOPY_HOST_TITLE_ID=0x' + profile['title_id'] + 'ULL',
             '-DCANOPY_HOST_ORIGINAL_MAIN_SHA256="' + profile['exefs_sha256']['main'] + '"',
             '-DCANOPY_HOST_SHADER_SEED_MANIFEST_SHA256="' + seed_sha + '"']
@@ -475,7 +495,10 @@ def build(args):
     require(sys.platform == 'darwin' and os.uname().machine == 'arm64', 'private build requires an Apple silicon Mac')
     repo = ROOT
     PUBLIC.bundle_identifier(args.bundle_id)
+    game, selected = PROFILES.version_profile(repo, args.version)
+    require(game == DEFAULT_GAME, 'trusted registry changed after builder initialization')
     profile = expected_profile(repo, args.version)
+    digest(ROOT / PROFILE_HELPER, expected=PROFILE_HELPER_SHA256, limit=1 << 20)
     branding = PUBLIC.public_input(repo, PUBLIC.BRAND)
     require(hashlib.sha256(branding).hexdigest() == PUBLIC.BRAND_SHA256, 'Canopy branding differs from the approved original')
     tree = args.tree.resolve(strict=True);deps = args.deps.resolve(strict=True);seed = args.shader_seed.resolve(strict=True)
@@ -492,6 +515,8 @@ def build(args):
     output.mkdir(mode=0o700)
     observation = {'recipe': RECIPE, 'status': 'started; no accepted artifact', 'toolchain': toolchain,
                    'bundleIdentifier': args.bundle_id, 'version': args.version, 'commands': [],
+                   'gameProfile': game['gameID'], 'registrySHA256': game['_registrySHA256'],
+                   'registryHelperSHA256': PROFILE_HELPER_SHA256,
                    'builderSHA256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     def run(command, extra=None):
         observation['commands'].append([str(x) for x in command])
@@ -506,6 +531,14 @@ def build(args):
         with tempfile.TemporaryDirectory(prefix='.private-stage-', dir=output) as folder:
             work = Path(folder);stage = work / 'source';stage.mkdir()
             observation['publicInputs'] = copy_public(repo, stage)
+            observation['publicInputs'][PROFILE_HELPER] = digest(
+                ROOT / PROFILE_HELPER, stage / PROFILE_HELPER,
+                expected=PROFILE_HELPER_SHA256, limit=1 << 20)
+            digest(stage / PROFILE_HELPER, expected=PROFILE_HELPER_SHA256, limit=1 << 20)
+            staged_game, staged_version = PROFILES.version_profile(stage, args.version)
+            require(staged_game == game and staged_version == selected,
+                    'staged registry differs from selected recipe')
+            digest(ROOT / PROFILE_HELPER, expected=PROFILE_HELPER_SHA256, limit=1 << 20)
             stage_tree = stage / TOTK
             observation['privateInputs'] = stage_inputs(tree, stage_tree, args.version, profile)
             generated = stage_tree / 'build' / args.version
@@ -532,7 +565,7 @@ def build(args):
             shutil.copytree(stage_tree / 'extracted/firmware/shared-fonts', data / 'shared-fonts')
             for name in ('romfs-patches', 'romfs-patches-out'):
                 (data / name).mkdir(mode=0o700)  # No unverified optional title patches.
-            display_profile = generate_display_resources(stage_tree, data, run) if display_settings else None
+            display_profile = generate_display_resources(stage_tree, data, run, args.version) if display_settings else None
             if display_profile is not None:
                 observation['displaySettings'] = display_profile
             codec_snapshot = work / 'codecs'
@@ -568,7 +601,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--build', action='store_true')
-    parser.add_argument('--version', choices=VERSIONS, default='v121')
+    parser.add_argument('--version', choices=VERSIONS, default=DEFAULT_VERSION)
     parser.add_argument('--display-settings', action='store_true', help='opt-in v143 signed720/1080 scene and4:3 aspect profile')
     parser.add_argument('--bundle-id', default='org.monkeorg.canopy')
     parser.add_argument('--tree', type=Path, help='trusted retained private games/totk tree')
@@ -580,8 +613,10 @@ def main():
     args = parser.parse_args()
     if args.plan == args.build:
         parser.error('select exactly one of --plan or --build')
-    if args.display_settings and args.version != 'v143':
-        parser.error('--display-settings supports only TOTK1.4.3')
+    try:
+        display_option(args.version, args.display_settings)
+    except ValueError as error:
+        parser.error(str(error))
     if args.plan:
         print(json.dumps(build_plan(version=args.version, identifier=args.bundle_id, display_settings=args.display_settings), indent=2))
     else:

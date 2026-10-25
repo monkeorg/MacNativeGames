@@ -50,6 +50,7 @@ SOURCES = ('launcher/apple/Sources/CanopyApp.m',
            'launcher/src/mng_romfs.c', 'launcher/src/mng_romfs_runtime.c',
            'launcher/src/mng_players.c', 'launcher/src/mng_session.c', 'launcher/src/mng_display.c',
            'launcher/src/mng_totk_save.c')
+SOURCES += ('launcher/src/mng_game_profile.c',)
 SOURCES += ('launcher/src/mng_addon.c', 'launcher/src/mng_install.c', 'launcher/src/mng_multiplayer.c',
             'launcher/src/mng_input.c', 'launcher/src/mng_keyboard.c',
             'launcher/src/mng_pointer.c', 'launcher/src/mng_touch.c',
@@ -94,6 +95,7 @@ HEADERS += ('launcher/include/mng_addon.h', 'launcher/include/mng_install.h', 'l
             'games/totk/runtime/mouse_look.h', 'games/totk/ios/Sources/keyboard_state.h',
             'games/totk/ios/Sources/mouse_capture.h')
 INPUTS = SOURCES + HEADERS + (BRAND,)
+INPUTS += ('launcher/include/mng_game_profile.h', 'launcher/src/mng_game_profile_data.inc')
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 
 
