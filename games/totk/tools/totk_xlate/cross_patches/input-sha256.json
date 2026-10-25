@@ -182,6 +182,18 @@
       },
       "patch": "0015-flag-capability-loop-checkpoints.patch",
       "sha256": "f826eedf84ec828573b7707928e9c07aff3f83549c568ae4aa22ed5a21797f85"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "a1404770ca18136565af94707c39dd61825025a0ec2b4064c3c84b8aab5f1f9c",
+        "spirv_msl.cpp": "990e7e1a6cf90b9b0a0bfdfbe0c8ef2c50d2a66827babcf8f7c73715376b2f02"
+      },
+      "before": {
+        "spirv_glsl.cpp": "036a86aab55fb0a8053c223b52d358c8257ec26745e2d68cb2ab60dc4b41d1a5",
+        "spirv_msl.cpp": "b29d63aad74a1628dda4dc2238638f9a3960c98b95f991bd0e08a8ba2ecfb3a1"
+      },
+      "patch": "0016-interface-location-offset-bounds.patch",
+      "sha256": "e8865be51086ad703b472cb4252ab5db93c18e499188cb139ba15cd43030963f"
     }
   ],
   "schemaVersion": 1
