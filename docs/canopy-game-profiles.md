@@ -45,8 +45,16 @@ to require an actual compiled provider, exact asset pins, approved versioned
 capabilities, generation leases and device acceptance. Structural save-validator
 selection does not authorize semantic editing or account conversion. Display
 flags describe an implemented profile ceiling and do not authorize patches by
-themselves. This phase does not change Games, SaveStore, Runtime or native host
-gates; those Apple consumers remain a separately reviewed integration slice.
+themselves.
+
+`CanopyGameProfiles` maps compiled metadata to labels and a closed structural
+save-validator factory. Games uses the factory on its existing profile-open
+worker; actual Store opening, pre-Play seals and selection CAS remain unchanged.
+The library displays verified catalog revisions, known version labels or an
+explicit unidentified/unknown result, with saved user names taking precedence.
+Host presence is assessed through the actual Runtime provider, separately from
+metadata and compatibility. No edit validator is supplied. Runtime and native
+host callback, ABI, asset and device gates remain unchanged.
 
 Future additions can reuse the metadata path where they share implemented
 contracts. An incompatible native ABI, loader, services, shaders, save format or
@@ -56,5 +64,5 @@ row cannot supply that code, and imported manifests cannot register adapters.
 No new tests, probes, compilation or private build were executed for this phase
 under the current no-test instruction. The generated table was produced as a
 source-generation step. CMake and fixed public inventories include the compiled
-table, header and implementation. Apple consumer wiring is a separately reviewed
-slice; source generation establishes no Apple or device execution result.
+table, header and implementation, plus the separately reviewed Apple adapter and
+Games caller. Source generation establishes no Apple or device execution result.
