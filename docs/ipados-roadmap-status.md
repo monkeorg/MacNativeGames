@@ -1,4 +1,30 @@
-# iPad roadmap: source delivery and external blockers
+# iPad roadmap: integration checkpoint and historical cloud audit
+
+## Local integration checkpoint — 2026-10-25
+
+The overnight source at `feat/totk-cloud-ready` (`2241674`) is integrated through draft [PR #33](https://github.com/monkeorg/MacNativeGames/pull/33). Production candidate `ecd124e` is built, signed and installed under the existing app identity. Later commits change the device test harness and documentation only. No merge or release occurred.
+
+Verified host evidence: 360 repository tests passed in the retained project environment, both iPhoneOS profiles compiled (22 objects), the full cached native host and iPad app builds passed, and all nine embedded executable-section hashes matched. The first system-Python test run had three environment errors; the project-environment run passed all 360 tests.
+
+Verified physical evidence: the installed candidate loaded the retained post-tutorial test save into gameplay. Account identity remained byte-identical. The user confirmed the bottom-left gear opens the full settings overlay. Earlier installed candidate `fa4e94b` passed byte-verified fixture import, editor prefill/cancel, full menu open/close and live HUD checks. Those earlier checks remain separate from this candidate's acceptance.
+
+The current source adds live native 30/40/60 FPS ceilings, capability-gated TAA requests, live touch visibility, editable keyboard mappings, a single pending-restart footer and the full shared overlay. Forty FPS requires a compatible display. TAA remains off by default. A requested rate or TAA state is not proof of achieved performance or successful temporal scaling.
+
+Final graphics-control acceptance remains incomplete. The first attempt failed to open the menu through automation; the user subsequently confirmed the menu opens physically. The screenshot service returned a CoreDevice connection error. A bounded harness retry then stopped before test actions with `Timed out while enabling automation mode.` This is infrastructure failure, not a graphics-control result. No further retries ran at this checkpoint.
+
+Open delivery limits:
+
+- The user reports incorrect 4:3 **telescope/scope** presentation. Full display remains experimental; do not change global FOV without a matched capture and verified correction.
+- Stable native 60 FPS at 1080 high, synchronized memory/thermal measurements, and complete projection/effects acceptance remain unverified.
+- Physical keyboard/mouse/controller behavior, editor Apply followed by game load, and the complete ordered save/provider regression remain open.
+- Safe in-process restart and a generic mod manager are not implemented. Restart uses close/reopen guidance; arbitrary executable mods are unsupported.
+- The current self-contained IPA still includes game binaries and assets. External-image packaging can reduce later transfers, but does not make that IPA content-free.
+
+The current post-tutorial save stays active by user instruction. Retain the original automatic backup and previous signed app. The user waived a fresh full-profile backup; do not claim an immediate complete pre-install comparison. Private reports, inputs, saves, signing and caches remain outside Git.
+
+Future launcher/import architecture is tracked in [issue #34](https://github.com/monkeorg/MacNativeGames/issues/34). It requires a proven execution path and shader preparation as well as NSP extraction. It is not part of this installed integration checkpoint. BOTW remains a separate assessment under issue #8.
+
+## Historical cloud delivery — 2026-10-24
 
 Review date: 2026-10-24. Specification: [roadmap #9](https://github.com/monkeorg/MacNativeGames/issues/9), its issues #1–#8, and [ipados-roadmap.md](ipados-roadmap.md). This continuation starts at `236930c` after the [cloud audit](ipados-cloud-audit.md). The resumed goal prohibits tests and simulators: **no tests, probes, compiler checks, simulators, app launches or device operations ran in this phase**. Earlier test results do not cover the new Controls implementation. New source remains unbuilt and untested.
 

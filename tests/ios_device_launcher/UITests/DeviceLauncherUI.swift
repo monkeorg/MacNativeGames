@@ -69,10 +69,17 @@ final class DeviceLauncherUI: XCTestCase {
     }
 
     private func openGameMenu() {
+        let close = app.buttons["Close game menu"]
+        if close.exists && close.isHittable { return }
         let gear = app.buttons["Game menu"]
         expectHittable(gear)
-        gear.tap()
-        expectHittable(app.buttons["Close game menu"])
+        gear.press(forDuration: 0.15)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            close.exists && close.isHittable
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [ready], timeout: 10)
+        if result != .completed { record("Game menu did not open after one gear press") }
+        XCTAssertEqual(result, .completed)
     }
 
     private func closeGameMenu() {
@@ -599,11 +606,14 @@ final class DeviceLauncherUI: XCTestCase {
         record("Supported live target frame-rate choices retained")
 
         if taaSupported {
-            let changed = originalTAA == "On" ? "Off" : "On"
-            choose(changed, for: taaRow, expectedValue: changed == "On" ? "On (requested)" : "Off")
+            choose("On", for: taaRow, expectedValue: "On (requested)")
             closeGameMenu()
+            let frames = expectation(description: "Allow requested TAA to reach subsequent gameplay frames")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { frames.fulfill() }
+            wait(for: [frames], timeout: 5)
+            record("Gameplay two seconds after TAA On request")
             openGameMenu()
-            XCTAssertEqual(cell(taaRow).value as? String, changed == "On" ? "On (requested)" : "Off")
+            XCTAssertEqual(cell(taaRow).value as? String, "On (requested)")
             XCTAssertFalse(app.alerts["Restart required"].exists)
             choose(originalTAA, for: taaRow, expectedValue: originalTAA == "On" ? "On (requested)" : "Off")
         } else {
