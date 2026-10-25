@@ -4,6 +4,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Separate user metadata; never stored in or used to delete prepared generations.
 /// Call on one serial owner queue. Loading malformed metadata never rewrites it.
+/// Absent mouseEnabled in existing v1 rows inherits YES; no metadata rewrite.
 @interface CanopySettings : NSObject
 @property(nonatomic, readonly) BOOL recoveryRequired;
 + (NSDictionary<NSString *, id> *)defaults;
