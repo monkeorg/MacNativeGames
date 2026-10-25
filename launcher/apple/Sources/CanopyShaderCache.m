@@ -131,7 +131,7 @@ done:
 static BOOL SCName(NSString *name) {
     static NSRegularExpression *pattern;static dispatch_once_t once;
     dispatch_once(&once,^{pattern=[NSRegularExpression regularExpressionWithPattern:
-        @"^(?:[0-9a-f]{64}\\.variants|[0-9a-f]{64}-[0-9a-f]{12}_b\\.(?:metal|json|metallib)|pso_manifest\\.tsv|shader-keys\\.json)$" options:0 error:nil];});
+        @"^(?:[0-9a-f]{64}\\.variants|[0-9a-f]{64}-[0-9a-f]{12}_b\\.(?:metal|json|metallib)|pso_(?:manifest|list|title)\\.tsv|shader-keys\\.json)$" options:0 error:nil];});
     if(![name isKindOfClass:NSString.class] || name.length>=128)return NO;
     NSTextCheckingResult *match=[pattern firstMatchInString:name options:0 range:NSMakeRange(0,name.length)];
     return match && NSEqualRanges(match.range,NSMakeRange(0,name.length));
