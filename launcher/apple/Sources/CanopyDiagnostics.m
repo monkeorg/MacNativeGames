@@ -196,6 +196,13 @@ static NSDictionary *CDSample(NSDictionary *entry,CanopyDiagnosticsPhase phase,C
             case 7:case 8:return CanopyDiagnosticsErrorLimit;default:return CanopyDiagnosticsErrorUnknown;
         }
     }
+    if([error.domain isEqual:@"CanopySessionController"]) {
+        switch(error.code) {
+            case 3:return CanopyDiagnosticsErrorCancelled;
+            case 4:return CanopyDiagnosticsErrorInvalid;
+            default:return CanopyDiagnosticsErrorUnknown;
+        }
+    }
     if([error.domain isEqual:@"CanopyRuntime"]) {
         switch(error.code) {
             case 3:case 6:return CanopyDiagnosticsErrorUnsupported;case 4:return CanopyDiagnosticsErrorInvalid;

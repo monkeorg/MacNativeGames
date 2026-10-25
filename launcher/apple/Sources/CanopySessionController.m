@@ -35,7 +35,8 @@ static CanopySessionController *ConsumedNativeSession;
     CADisplayLink *_displayLink;
     NSString *_seal;
     BOOL _attempted, _starting, _active, _returning, _cancelStartupRequested;
-    BOOL _diagnosticsModalOwnsInput;
+    BOOL _diagnosticsModalOwnsInput, _diagnosticStartupFailed;
+    CanopyDiagnosticsError _diagnosticStartupError;
     uint64_t _sequence;
     id<UIGestureRecognizerDelegate> _previousPopDelegate;
     BOOL _previousPopEnabled;
@@ -148,8 +149,11 @@ static CanopySessionController *ConsumedNativeSession;
     __weak CanopySessionController *weakSelf=self;
     sources.preparedEntry=^NSDictionary * {CanopySessionController *owner=weakSelf;return owner ? owner->_entry : nil;};
     sources.metrics=^NSDictionary * {CanopySessionController *owner=weakSelf;return owner ? owner->_runtime.diagnosticMetrics : nil;};
-    sources.phase=^CanopyDiagnosticsPhase {CanopySessionController *owner=weakSelf;return [CanopyDiagnostics phaseForRuntimeState:owner ? owner->_runtime.state : nil];};
-    sources.errorCode=^CanopyDiagnosticsError {CanopySessionController *owner=weakSelf;return owner && [owner->_runtime.state isEqual:@"failed"] ? CanopyDiagnosticsErrorUnknown : CanopyDiagnosticsErrorNone;};
+    sources.phase=^CanopyDiagnosticsPhase {CanopySessionController *owner=weakSelf;
+        return owner && owner->_diagnosticStartupFailed ? CanopyDiagnosticsPhaseFailed : [CanopyDiagnostics phaseForRuntimeState:owner ? owner->_runtime.state : nil];};
+    sources.errorCode=^CanopyDiagnosticsError {CanopySessionController *owner=weakSelf;
+        if(owner && owner->_diagnosticStartupFailed)return owner->_diagnosticStartupError;
+        return owner && [owner->_runtime.state isEqual:@"failed"] ? CanopyDiagnosticsErrorUnknown : CanopyDiagnosticsErrorNone;};
     return sources;
 }
 - (void)recordDiagnosticEvent {
@@ -238,7 +242,7 @@ static CanopySessionController *ConsumedNativeSession;
         BOOL cacheReady = [NSFileManager.defaultManager createDirectoryAtURL:self->_cache withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&error];
         NSString *seal = cacheReady ? [self->_saves sealForSession:&error] : nil;
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (!seal) { self->_starting = NO; [self showFailure:error.localizedDescription]; return; }
+            if (!seal) { self->_starting = NO; [self showFailure:error]; return; }
             self->_seal = seal;
             if (self->_cancelStartupRequested) {
                 [self failedBeforeEntry:[NSError errorWithDomain:@"CanopySessionController" code:3 userInfo:@{NSLocalizedDescriptionKey:@"Startup was canceled before entering native code."}]]; return;
@@ -251,18 +255,20 @@ static CanopySessionController *ConsumedNativeSession;
                 [self failedBeforeEntry:[NSError errorWithDomain:@"CanopySessionController" code:4 userInfo:@{NSLocalizedDescriptionKey:state[@"message"] ?: @"The input frontend refused this session configuration."}]];return;
             }
             self.navigationItem.prompt = @"Verifying the private native host and prepared generation…";
-            NSError *startError = nil;
+            NSError *startError = nil;__block BOOL completionDelivered=NO;
             BOOL accepted = [self->_runtime startTitleID:self->_entry[@"titleID"] generationID:self->_entry[@"generationID"]
                 hostAssetsURL:self->_profile[@"hostAssetsURL"] activeSavesURL:self->_saves.activeDirectoryURL
                 identityURL:self->_saves.accountIdentityDirectoryURL cacheURL:self->_cache settings:desired
                 graphicsSurface:self.view.layer hostView:self.view error:&startError completion:^(BOOL started, NSError *completionError) {
+                completionDelivered=YES;
                 self->_starting = NO;
                 if (self->_runtime.nativeEntryInvoked) ConsumedNativeSession = self;
                 if (!started) {
                     if (!self->_runtime.nativeEntryInvoked) [self failedBeforeEntry:completionError];
-                    else { [self showFailure:completionError.localizedDescription]; self->_overlay.view.hidden = NO; [self->_overlay open]; }
+                    else { [self showFailure:completionError]; self->_overlay.view.hidden = NO; [self->_overlay open]; }
                     return;
                 }
+                self->_diagnosticStartupFailed=NO;self->_diagnosticStartupError=CanopyDiagnosticsErrorNone;
                 self->_active = YES; self->_overlay.view.hidden = NO; self->_startupView.hidden = YES;
                 [self->_startupSpinner stopAnimating]; self.navigationItem.leftBarButtonItem.enabled = YES;
                 self.navigationItem.leftBarButtonItem.title = @"Session lifecycle";
@@ -278,25 +284,41 @@ static CanopySessionController *ConsumedNativeSession;
                 [self setNeedsUpdateOfPrefersPointerLocked];
             }];
             if (!accepted) [self failedBeforeEntry:startError];
+            else if(!completionDelivered) {
+                // Clear an earlier failure only once a real new request was
+                // accepted; a synchronous failed completion must not be erased.
+                self->_diagnosticStartupFailed=NO;self->_diagnosticStartupError=CanopyDiagnosticsErrorNone;
+            }
         });
     });
 }
+- (void)rememberStartupFailure:(NSError *)error {
+    NSAssert(NSThread.isMainThread,@"Session diagnostic state belongs on main thread");
+    _diagnosticStartupFailed=YES;
+    CanopyDiagnosticsError category=[CanopyDiagnostics errorForError:error];
+    _diagnosticStartupError=category==CanopyDiagnosticsErrorNone?CanopyDiagnosticsErrorUnknown:category;
+    // Retain only closed enums: never retain/export the NSError or derive a
+    // category from its message, userInfo, file paths or provider text.
+}
 - (void)failedBeforeEntry:(NSError *)error {
+    [self rememberStartupFailure:error];
     _starting = NO;
-    if (_runtime.nativeEntryInvoked) { [self showFailure:error.localizedDescription]; return; }
+    if (_runtime.nativeEntryInvoked) { [self showFailure:error]; return; }
     NSString *seal = _seal; _seal = nil;
-    if (!seal) { [self showFailure:error.localizedDescription]; return; }
+    if (!seal) { [self showFailure:error]; return; }
     _starting = YES;
     dispatch_async(_saveQueue, ^{
         NSError *releaseError = nil; BOOL released = [self->_saves finishSessionWithToken:seal error:&releaseError];
         dispatch_async(dispatch_get_main_queue(), ^{
             self->_starting = NO;
             if (!released) self->_seal = seal;
-            [self showFailure:released ? error.localizedDescription : releaseError.localizedDescription];
+            [self showFailure:released ? error : releaseError];
         });
     });
 }
-- (void)showFailure:(NSString *)message {
+- (void)showFailure:(NSError *)error {
+    [self rememberStartupFailure:error];
+    NSString *message=error.localizedDescription;
     if (_runtime.nativeEntryInvoked) ConsumedNativeSession = self;
     [_startupSpinner stopAnimating]; _startupStatus.text = message ?: @"The native session could not start.";
     self.navigationItem.leftBarButtonItem.enabled = YES;
@@ -365,7 +387,7 @@ static CanopySessionController *ConsumedNativeSession;
     NSString *seal = _seal;
     dispatch_async(_saveQueue, ^{
         NSError *releaseError = nil; BOOL okay = !seal || [self->_saves finishSessionWithToken:seal error:&releaseError];
-        dispatch_async(dispatch_get_main_queue(), ^{ if (okay) { self->_seal = nil; [self returnToLibrary]; } else [self showFailure:releaseError.localizedDescription]; });
+        dispatch_async(dispatch_get_main_queue(), ^{ if (okay) { self->_seal = nil; [self returnToLibrary]; } else [self showFailure:releaseError]; });
     });
 }
 - (void)returnToLibrary {
