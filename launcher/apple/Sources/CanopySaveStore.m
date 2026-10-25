@@ -266,11 +266,45 @@ static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
     return ok;
 }
 
+@interface CanopySaveEditPreview ()
+@property(nonatomic,readwrite,copy) NSString *relativePath;
+@property(nonatomic,readwrite,copy) NSData *originalData;
+@property(nonatomic,copy) NSString *stage,*digest,*slot;
+@property(nonatomic,copy) NSDictionary *manifest;
+@property(nonatomic) BOOL valid;
+- (instancetype)initPrivate;
+@end
+@implementation CanopySaveEditPreview
+- (instancetype)initPrivate {return [super init];}
+@end
+static BOOL CSEditSlot(NSString *slot) {
+    return [slot isKindOfClass:NSString.class]&&slot.length==7&&[slot hasPrefix:@"slot_0"]&&
+        [slot characterAtIndex:6]>='0'&&[slot characterAtIndex:6]<='5';
+}
+static NSData *CSEditRead(int parent) {
+    int fd=openat(parent,"progress.sav",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if(fd<0)return nil;struct stat before={0},after={0};
+    BOOL ok=!fstat(fd,&before)&&S_ISREG(before.st_mode)&&before.st_nlink==1&&before.st_uid==geteuid()&&
+        !(before.st_mode&077)&&before.st_size>=0&&(uint64_t)before.st_size<=CSFileLimit;
+    NSMutableData *data=ok?[NSMutableData dataWithLength:(NSUInteger)before.st_size]:nil;size_t used=0;
+    while(ok&&used<data.length){ssize_t n=read(fd,(unsigned char *)data.mutableBytes+used,data.length-used);
+        if(n<0&&errno==EINTR)continue;if(n<=0){ok=NO;break;}used+=(size_t)n;}
+    unsigned char extra;if(ok&&(read(fd,&extra,1)!=0||fstat(fd,&after)||!CSStable(&before,&after)))ok=NO;
+    close(fd);return ok?[data copy]:nil;
+}
+static NSString *CSEditDigest(NSData *data) {
+    struct mng_sha256 *hash=NULL;unsigned char digest[32];
+    BOOL ok=!mng_sha256_init(&hash)&&!mng_sha256_update(hash,data.bytes,data.length)&&!mng_sha256_final(hash,digest);
+    mng_sha256_free(hash);NSString *result=ok?CSHex(digest):nil;mng_secure_clear(digest,sizeof(digest));return result;
+}
+
 @implementation CanopySaveStore {
     NSURL *_profileURL;
     NSString *_title,*_profile,*_sessionToken;
     NSDictionary *_committedIntent;
     CanopySaveValidator _externalValidator;
+    CanopySaveEditValidator _editValidator;
+    CanopySaveEditPreview *_editPreview;
     int _profileFD,_backupsFD,_lockFD;
     BOOL _recoveryRequired;
     _Atomic int _sealedStatus,_recoveryStatus;
@@ -280,12 +314,16 @@ static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
 }
 - (instancetype)initWithRootURL:(NSURL *)root titleID:(NSString *)titleID profileID:(NSString *)profileID
     externalValidator:(CanopySaveValidator)validator error:(NSError **)error {
+    return [self initWithRootURL:root titleID:titleID profileID:profileID externalValidator:validator editValidator:nil error:error];
+}
+- (instancetype)initWithRootURL:(NSURL *)root titleID:(NSString *)titleID profileID:(NSString *)profileID
+    externalValidator:(CanopySaveValidator)validator editValidator:(CanopySaveEditValidator)editValidator error:(NSError **)error {
     if(!(self=[super init]))return nil;
     _profileFD=_backupsFD=_lockFD=-1;
     atomic_init(&_sealedStatus,0);atomic_init(&_recoveryStatus,0);
     if(!CSTitle(titleID)||!CSProfile(profileID)||!root.isFileURL){CSFail(error,@"The save title or profile is invalid.",NO);return nil;}
     _title=[titleID copy];_profile=[profileID copy];
-    _externalValidator=[validator copy];
+    _externalValidator=[validator copy];_editValidator=[editValidator copy];
     // Profile IDs are case-sensitive logical identities even on a
     // case-insensitive Apple filesystem. Hash their UTF-8 bytes for the folder.
     NSData *profileBytes=[_profile dataUsingEncoding:NSUTF8StringEncoding];
@@ -323,12 +361,14 @@ static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
     _recoveryRequired=required;atomic_store(&_recoveryStatus,required?1:0);
 }
 - (BOOL)externalImportSupported {return _externalValidator!=nil;}
+- (BOOL)editingSupported {return _externalValidator!=nil&&_editValidator!=nil;}
 - (BOOL)available:(NSError **)error {
     return (!_sessionToken&&!_recoveryRequired)||CSFail(error,_sessionToken?@"Save transfers are unavailable while a native session owns the profile.":@"Recover the unfinished save transaction before continuing.",NO);
 }
 - (NSString *)sealForSession:(NSError **)error {@synchronized(self){
     if(![self available:error])return nil;
     int active=CSDir(_profileFD,"active",NO);if(active<0){CSFail(error,@"The active save folder is unavailable.",NO);return nil;}close(active);
+    _editPreview.valid=NO; // A preview never survives a native-writer session.
     _sessionToken=CSID();atomic_store(&_sealedStatus,1);return _sessionToken;
 }}
 - (BOOL)finishSessionWithToken:(NSString *)token error:(NSError **)error {@synchronized(self){
@@ -435,6 +475,81 @@ static BOOL CSIntent(int directory,NSDictionary *document,BOOL replace) {
     if(!CSIntent(_profileFD,committed,YES))return CSFail(error,@"The save commit was not fully confirmed. Recover before continuing.",YES);
     _committedIntent=[committed copy];return [self clearCommittedIntent:error];
 }
+- (BOOL)discardEditPreview:(CanopySaveEditPreview *)preview error:(NSError **)error {@synchronized(self){
+    if(!preview||preview!=_editPreview)return CSFail(error,@"The edit preview belongs to another or expired save operation.",NO);
+    preview.valid=NO;
+    struct stat st;
+    if(fstatat(_profileFD,preview.stage.UTF8String,&st,AT_SYMLINK_NOFOLLOW)) {
+        if(errno!=ENOENT)return CSFail(error,@"The private edit preview could not be inspected safely.",NO);
+    } else if(!CSRemove(_profileFD,preview.stage.UTF8String,0))return CSFail(error,@"The private edit preview could not be discarded safely.",NO);
+    _editPreview=nil;return YES;
+}}
+- (CanopySaveEditPreview *)previewEditForSlot:(NSString *)slot error:(NSError **)error {@synchronized(self){
+    if(![self available:error]||!CSEditSlot(slot)){CSFail(error,@"Select a supported slot before previewing an edit.",NO);return nil;}
+    slot=[slot copy];
+    if(_editPreview&&![self discardEditPreview:_editPreview error:error])return nil;
+    int active=CSDir(_profileFD,"active",NO);if(active<0){CSFail(error,@"The active save is unavailable.",NO);return nil;}
+    NSString *stage=[@".stage-" stringByAppendingString:CSID()],*digest=nil;
+    BOOL copied=[self copyRaw:active toStage:stage digest:&digest error:error];
+    NSDictionary *current=copied?CSManifest(active,-1,_title,_profile):nil;close(active);
+    int snapshot=copied?CSDir(_profileFD,stage.UTF8String,NO):-1;
+    NSDictionary *manifest=snapshot>=0?CSManifest(snapshot,-1,_title,_profile):nil;
+    int selected=snapshot>=0?CSDir(snapshot,slot.UTF8String,NO):-1;NSData *data=selected>=0?CSEditRead(selected):nil;
+    if(selected>=0)close(selected);if(snapshot>=0)close(snapshot);
+    if(!data||!manifest||!current||![CSManifestDigest(manifest) isEqual:digest]||![CSManifestDigest(current) isEqual:digest]) {
+        if(copied)(void)CSRemove(_profileFD,stage.UTF8String,0);
+        CSFail(error,@"The save changed or its selected slot could not be previewed safely.",NO);return nil;
+    }
+    CanopySaveEditPreview *preview=[[CanopySaveEditPreview alloc] initPrivate];
+    preview.slot=slot;preview.relativePath=[slot stringByAppendingString:@"/progress.sav"];preview.originalData=data;
+    preview.stage=stage;preview.digest=digest;preview.manifest=manifest;preview.valid=YES;_editPreview=preview;return preview;
+}}
+- (BOOL)applyEditPreview:(CanopySaveEditPreview *)preview replacementData:(NSData *)data error:(NSError **)error {@synchronized(self){
+    if(![self available:error])return NO;
+    if(!self.editingSupported)return CSFail(error,@"No trusted format and integrity edit contract is available. Active save editing is unavailable.",NO);
+    if(!preview||preview!=_editPreview||!preview.valid||![data isKindOfClass:NSData.class]||data.length>CSFileLimit)
+        return CSFail(error,@"The edit preview or replacement is invalid or expired.",NO);
+    NSData *replacement=[data copy];int active=CSDir(_profileFD,"active",NO),stage=CSDir(_profileFD,preview.stage.UTF8String,NO);
+    NSDictionary *current=active>=0?CSManifest(active,-1,_title,_profile):nil;
+    NSDictionary *snapshot=stage>=0?CSManifest(stage,-1,_title,_profile):nil;
+    if(active>=0)close(active);
+    if(!current||!snapshot||![CSManifestDigest(current) isEqual:preview.digest]||![CSManifestDigest(snapshot) isEqual:preview.digest]) {
+        if(stage>=0)close(stage);preview.valid=NO;return CSFail(error,@"The active save or private preview changed. Create a new preview.",NO);
+    }
+    NSError *validationError=nil;
+    if(!_editValidator(preview.relativePath,preview.originalData,replacement,&validationError)) {
+        close(stage);return CSFail(error,@"The edit does not pass the trusted field and integrity contract.",NO);
+    }
+    int selected=CSDir(stage,preview.slot.UTF8String,NO);NSString *temporary=[@".edit-" stringByAppendingString:CSID()];
+    int output=selected>=0?openat(selected,temporary.UTF8String,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600):-1;
+    BOOL ok=output>=0&&CSWrite(output,replacement.bytes,replacement.length)&&!fsync(output);
+    if(output>=0&&close(output))ok=NO;
+    if(ok)ok=!renameat(selected,temporary.UTF8String,selected,"progress.sav")&&!fsync(selected);
+    if(!ok&&selected>=0)(void)unlinkat(selected,temporary.UTF8String,0);
+    if(selected>=0)close(selected);if(ok)ok=!fsync(stage);
+    NSMutableDictionary *expected=[preview.manifest mutableCopy];NSMutableArray *files=[expected[@"files"] mutableCopy];
+    NSString *newHash=CSEditDigest(replacement);BOOL found=NO;
+    for(NSUInteger i=0;i<files.count;i++)if([files[i][@"path"] isEqual:preview.relativePath]) {
+        files[i]=@{@"path":preview.relativePath,@"size":@(replacement.length),@"sha256":newHash?:@""};found=YES;break;
+    }
+    expected[@"files"]=files;
+    NSDictionary *actual=ok&&found&&newHash?CSManifest(stage,-1,_title,_profile):nil;close(stage);
+    ok=actual&&CSManifestsEqual(expected,actual);
+    if(ok)ok=[self validateExternalStage:preview.stage digest:CSManifestDigest(actual) error:error];
+    if(!ok){preview.valid=NO;_editPreview=nil;(void)CSRemove(_profileFD,preview.stage.UTF8String,0);
+        return CSFail(error,@"The staged edit failed byte-preservation, format validation or persistence.",NO);}
+    active=CSDir(_profileFD,"active",NO);current=active>=0?CSManifest(active,-1,_title,_profile):nil;if(active>=0)close(active);
+    if(!current||![CSManifestDigest(current) isEqual:preview.digest]){preview.valid=NO;return CSFail(error,@"The active save changed before the edit could be published.",NO);}
+    NSString *backup=[self backup:error];
+    if(!backup){preview.valid=NO;_editPreview=nil;(void)CSRemove(_profileFD,preview.stage.UTF8String,0);return NO;}
+    active=CSDir(_profileFD,"active",NO);current=active>=0?CSManifest(active,-1,_title,_profile):nil;if(active>=0)close(active);
+    if(!current||![CSManifestDigest(current) isEqual:preview.digest]) {
+        preview.valid=NO;_editPreview=nil;(void)CSRemove(_profileFD,preview.stage.UTF8String,0);
+        return CSFail(error,@"The active save changed during backup. The edit was not published.",NO);
+    }
+    preview.valid=NO;_editPreview=nil;
+    return [self publishStage:preview.stage backup:backup digest:CSManifestDigest(actual) error:error];
+}}
 - (BOOL)importExportURL:(NSURL *)source error:(NSError **)error {@synchronized(self){
     if(![self available:error])return NO;
     if(!_externalValidator)return CSFail(error,@"No trusted save-format validator is available for this title. External replacement is unavailable.",NO);

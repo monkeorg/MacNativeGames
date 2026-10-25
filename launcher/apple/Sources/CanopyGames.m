@@ -6,6 +6,7 @@
 #import "CanopySessionController.h"
 #import "CanopyRuntime.h"
 #import "CanopySaveStore.h"
+#import "CanopySaveEditorController.h"
 #import "CanopyProfiles.h"
 #import "CanopyStorageController.h"
 #import "CanopyDiagnosticsController.h"
@@ -68,7 +69,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 
 @interface CanopySaveController : UITableViewController <UIDocumentPickerDelegate>
-- (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue profileName:(NSString *)name;
+- (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue profileName:(NSString *)name titleID:(NSString *)titleID;
 @end
 @implementation CanopySaveController {
     CanopySaveStore *_store;
@@ -78,9 +79,11 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     BOOL _busy, _importPicker, _rawImportPicker, _exportPicker, _cancelRequested;
     NSFileCoordinator *_coordinator;
     NSURL *_temporaryExport;
+    BOOL _totkCandidateAvailable;
 }
-- (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue profileName:(NSString *)name {
-    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) { _store = store; _queue = queue; _profileName=[name copy]; _backups = @[]; }
+- (instancetype)initWithStore:(CanopySaveStore *)store queue:(dispatch_queue_t)queue profileName:(NSString *)name titleID:(NSString *)titleID {
+    if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) { _store = store; _queue = queue; _profileName=[name copy]; _backups = @[];
+        _totkCandidateAvailable=[titleID isEqual:@"0100f2c0115b6000"]; }
     return self;
 }
 - (void)viewDidLoad {
@@ -119,20 +122,21 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     }];
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 2; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 0 ? 5 : MAX((NSInteger)_backups.count,1); }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 0 ? (_totkCandidateAvailable ? 6 : 5) : MAX((NSInteger)_backups.count,1); }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return section == 0 ? [@"This title • " stringByAppendingString:_profileName] : @"Stored backups"; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    NSString *explanation = @"Canopy exports preserve opaque bytes in a versioned format. External Canopy exports and raw folders additionally require the actual trusted title-format validator; hashes alone are not a format check. Unknown titles cannot import external saves. Semantic editing is unavailable. Account identity is never exported or replaced. Transfers are locked while a native session may write saves.";
+    NSString *explanation = @"Canopy exports preserve opaque bytes in a versioned format. External Canopy exports and raw folders additionally require the actual trusted title-format validator; hashes alone are not a format check. Unknown titles cannot import external saves. Active save editing is unavailable. The experimental TOTK rupee candidate can only share explicitly unverified raw bytes. Account identity is never exported or replaced. Transfers are locked while a native session may write saves.";
     return [NSString stringWithFormat:@"%@%@%@",_busy ? @"Working on the serialized save queue…\n\n" : @"",_status ? [_status stringByAppendingString:@"\n\n"] : @"",explanation];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cell;
     if (!path.section) {
-        NSArray *titles = @[@"Export Canopy save bundle",@"Import Canopy export",@"Import validated raw save folder",@"Back up active saves",@"Recover interrupted transaction"];
+        NSArray *titles = @[@"Export Canopy save bundle",@"Import Canopy export",@"Import validated raw save folder",@"Back up active saves",@"Recover interrupted transaction",@"Experimental rupee candidate"];
         NSString *detail = _store.sealed ? @"Locked for the native session" : path.row == 4 ? (_store.recoveryRequired ? @"Explicitly reconcile an unfinished transaction" : @"No recovery currently required") : @"Account identity remains separate";
         if ((path.row == 1 || path.row == 2) && !_store.externalImportSupported) detail = @"Unavailable: this title has no trusted save-format validator. Opaque export and internal backups remain available.";
         else if (path.row == 2) detail = @"Private staged copy, trusted title-structure validation and byte verification";
+        else if (path.row == 5) detail = @"Unverified TOTK 1.4.x reference-family preview and raw share; no active Apply";
         cell = GamesCell(tableView,titles[(NSUInteger)path.row],detail);
     } else if (!_backups.count) cell = GamesCell(tableView,@"No stored backups",@"Create a backup before changing active saves.");
     else {
@@ -151,6 +155,13 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES]; if (_busy || _store.sealed) return;
+    if (!path.section && path.row == 5) {
+        if (!_totkCandidateAvailable || _store.recoveryRequired || [CanopySessionController nativeSessionOwnsProcess] ||
+            self.presentedViewController || UIApplication.sharedApplication.applicationState != UIApplicationStateActive) return;
+        UIViewController *editor=CanopyMakeTOTKSaveEditorController(_store,_queue);
+        if(editor)[self.navigationController pushViewController:editor animated:YES];
+        return;
+    }
     if (path.section) {
         if (!_backups.count) return;
         NSString *identifier = _backups[(NSUInteger)path.row][@"identifier"];
@@ -628,7 +639,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         if (self.settingStates || _saveLoading || _saves.sealed || [CanopySessionController nativeSessionOwnsProcess]) return;
         if(_profileNeedsReload){GamesAlert(self,@"Reload the save profile",@"Reload the persisted profile selection before using saves or Play.");return;}
         if (!_saves) { [self loadSaveStore]; return; }
-        if (path.row == 0) [self.navigationController pushViewController:[[CanopySaveController alloc] initWithStore:_saves queue:_saveQueue profileName:_profileName] animated:YES];
+        if (path.row == 0) [self.navigationController pushViewController:[[CanopySaveController alloc] initWithStore:_saves queue:_saveQueue profileName:_profileName titleID:_entry[@"titleID"]] animated:YES];
         else [self startNativeSession];
         return;
     }

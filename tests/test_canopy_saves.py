@@ -167,6 +167,48 @@ class CanopySaves(unittest.TestCase):
         self.run_probe('cleanup_crash', 31)
         self.run_probe('after_cleanup_crash')
 
+    def editor_scenarios(self, scenarios):
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as isolated:
+                previous = self.root
+                self.root = Path(isolated).resolve()
+                try:
+                    self.run_probe(scenario)
+                finally:
+                    self.root = previous
+
+    def test_editor_default_has_preview_but_no_publication_authority(self):
+        self.run_probe('edit_default')
+
+    def test_editor_actual_backup_publish_and_restore_preserve_other_bytes(self):
+        self.run_probe('edit_roundtrip')
+
+    def test_editor_active_tree_cas_and_foreign_profile_refusal(self):
+        self.editor_scenarios(('edit_stale', 'edit_foreign', 'edit_tamper'))
+
+    def test_editor_session_seal_invalidates_prior_snapshot(self):
+        self.run_probe('edit_seal')
+
+    def test_editor_field_policy_and_post_validator_rehash(self):
+        self.editor_scenarios(('edit_reject', 'edit_validator_mutation'))
+
+    def test_editor_write_failure_retry_and_mandatory_backup(self):
+        self.editor_scenarios(('edit_write_failure', 'edit_backup_limit'))
+
+    def test_editor_linked_input_refused_without_outside_changes(self):
+        self.run_probe('edit_links')
+
+    def test_editor_actual_crash_after_swap_rolls_back_original(self):
+        self.run_probe('edit_crash', 29)
+        self.run_probe('edit_recover')
+
+    def test_editor_actual_crash_after_commit_keeps_confirmed_edit(self):
+        self.run_probe('edit_crash_committed', 30)
+        self.run_probe('edit_recover_committed')
+
+    def test_editor_ambiguous_postswap_io_uses_existing_recovery(self):
+        self.run_probe('edit_ambiguous')
+
 
 if __name__ == '__main__':
     unittest.main()

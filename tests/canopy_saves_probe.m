@@ -74,6 +74,110 @@ static void *ReadStatus(void *opaque){@autoreleasepool{
     context->ok=!context->store.sealed&&!context->store.recoveryRequired;
     dispatch_semaphore_signal(statusFinished);return NULL;
 }}
+static unsigned editPolicyCalls;
+static BOOL editValidatorMutates;
+static CanopySaveStore *EditStore(NSURL *root,NSString *title,NSString *profile,BOOL enable) {
+    CanopySaveValidator structure=^BOOL(NSURL *stage,NSError **error) {
+        (void)error;
+        if(editValidatorMutates)Write(Child(stage,@"unrelated.txt"),@"validator mutation");
+        NSString *value=Read(Child(stage,@"slot_00/progress.sav"));return [value isEqual:@"A"]||[value isEqual:@"B"];
+    };
+    // TEST-ONLY invented single-byte format, not TOTK semantic authorization.
+    CanopySaveEditValidator edit=nil;
+    if(enable)edit=^BOOL(NSString *path,NSData *before,NSData *after,NSError **error) {
+        (void)error;++editPolicyCalls;
+        return [path isEqual:@"slot_00/progress.sav"]&&[before isEqual:[@"A" dataUsingEncoding:NSUTF8StringEncoding]]&&
+            [after isEqual:[@"B" dataUsingEncoding:NSUTF8StringEncoding]];
+    };
+    CanopySaveStore *store=[[CanopySaveStore alloc] initWithRootURL:root titleID:title profileID:profile
+        externalValidator:structure editValidator:edit error:NULL];Check(store!=nil,"open editor fixture");return store;
+}
+static void EditFixture(CanopySaveStore *store) {
+    NSURL *active=store.activeDirectoryURL;
+    Check([NSFileManager.defaultManager createDirectoryAtURL:Child(active,@"slot_00") withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:NULL],"create edit slot");
+    Write(Child(active,@"slot_00/progress.sav"),@"A");Write(Child(active,@"slot_00/caption.sav"),@"retain caption");
+    Write(Child(active,@"unrelated.txt"),@"retain unrelated");
+    Write(Child(store.accountIdentityDirectoryURL,@"account.uid"),@"retain edit account");
+}
+static void EditRetained(CanopySaveStore *store) {
+    Check([Read(Child(store.activeDirectoryURL,@"slot_00/caption.sav")) isEqual:@"retain caption"],"editor changed other slot file");
+    Check([Read(Child(store.activeDirectoryURL,@"unrelated.txt")) isEqual:@"retain unrelated"],"editor changed unrelated file");
+    Check([Read(Child(store.accountIdentityDirectoryURL,@"account.uid")) isEqual:@"retain edit account"],"editor changed identity");
+}
+static void EditScenario(NSString *mode,NSURL *saveRoot,NSString *title,NSString *profile) {
+    CanopySaveStore *store=EditStore(saveRoot,title,profile,![mode isEqual:@"edit_default"]);NSError *error=nil;
+    if([mode hasPrefix:@"edit_recover"]) {
+        Check(store.recoveryRequired,"missing editor recovery journal");Check([store recover:&error],"editor journal recovery");
+        NSString *wanted=[mode isEqual:@"edit_recover_committed"]?@"B":@"A";
+        Check([Read(Child(store.activeDirectoryURL,@"slot_00/progress.sav")) isEqual:wanted],"wrong recovered edit");EditRetained(store);return;
+    }
+    EditFixture(store);NSData *B=[@"B" dataUsingEncoding:NSUTF8StringEncoding];
+    if([mode isEqual:@"edit_links"]) {
+        NSURL *selected=Child(store.activeDirectoryURL,@"slot_00/progress.sav"),*outside=Child(saveRoot,@"outside");
+        Write(outside,@"outside remains");Check([NSFileManager.defaultManager removeItemAtURL:selected error:NULL],"remove fixture");
+        Check(!symlink(outside.fileSystemRepresentation,selected.fileSystemRepresentation),"link edit source");
+        Check([store previewEditForSlot:@"slot_00" error:&error]==nil,"linked preview accepted");
+        Check([Read(outside) isEqual:@"outside remains"]&&[store backups:NULL].count==0,"linked preview mutated data");return;
+    }
+    CanopySaveEditPreview *preview=[store previewEditForSlot:@"slot_00" error:&error];
+    Check(preview!=nil&&[preview.originalData isEqual:[@"A" dataUsingEncoding:NSUTF8StringEncoding]]&&
+        [preview.relativePath isEqual:@"slot_00/progress.sav"],"actual edit snapshot");
+    if([mode isEqual:@"edit_default"]) {
+        Check(!store.editingSupported&&! [store applyEditPreview:preview replacementData:B error:&error],"default gained edit authority");
+        Check(editPolicyCalls==0&&[store backups:NULL].count==0,"default edit invoked policy or backup");
+    } else if([mode isEqual:@"edit_stale"]) {
+        Write(Child(store.activeDirectoryURL,@"unrelated.txt"),@"changed after preview");
+        Check(![store applyEditPreview:preview replacementData:B error:&error]&&editPolicyCalls==0,"stale tree applied");
+        Check([store backups:NULL].count==0&&[Read(Child(store.activeDirectoryURL,@"slot_00/progress.sav")) isEqual:@"A"],"stale mutated active");return;
+    } else if([mode isEqual:@"edit_foreign"]) {
+        CanopySaveStore *other=EditStore(saveRoot,title,@"other-profile",YES);EditFixture(other);
+        Check(![other applyEditPreview:preview replacementData:B error:&error]&&editPolicyCalls==0,"foreign preview applied");
+        Check([other backups:NULL].count==0,"foreign preview created backup");EditRetained(other);
+    } else if([mode isEqual:@"edit_seal"]) {
+        NSString *token=[store sealForSession:&error];Check(token!=nil,"editor seal");
+        Check(![store applyEditPreview:preview replacementData:B error:&error]&&editPolicyCalls==0,"edit while sealed");
+        Check([store finishSessionWithToken:token error:&error],"editor unseal");
+        Check(![store applyEditPreview:preview replacementData:B error:&error],"preview survived writer session");
+        preview=[store previewEditForSlot:@"slot_00" error:&error];Check(preview!=nil,"fresh preview after session");
+        Check([store applyEditPreview:preview replacementData:B error:&error],"fresh edit after session");
+    } else if([mode isEqual:@"edit_tamper"]) {
+        NSURL *parent=store.activeDirectoryURL.URLByDeletingLastPathComponent;
+        for(NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:parent.path error:NULL])if([name hasPrefix:@".stage-"])
+            Write(Child(Child(parent,name),@"unrelated.txt"),@"tampered preview");
+        Check(![store applyEditPreview:preview replacementData:B error:&error]&&editPolicyCalls==0,"tampered snapshot applied");
+        Check([store backups:NULL].count==0,"tampered preview created backup");
+    } else if([mode isEqual:@"edit_reject"]) {
+        Check(![store applyEditPreview:preview replacementData:[@"C" dataUsingEncoding:NSUTF8StringEncoding] error:&error],"policy rejected field accepted");
+        Check([store backups:NULL].count==0,"rejected edit created backup");
+        Check([store applyEditPreview:preview replacementData:B error:&error],"valid retry after policy refusal");
+    } else if([mode isEqual:@"edit_validator_mutation"]) {
+        editValidatorMutates=YES;Check(![store applyEditPreview:preview replacementData:B error:&error],"mutating format validator accepted");
+        Check([store backups:NULL].count==0,"mutating validator created backup");
+    } else if([mode isEqual:@"edit_write_failure"]) {
+        failSync=1;Check(![store applyEditPreview:preview replacementData:B error:&error],"edit fsync failure accepted");
+        Check([store backups:NULL].count==0&&[Read(Child(store.activeDirectoryURL,@"slot_00/progress.sav")) isEqual:@"A"],"edit write failure mutated active");
+        preview=[store previewEditForSlot:@"slot_00" error:&error];Check(preview!=nil&&[store applyEditPreview:preview replacementData:B error:&error],"edit persistence retry");
+    } else if([mode isEqual:@"edit_backup_limit"]) {
+        for(unsigned i=0;i<16;i++)Check([store backup:&error]!=nil,"editor fill backup limit");
+        Check(![store applyEditPreview:preview replacementData:B error:&error],"edit ignored backup refusal");
+        Check([Read(Child(store.activeDirectoryURL,@"slot_00/progress.sav")) isEqual:@"A"],"backup refusal mutated active");
+    } else if([mode isEqual:@"edit_crash"]) {
+        setenv("CANOPY_SAVE_FAULT","crash_after_swap",1);(void)[store applyEditPreview:preview replacementData:B error:&error];Check(NO,"editor crash hook missed");
+    } else if([mode isEqual:@"edit_crash_committed"]) {
+        setenv("CANOPY_SAVE_FAULT","crash_before_journal_unlink",1);(void)[store applyEditPreview:preview replacementData:B error:&error];Check(NO,"editor committed crash missed");
+    } else if([mode isEqual:@"edit_ambiguous"]) {
+        setenv("CANOPY_SAVE_FAULT","after_swap_sync",1);Check(![store applyEditPreview:preview replacementData:B error:&error],"ambiguous edit claimed success");unsetenv("CANOPY_SAVE_FAULT");
+        Check([error.userInfo[@"publicationMayHaveCompleted"] boolValue]&&store.recoveryRequired,"edit missing ambiguity");
+        Check([store recover:&error]&&[Read(Child(store.activeDirectoryURL,@"slot_00/progress.sav")) isEqual:@"A"],"ambiguous edit rollback");
+    } else {
+        Check([mode isEqual:@"edit_roundtrip"],"unknown edit scenario");
+        Check([store applyEditPreview:preview replacementData:B error:&error]&&[store backups:NULL].count==1,"editor publish/backup");
+        Check(![store applyEditPreview:preview replacementData:B error:&error],"editor reused consumed preview");
+        NSString *backup=[store backups:NULL].firstObject[@"identifier"];
+        Check([store restoreBackup:backup error:&error]&&[Read(Child(store.activeDirectoryURL,@"slot_00/progress.sav")) isEqual:@"A"],"editor rollback backup");
+    }
+    EditRetained(store);
+}
 int main(int argc,const char *argv[]){@autoreleasepool{
     atomic_init(&blockRead,0);
     Check(argc==3,"usage");NSString *mode=@(argv[1]);NSURL *root=[NSURL fileURLWithPath:@(argv[2]) isDirectory:YES];
@@ -88,6 +192,7 @@ int main(int argc,const char *argv[]){@autoreleasepool{
         Check([NSFileManager.defaultManager contentsOfDirectoryAtPath:outside.path error:NULL].count==0,"rejected root created outside child");
         puts("{\"status\":\"pass\"}");return 0;
     }
+    if([mode hasPrefix:@"edit_"]){EditScenario(mode,saveRoot,title,profile);puts("{\"status\":\"pass\"}");return 0;}
     CanopySaveStore *store=Store(saveRoot,title,profile);NSError *error=nil;
     NSURL *active=store.activeDirectoryURL,*identity=Child(store.accountIdentityDirectoryURL,@"account.uid");
     if([mode isEqual:@"recover"]){
