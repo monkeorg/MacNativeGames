@@ -226,6 +226,18 @@
       },
       "patch": "0019-packing-workgroup-depth.patch",
       "sha256": "e92a9acfd2509608d47d758c8b37ab702a4929be4aa9175d1ca5d03bd5d447c4"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "0417f71df49d93983e6a9db12b86b5c342bb144ac6c4468fd9158191580d2497",
+        "spirv_msl.cpp": "070d26a08a2c61dcbf0c5cec91c87029febcdb38a0944169f101e069bde992fa"
+      },
+      "before": {
+        "spirv_glsl.cpp": "a1404770ca18136565af94707c39dd61825025a0ec2b4064c3c84b8aab5f1f9c",
+        "spirv_msl.cpp": "8d3145aaea9e5d7ea5ed44cff387cb12d4da8c8c1238963b12187ef1d5b7f891"
+      },
+      "patch": "0020-text-output-loop-checkpoints.patch",
+      "sha256": "64fabf96fb0c0351a3eee5c3e790260b37a670a3590407667716326365dbd870"
     }
   ],
   "schemaVersion": 1

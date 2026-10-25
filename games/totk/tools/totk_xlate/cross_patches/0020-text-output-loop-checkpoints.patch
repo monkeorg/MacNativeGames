@@ -1,0 +1,105 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -3497,7 +3497,10 @@
+ 		auto e = enclose_expression(expr) + ".";
+ 		// Just clamp the swizzle index if we have more outputs than inputs.
+ 		for (uint32_t c = 0; c < out_type.vecsize; c++)
++		{
++			canopy_cross_budget::step();
+ 			e += index_to_swizzle(min(c, input_components - 1));
++		}
+ 		if (backend.swizzle_is_function && out_type.vecsize > 1)
+ 			e += "()";
+ 
+@@ -17742,7 +17745,10 @@
+ 	if (backend.use_array_constructor)
+ 	{
+ 		for (uint32_t i = 0; i < type.array.size(); i++)
++		{
++			canopy_cross_budget::step();
+ 			e += "[]";
++		}
+ 	}
+ 	return e;
+ }
+@@ -19604,8 +19610,11 @@
+ 		canopy_cross_budget::step();
+ 						auto &negative_literals = case_constructs[block_declaration_order[j]];
+ 						for (auto &case_label : negative_literals)
++						{
++							canopy_cross_budget::step();
+ 							conditions.push_back(join(to_enclosed_expression(block.condition),
+ 							                          " != ", to_case_label(case_label, type.width, unsigned_case)));
++						}
+ 					}
+ 
+ 					statement("if (", merge(conditions, " && "), ")");
+@@ -19618,8 +19627,11 @@
+ 					SmallVector<string> conditions;
+ 					conditions.reserve(literals.size());
+ 					for (auto &case_label : literals)
++					{
++						canopy_cross_budget::step();
+ 						conditions.push_back(join(to_enclosed_expression(block.condition),
+ 						                          " == ", to_case_label(case_label, type.width, unsigned_case)));
++					}
+ 					statement("if (", merge(conditions, " || "), ")");
+ 					begin_scope();
+ 					flush_phi(block.self, target_block);
+@@ -19729,7 +19741,10 @@
+ 		if (!collapsed_switch && ((header_merge_requires_phi && need_fallthrough_block) || !literals_to_merge.empty()))
+ 		{
+ 			for (auto &case_literal : literals_to_merge)
++			{
++				canopy_cross_budget::step();
+ 				statement("case ", to_case_label(case_literal, type.width, unsigned_case), label_suffix, ":");
++			}
+ 
+ 			if (block.default_block == block.next_block)
+ 			{
+@@ -19902,7 +19917,10 @@
+ 
+ 					// TODO: Do we check for ASCII or valid UTF-8 encoding here? Probably overkill.
+ 					for (size_t i = 1, n = varargs.size(); i < n; i++)
++					{
++						canopy_cross_budget::step();
+ 						arguments.push_back(to_expression(varargs[i]));
++					}
+ 
+ 					statement("abortEXT(", merge(arguments), ");");
+ 					known_encoding = true;
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -12662,7 +12662,10 @@
+ 				if (constexpr_sampler->ycbcr_conversion_enable)
+ 					planes = constexpr_sampler->planes;
+ 			for (uint32_t i = 1; i < planes; i++)
++			{
++				canopy_cross_budget::step();
+ 				decl += join(", ", argument_decl(arg), plane_name_suffix, i);
++			}
+ 
+ 			// Manufacture automatic sampler arg for SampledImage texture
+ 			if (arg_type.image.dim != DimBuffer)
+@@ -12924,7 +12927,10 @@
+ 			// Multiplanar images need two or three textures.
+ 			farg_str += to_expression(img);
+ 			for (uint32_t i = 1; i < constexpr_sampler->planes; i++)
++			{
++				canopy_cross_budget::step();
+ 				farg_str += join(", ", to_expression(img), plane_name_suffix, i);
++			}
+ 		}
+ 		else if ((!constexpr_sampler || !constexpr_sampler->ycbcr_conversion_enable) &&
+ 		         msl_options.swizzle_texture_samples && args.base.is_gather)
+@@ -13767,7 +13773,10 @@
+ 					add_spv_func_and_recompile(SPVFuncImplDynamicImageSampler);
+ 			}
+ 			for (uint32_t i = 1; i < planes; i++)
++			{
++				canopy_cross_budget::step();
+ 				arg_str += join(", ", CompilerGLSL::to_func_call_arg(arg, id), plane_name_suffix, i);
++			}
+ 			// Manufacture automatic sampler arg if the arg is a SampledImage texture.
+ 			if (type.image.dim != DimBuffer)
+ 				arg_str += ", " + to_sampler_expression(var_id ? var_id : id);
