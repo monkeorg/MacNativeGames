@@ -73,6 +73,15 @@ class CanopyDiagnosticsTests(unittest.TestCase):
     def test_concurrent_collection_and_disable_preserve_privacy_bound(self):
         self.scenario('concurrent')
 
+    def test_actual_provider_adapter_counts_only_listed_verified_available_rows(self):
+        self.scenario('sources')
+
+    def test_provider_storage_limits_types_and_missing_observations(self):
+        self.scenario('storageBounds')
+
+    def test_folder_inventory_is_not_exported_as_physical_container_identity(self):
+        self.scenario('folder')
+
 
 if __name__ == '__main__':
     unittest.main()

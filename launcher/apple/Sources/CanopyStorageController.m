@@ -16,6 +16,7 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
     }
     return self;
 }
+- (NSDictionary<NSString *,id> *)diagnosticSnapshot {return _storage.snapshot;}
 - (void)viewDidLoad {
     [super viewDidLoad];self.title=@"Storage";
     self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=80;

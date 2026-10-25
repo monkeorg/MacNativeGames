@@ -49,4 +49,24 @@ typedef NS_ENUM(NSInteger, CanopyDiagnosticsError) {
     metrics:(nullable NSDictionary<NSString *,id> *)metrics
     error:(NSError * _Nullable * _Nullable)failure;
 @end
+
+/// Actual host observations, read only during an explicit main-thread request.
+/// Providers must be quick in-memory getters, never perform I/O or wait for a
+/// worker. Capture host owners weakly when their lifetime includes this object.
+/// Missing providers remain unknown. No timer or inferred performance counters.
+@interface CanopyDiagnosticsSources : NSObject
+@property(nonatomic, copy, nullable) NSDictionary<NSString *,id> * _Nullable (^preparedEntry)(void);
+@property(nonatomic, copy, nullable) NSDictionary<NSString *,id> * _Nullable (^metrics)(void);
+@property(nonatomic, copy, nullable) NSDictionary<NSString *,id> * _Nullable (^storageSnapshot)(void);
+@property(nonatomic, copy, nullable) CanopyDiagnosticsPhase (^phase)(void);
+@property(nonatomic, copy, nullable) CanopyDiagnosticsError (^errorCode)(void);
+/// Sanitizes real provider values; records at most one sample when requested
+/// and collection is enabled. Storage bytes cover listed verified/available
+/// rows only, never total disk use, allocation or promised reclaimed space.
+- (NSDictionary<NSString *,id> *)snapshotWithDiagnostics:(CanopyDiagnostics *)diagnostics
+    recordIfEnabled:(BOOL)record;
+/// Explicit user export; no files/network, same64KiB backend limit.
+- (nullable NSData *)redactedJSONWithDiagnostics:(CanopyDiagnostics *)diagnostics
+    error:(NSError * _Nullable * _Nullable)failure;
+@end
 NS_ASSUME_NONNULL_END

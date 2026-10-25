@@ -166,6 +166,69 @@ static void Concurrent(void) {
     Check(!dispatch_group_wait(group,dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC)),"concurrent diagnostics deadline");
     diagnostics.enabled=NO;Check(diagnostics.recordedSampleCount==0,"concurrent final clear");
 }
+static void Sources(NSString *privateRoot) {
+    CanopyDiagnostics *diagnostics=[CanopyDiagnostics new];CanopyDiagnosticsSources *sources=[CanopyDiagnosticsSources new];
+    __block NSUInteger reads=0;
+    sources.preparedEntry=^NSDictionary *{Check(NSThread.isMainThread,"provider off main");reads++;return Entry();};
+    sources.metrics=^NSDictionary *{return @{@"seedReusedBytes":@10,@"frameLimit":@40,@"nativeEntryInvoked":@YES,@"hudFPS":@999,@"privatePath":privateRoot,@"storageListedJobs":@99};};
+    sources.phase=^CanopyDiagnosticsPhase{return CanopyDiagnosticsPhaseInputCaptured;};
+    sources.errorCode=^CanopyDiagnosticsError{return CanopyDiagnosticsErrorBusy;};
+    sources.storageSnapshot=^NSDictionary *{return @{@"complete":@NO,@"issues":@[privateRoot],
+        @"generations":@[@{@"verification":@"verified",@"logicalAssetBytes":@30},@{@"verification":@"notChecked",@"logicalAssetBytes":@999}],
+        @"jobs":@[@{@"identifier":@"not exported"}],@"shaders":@[@{@"usageState":@"available",@"seedBytes":@40,@"runtimeBytes":@50},
+            @{@"usageState":@"unavailable",@"seedBytes":@100,@"runtimeBytes":@100}]};};
+    NSDictionary *snapshot=[sources snapshotWithDiagnostics:diagnostics recordIfEnabled:YES];
+    Check(reads==1&&diagnostics.recordedSampleCount==0,"provider demand/off contract");
+    NSDictionary *sample=snapshot[@"sample"],*metrics=sample[@"metrics"];
+    Check([sample[@"configuration"][@"frameLimit"] isEqual:@40]&&[sample[@"session"][@"nativeEntryInvoked"] isEqual:@YES],"source adapter dropped actual configuration/session observations");
+    Check([sample[@"session"][@"phase"] isEqual:@"inputCaptured"]&&[sample[@"session"][@"errorCode"] isEqual:@"busy"],"actual provider enums dropped");
+    Check([metrics[@"storageListedGenerations"] isEqual:@2]&&[metrics[@"storageVerifiedGenerations"] isEqual:@1]&&
+        [metrics[@"storageVerifiedAssetBytes"] isEqual:@30]&&[metrics[@"storageListedJobs"] isEqual:@1],"listed vs verified storage conflated");
+    Check([metrics[@"storageListedShaders"] isEqual:@2]&&[metrics[@"storageAvailableShaders"] isEqual:@1]&&
+        [metrics[@"storageAvailableSeedBytes"] isEqual:@40]&&[metrics[@"storageAvailableRuntimeBytes"] isEqual:@50],"shader available totals wrong");
+    Check([metrics[@"storageListingComplete"] isEqual:@NO]&&sample[@"rates"][@"gameplayFPS"]==NSNull.null,"partial storage/FPS guessed");
+    diagnostics.enabled=YES;
+    for(unsigned i=0;i<20;i++)(void)[sources snapshotWithDiagnostics:diagnostics recordIfEnabled:YES];
+    Check(diagnostics.recordedSampleCount==16&&reads==21,"source history bound");
+    NSError *error=nil;NSData *json=[sources redactedJSONWithDiagnostics:diagnostics error:&error];
+    Check(json&&json.length<=65536&&error==nil&&reads==22,"source export bounds");
+    NSDictionary *exported=[NSJSONSerialization JSONObjectWithData:json options:0 error:NULL];
+    Check([exported[@"sample"][@"configuration"][@"frameLimit"] isEqual:@40]&&
+        [exported[@"sample"][@"session"][@"nativeEntryInvoked"] isEqual:@YES],"source export dropped actual configuration/session observations");
+    NSString *text=[[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+    Check([text rangeOfString:privateRoot].location==NSNotFound&&[text rangeOfString:@"not exported"].location==NSNotFound,"source/storage private text escaped");
+    diagnostics.enabled=NO;(void)[sources snapshotWithDiagnostics:diagnostics recordIfEnabled:NO];
+    Check(diagnostics.recordedSampleCount==0,"source disable did not clear");
+}
+static void StorageBounds(void) {
+    CanopyDiagnostics *diagnostics=[CanopyDiagnostics new];CanopyDiagnosticsSources *sources=[CanopyDiagnosticsSources new];
+    NSMutableArray *tooMany=[NSMutableArray new];for(unsigned i=0;i<129;i++)[tooMany addObject:@{}];
+    sources.storageSnapshot=^NSDictionary *{return @{@"complete":@1,@"generations":tooMany,@"jobs":@"private text",@"shaders":@[
+        @{@"usageState":@"available",@"seedBytes":@YES,@"runtimeBytes":@40},
+        @{@"usageState":@"available",@"seedBytes":@(-1),@"runtimeBytes":@40},
+        @{@"usageState":@"available",@"seedBytes":@40,@"runtimeBytes":@((UINT64_C(128)<<30)+1)}]};};
+    NSDictionary *metrics=[sources snapshotWithDiagnostics:diagnostics recordIfEnabled:NO][@"sample"][@"metrics"];
+    Check(metrics[@"storageListedGenerations"]==nil&&metrics[@"storageListedJobs"]==nil&&metrics[@"storageListingComplete"]==nil,"unbounded/malformed storage accepted");
+    Check([metrics[@"storageAvailableShaders"] isEqual:@0]&&[metrics[@"storageAvailableSeedBytes"] isEqual:@0],"malformed bytes added");
+    CanopyDiagnosticsSources *empty=[CanopyDiagnosticsSources new];NSDictionary *sample=[empty snapshotWithDiagnostics:diagnostics recordIfEnabled:NO][@"sample"];
+    Check([sample[@"preparation"] count]==0&&[sample[@"metrics"] count]==0&&[sample[@"session"][@"phase"] isEqual:@"unknown"],"missing source guessed");
+    for(NSDictionary *invalid in @[@{@"frameLimit":@YES,@"nativeEntryInvoked":@1},@{@"frameLimit":@120,@"nativeEntryInvoked":@"true"},@{@"frameLimit":@40.5}]) {
+        empty.metrics=^NSDictionary *{return invalid;};
+        NSDictionary *invalidSample=[empty snapshotWithDiagnostics:diagnostics recordIfEnabled:NO][@"sample"];
+        Check([invalidSample[@"configuration"] count]==0&&invalidSample[@"session"][@"nativeEntryInvoked"]==nil,"source adapter forwarded malformed configuration/session fields");
+    }
+}
+static void FolderProvenance(void) {
+    NSMutableDictionary *entry=[Entry() mutableCopy];entry[@"sourceKind"]=@"asset-folder";entry[@"recipeID"]=@"canopy-assets-v4";
+    entry[@"memberInventorySHA256"]=[@"d" stringByPaddingToLength:64 withString:@"d" startingAtIndex:0];
+    entry[@"sourceMemberCount"]=@4;entry[@"sourceMemberBytes"]=@123;
+    entry[@"integrity"]=@{@"exefsVerified":@NO,@"romfsVerified":@NO,@"assetHashesVerified":@YES,@"romfsStructureVerified":@YES};
+    NSDictionary *prepared=Snapshot([CanopyDiagnostics new],entry,nil)[@"sample"][@"preparation"];
+    Check([prepared[@"sourceKind"] isEqual:@"asset-folder"]&&[prepared[@"recipeID"] isEqual:@"canopy-assets-v4"]&&
+        [prepared[@"sourceMemberCount"] isEqual:@4]&&[prepared[@"sourceMemberBytes"] isEqual:@123],"actual folder provenance dropped");
+    Check(prepared[@"sourceSHA256"]==nil&&prepared[@"sourceSize"]==nil&&prepared[@"updateSourceSHA256"]==nil&&prepared[@"updateSourceSize"]==nil,"folder claimed physical container identity");
+    Check([prepared[@"integrity"][@"assetHashesVerified"] isEqual:@YES]&&[prepared[@"integrity"][@"romfsStructureVerified"] isEqual:@YES],"structure and hash distinction lost");
+}
 int main(int argc,const char *argv[]) {@autoreleasepool {
     Check(argc==3,"arguments");NSString *mode=@(argv[1]),*root=@(argv[2]);
     if([mode isEqual:@"default"])DefaultOff();else if([mode isEqual:@"history"])History();
@@ -173,6 +236,8 @@ int main(int argc,const char *argv[]) {@autoreleasepool {
     else if([mode isEqual:@"memory"])MemoryAndRates();else if([mode isEqual:@"mapping"])Mappings();
     else if([mode isEqual:@"preparation"])PreparationContract();
     else if([mode isEqual:@"bounded"])ImmutableAndBounded();else if([mode isEqual:@"concurrent"])Concurrent();
+    else if([mode isEqual:@"sources"])Sources(root);else if([mode isEqual:@"storageBounds"])StorageBounds();
+    else if([mode isEqual:@"folder"])FolderProvenance();
     else Check(NO,"unknown scenario");
     puts("{\"status\":\"pass\",\"scope\":\"bounded diagnostic metadata, not gameplay or performance acceptance\"}");
 }return 0;}

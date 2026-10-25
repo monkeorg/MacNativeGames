@@ -7,6 +7,7 @@
 #import "CanopyRuntime.h"
 #import "CanopySaveStore.h"
 #import "CanopyStorageController.h"
+#import "CanopyDiagnosticsController.h"
 #import "../../../games/totk/ios/Sources/save_validation.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
@@ -346,11 +347,12 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     if (path.section == 0) {
-        NSArray *titles = @[@"Title ID",@"Generation",@"Private assets",@"Integrity",@"Source SHA-256",@"Preparation recipe"];
+        NSArray *titles = @[@"Title ID",@"Generation",@"Private assets",@"Integrity",_entry[@"sourceKind"] ? @"Consumed-member inventory SHA-256" : @"Source SHA-256",@"Preparation recipe"];
         NSDictionary *integrity = _entry[@"integrity"];
         NSString *checks = [NSString stringWithFormat:@"ExeFS %@ • RomFS %@ • signature not verified",[integrity[@"exefsVerified"] boolValue] ? @"verified" : @"unverified",[integrity[@"romfsVerified"] boolValue] ? @"verified" : @"unverified"];
         NSString *assets = [NSString stringWithFormat:@"%@ files • %@",_entry[@"assetCount"],[NSByteCountFormatter stringFromByteCount:[_entry[@"assetBytes"] longLongValue] countStyle:NSByteCountFormatterCountStyleFile]];
-        NSArray *details = @[_entry[@"titleID"],_entry[@"generationID"],assets,checks,_entry[@"sourceSHA256"],_entry[@"recipeID"]];
+        if ([_entry[@"sourceKind"] isEqual:@"asset-folder"]) checks=@"Asset hashes and RomFS structure checked • original NCA integrity and signature not verified";
+        NSArray *details = @[_entry[@"titleID"],_entry[@"generationID"],assets,checks,_entry[@"memberInventorySHA256"] ?: _entry[@"sourceSHA256"] ?: @"Unavailable",_entry[@"recipeID"]];
         UITableViewCell *cell = GamesCell(tableView,titles[(NSUInteger)path.row],details[(NSUInteger)path.row]); cell.selectionStyle = UITableViewCellSelectionStyleNone; return cell;
     }
     if (path.section == 3) {
@@ -539,9 +541,15 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     CanopySettings *_settings;
     CanopyPreparation *_preparation;
     CanopyControllers *_controllers;
+    CanopyDiagnostics *_diagnostics;
+    CanopyStorageController *_storageScreen;
+    NSDictionary *_lastPreparationResult;
+    NSError *_lastPreparationError;
+    NSString *_observedPhase;
+    uint64_t _phaseDone, _phaseTotal;
     NSArray *_entries, *_issues;
     NSString *_status, *_metadataError, *_progressText;
-    BOOL _refreshing, _cancelRequested, _withUpdate;
+    BOOL _refreshing, _cancelRequested, _withUpdate, _folderInput, _folderNeedsKeys;
     NSUInteger _scanToken, _pickerStage;
     dispatch_queue_t _catalogQueue;
 }
@@ -558,13 +566,17 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     if (![_settings load:&error]) _metadataError = error.localizedDescription;
     _preparation = [[CanopyPreparation alloc] initWithPreparedRootURL:_preparedRoot];
     _controllers = [CanopyControllers new]; (void)[_controllers setFocused:NO];
+    _diagnostics = [CanopyDiagnostics new];
     _catalogQueue = dispatch_queue_create("org.monkeorg.canopy.catalog", DISPATCH_QUEUE_SERIAL);
     _entries = @[]; _issues = @[];
     __weak CanopyGamesController *weakSelf = self;
     _preparation.progress = ^(NSString *phase, uint64_t done, uint64_t total) {
         CanopyGamesController *owner = weakSelf; if (!owner) return;
+        BOOL changed=![owner->_observedPhase isEqual:phase];
+        owner->_observedPhase=phase; owner->_phaseDone=done; owner->_phaseTotal=total;
         owner->_progressText = [NSString stringWithFormat:@"%@ • %llu / %llu",phase,(unsigned long long)done,(unsigned long long)total];
         [owner refreshUI];
+        if(changed && owner->_diagnostics.enabled)(void)[[owner diagnosticSources] snapshotWithDiagnostics:owner->_diagnostics recordIfEnabled:YES];
     };
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];
     [self reloadCatalog];
@@ -604,7 +616,7 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     });
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 2; }
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 0 ? MAX((NSInteger)_entries.count,1) : 6; }
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; return section == 0 ? MAX((NSInteger)_entries.count,1) : 7; }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return section == 0 ? @"Prepared games" : @"Library tools"; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
@@ -630,8 +642,8 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
         if ([self working]) cell.selectionStyle = UITableViewCellSelectionStyleNone;
         return cell;
     }
-    NSArray *titles = @[@"Prepare game",@"Players & controllers",@"Inspection history",@"Verify library",@"Storage",@"Reset title metadata"];
-    NSArray *details = @[@"Base NSP/XCI, optional matching update, then local keys",@"Assign connected controllers to four independent seats",@"Read-only container metadata from the earlier inspector",@"Rehash prepared assets and reload current generations",@"Verify, select and manage prepared versions, unfinished jobs and private shader caches",@"Explicit recovery for display names and preferences only"];
+    NSArray *titles = @[@"Prepare game",@"Players & controllers",@"Inspection history",@"Verify library",@"Storage",@"Diagnostics",@"Reset title metadata"];
+    NSArray *details = @[@"NSP/XCI, optional update, NCA folder or extracted ExeFS/RomFS folder",@"Assign connected controllers to four independent seats",@"Read-only container metadata from the earlier inspector",@"Rehash prepared assets and reload current generations",@"Verify, select and manage prepared versions, unfinished jobs and private shader caches",@"Actual observations and explicit redacted JSON export; collection defaults off",@"Explicit recovery for display names and preferences only"];
     UITableViewCell *cell = GamesCell(tableView,titles[(NSUInteger)path.row],details[(NSUInteger)path.row]);
     cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     if ([self working]) { cell.textLabel.textColor = UIColor.secondaryLabelColor; cell.selectionStyle = UITableViewCellSelectionStyleNone; }
@@ -650,11 +662,29 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     else if (path.row == 4) {
         NSURL *cache = [[_preparedRoot URLByDeletingLastPathComponent] URLByAppendingPathComponent:@"Caches" isDirectory:YES];
         CanopyStorageController *storage = CanopyMakeStorageController(_preparedRoot,cache);
+        _storageScreen=storage;
         __weak CanopyGamesController *owner = self;
-        storage.mutationAllowed = ^BOOL { CanopyGamesController *current = owner; return current && ![current working]; };
+        storage.mutationAllowed = ^BOOL { CanopyGamesController *current = owner; return current && ![current working] && ![CanopySessionController nativeSessionOwnsProcess]; };
         [self.navigationController pushViewController:storage animated:YES];
     }
+    else if (path.row == 5) [self.navigationController pushViewController:CanopyMakeDiagnosticsController(_diagnostics,[self diagnosticSources]) animated:YES];
     else [self resetMetadata];
+}
+- (CanopyDiagnosticsSources *)diagnosticSources {
+    CanopyDiagnosticsSources *sources=[CanopyDiagnosticsSources new];
+    __weak CanopyGamesController *weakSelf=self;
+    sources.preparedEntry=^NSDictionary<NSString *,id> * _Nullable {CanopyGamesController *owner=weakSelf;return owner ? owner->_lastPreparationResult ?: (owner->_preparation.busy ? nil : owner->_entries.firstObject) : nil;};
+    sources.metrics=^NSDictionary<NSString *,id> * _Nullable {CanopyGamesController *owner=weakSelf;
+        return owner && owner->_preparation.busy && owner->_observedPhase ? @{@"phaseDone":@(owner->_phaseDone),@"phaseTotal":@(owner->_phaseTotal)} : nil;};
+    sources.storageSnapshot=^NSDictionary<NSString *,id> * _Nullable {CanopyGamesController *owner=weakSelf;return owner ? owner->_storageScreen.diagnosticSnapshot : nil;};
+    sources.phase=^CanopyDiagnosticsPhase {CanopyGamesController *owner=weakSelf;
+        if(!owner)return CanopyDiagnosticsPhaseUnknown;
+        if(owner->_preparation.busy)return owner->_cancelRequested ? CanopyDiagnosticsPhaseCancelling : CanopyDiagnosticsPhasePreparing;
+        if(owner->_refreshing)return CanopyDiagnosticsPhaseVerifying;
+        if(owner->_lastPreparationError)return CanopyDiagnosticsPhaseFailed;
+        return owner->_lastPreparationResult || owner->_entries.count ? CanopyDiagnosticsPhasePrepared : CanopyDiagnosticsPhaseIdle;};
+    sources.errorCode=^CanopyDiagnosticsError {CanopyGamesController *owner=weakSelf;return [CanopyDiagnostics errorForError:owner ? owner->_lastPreparationError : nil];};
+    return sources;
 }
 - (void)chooseSource {
     if ([self working] || self.presentedViewController) return;
@@ -667,15 +697,20 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
         self->_withUpdate = paired.boolValue; self->_pickerStage = 1;
         [self dismissViewControllerAnimated:YES completion:^{ [self presentDataPickerForStage:1]; }];
     }]];
+    for (NSNumber *encrypted in @[@YES,@NO]) [menu addAction:[UIAlertAction actionWithTitle:encrypted.boolValue ? @"NCA folder + keys" : @"Extracted ExeFS/RomFS folder" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        (void)action; if (self->_pickerStage != 5) return;
+        self->_folderInput=YES; self->_folderNeedsKeys=encrypted.boolValue; self->_pickerStage=1;
+        [self dismissViewControllerAnimated:YES completion:^{ [self presentDataPickerForStage:1]; }];
+    }]];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) { (void)action; [self clearSelection]; [self refreshUI]; }]];
     menu.popoverPresentationController.barButtonItem = self.navigationItem.rightBarButtonItem;
     [self presentViewController:menu animated:YES completion:nil];
 }
-- (void)clearSelection { _pendingSource = nil; _pendingUpdate = nil; _withUpdate = NO; _pickerStage = 0; }
+- (void)clearSelection { _pendingSource = nil; _pendingUpdate = nil; _withUpdate = NO; _folderInput=NO; _folderNeedsKeys=NO; _pickerStage = 0; }
 - (void)presentDataPickerForStage:(NSUInteger)stage {
     if (_pickerStage != stage || (stage == 4 && !_pendingSource)) return;
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeData] asCopy:NO];
-    picker.title = stage == 4 ? @"Choose matching update NSP/XCI" : @"Choose original base NSP/XCI";
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[_folderInput ? UTTypeFolder : UTTypeData] asCopy:NO];
+    picker.title = _folderInput ? @"Choose private game folder" : stage == 4 ? @"Choose matching update NSP/XCI" : @"Choose original base NSP/XCI";
     picker.allowsMultipleSelection = NO; picker.delegate = self;
     [self presentViewController:picker animated:YES completion:nil];
 }
@@ -704,11 +739,16 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     if (urls.count != 1) { [self clearSelection]; [self refreshUI]; return; }
     NSURL *url = urls.firstObject;
     if (_pickerStage == 1 || _pickerStage == 4) {
-        if (![@[@"nsp",@"xci"] containsObject:url.pathExtension.lowercaseString]) {
-            [self clearSelection]; [self refreshUI]; GamesAlert(self,@"Unsupported preparation input",@"Choose an NSP or XCI container. Folder preparation and unsupported NCA layouts are separate work."); return;
+        if (!_folderInput && ![@[@"nsp",@"xci"] containsObject:url.pathExtension.lowercaseString]) {
+            [self clearSelection]; [self refreshUI]; GamesAlert(self,@"Unsupported preparation input",@"Choose an NSP or XCI container, or use a folder preparation action."); return;
         }
         if (_pickerStage == 1) {
             _pendingSource = url;
+            if (_folderInput && !_folderNeedsKeys) {
+                NSURL *source=_pendingSource; [self clearSelection]; _pickerStage=3;
+                [controller dismissViewControllerAnimated:YES completion:^{ [self startSource:source update:nil keys:nil folder:YES]; }];
+                return;
+            }
             if (_withUpdate) { _pickerStage = 4; [controller dismissViewControllerAnimated:YES completion:^{ [self presentDataPickerForStage:4]; }]; }
             else [controller dismissViewControllerAnimated:YES completion:^{ [self chooseKeys]; }];
         } else {
@@ -716,24 +756,32 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
             [controller dismissViewControllerAnimated:YES completion:^{ [self chooseKeys]; }];
         }
     } else if (_pickerStage == 2 && _pendingSource) {
-        NSURL *source = _pendingSource, *update = _pendingUpdate;
+        NSURL *source = _pendingSource, *update = _pendingUpdate; BOOL folder=_folderInput;
         [self clearSelection]; _pickerStage = 3;
-        [controller dismissViewControllerAnimated:YES completion:^{ [self startSource:source update:update keys:url]; }];
+        [controller dismissViewControllerAnimated:YES completion:^{ [self startSource:source update:update keys:url folder:folder]; }];
     }
 }
-- (void)startSource:(NSURL *)source update:(NSURL *)update keys:(NSURL *)keys {
+- (void)startSource:(NSURL *)source update:(NSURL *)update keys:(NSURL *)keys folder:(BOOL)folder {
     if (_pickerStage != 3) return;
     _pickerStage = 0;
     if (_preparation.busy || _refreshing) { _status = @"Another library operation is still running. Select your files again after it completes."; [self refreshUI]; return; }
     _cancelRequested = NO; _progressText = nil; _status = nil;
-    BOOL accepted = [_preparation startSourceURL:source updateURL:update keysURL:keys jobIdentifier:nil completion:^(NSDictionary *result, NSError *error) {
+    void (^completion)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable) = ^(NSDictionary *result, NSError *error) {
         self->_cancelRequested = NO; self->_progressText = nil;
+        self->_lastPreparationResult=[result copy]; self->_lastPreparationError=error;
+        if(self->_diagnostics.enabled)(void)[[self diagnosticSources] snapshotWithDiagnostics:self->_diagnostics recordIfEnabled:YES];
         if (result) self->_status = @"Prepared assets were published. The library will verify the current generation. Gameplay remains unavailable.";
         else self->_status = error.localizedDescription ?: @"Preparation ended without a published result. The library will be rechecked.";
         // A final publication/fsync failure can still leave a new current generation.
         // Completion, not the cancellation request, determines whether publication succeeded.
         [self reloadCatalog]; [self refreshUI];
-    }];
+    };
+    BOOL accepted = folder ? [_preparation startFolderURL:source keysURL:keys jobIdentifier:nil completion:completion] :
+        [_preparation startSourceURL:source updateURL:update keysURL:keys jobIdentifier:nil completion:completion];
+    if(accepted) {
+        _observedPhase=nil; _phaseDone=0; _phaseTotal=0;
+        _lastPreparationError=nil; _lastPreparationResult=nil;
+    }
     if (!accepted) _status = @"The preparation job could not start. Select your files again after other operations finish.";
     [self refreshUI];
 }

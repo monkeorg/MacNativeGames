@@ -61,11 +61,20 @@ static NSDictionary *CDPreparation(id supplied) {
     NSMutableDictionary *safe=[NSMutableDictionary new];
     for(NSString *key in @[@"titleID",@"applicationID",@"patchTitleID"])
         if(CDHex(entry[key],16))safe[key]=[entry[key] copy];
-    for(NSString *key in @[@"generationID",@"sourceSHA256",@"updateSourceSHA256"])
+    BOOL folder=[@[@"nca-folder",@"asset-folder"] containsObject:entry[@"sourceKind"]];
+    if(folder) {
+        safe[@"sourceKind"]=[entry[@"sourceKind"] copy];
+        if(CDHex(entry[@"memberInventorySHA256"],64))safe[@"memberInventorySHA256"]=[entry[@"memberInventorySHA256"] copy];
+        if(CDInteger(entry[@"sourceMemberCount"],512))safe[@"sourceMemberCount"]=entry[@"sourceMemberCount"];
+        if(CDInteger(entry[@"sourceMemberBytes"],UINT64_C(128)<<30))safe[@"sourceMemberBytes"]=entry[@"sourceMemberBytes"];
+    }
+    for(NSString *key in @[@"generationID",@"sourceSHA256",@"updateSourceSHA256"]) {
+        if(folder&&![key isEqual:@"generationID"])continue;
         if(CDHex(entry[key],64))safe[key]=[entry[key] copy];
-    if([@[@"canopy-assets-v1",@"canopy-assets-v2",@"canopy-assets-v3"] containsObject:entry[@"recipeID"]])safe[@"recipeID"]=[entry[@"recipeID"] copy];
+    }
+    if([@[@"canopy-assets-v1",@"canopy-assets-v2",@"canopy-assets-v3",@"canopy-assets-v4"] containsObject:entry[@"recipeID"]])safe[@"recipeID"]=[entry[@"recipeID"] copy];
     for(NSString *key in @[@"sourceSize",@"updateSourceSize"])
-        if(CDInteger(entry[key],INT64_MAX))safe[key]=entry[key];
+        if(!folder&&CDInteger(entry[key],INT64_MAX))safe[key]=entry[key];
     for(NSString *key in @[@"titleVersion",@"baseTitleVersion"])
         if(CDInteger(entry[key],UINT32_MAX))safe[key]=entry[key];
     for(NSString *key in @[@"versionIdentified",@"updateApplied"])
@@ -77,7 +86,7 @@ static NSDictionary *CDPreparation(id supplied) {
     // same booleans directly. Normalize both actual caller contracts.
     NSDictionary *suppliedIntegrity=[entry[@"integrity"] isKindOfClass:NSDictionary.class] ? entry[@"integrity"]:entry;
     NSMutableDictionary *integrity=[NSMutableDictionary new];
-    for(NSString *key in @[@"exefsVerified",@"romfsVerified"])
+    for(NSString *key in @[@"exefsVerified",@"romfsVerified",@"assetHashesVerified",@"romfsStructureVerified"])
         if(CDBoolean(suppliedIntegrity[key]))integrity[key]=suppliedIntegrity[key];
     // No signature verifier is connected by this preparation pipeline.
     if(CDBoolean(suppliedIntegrity[@"signatureVerified"]) && ![suppliedIntegrity[@"signatureVerified"] boolValue])integrity[@"signatureVerified"]=@NO;
@@ -95,6 +104,11 @@ static NSDictionary *CDMetrics(id supplied) {
     if(CDInteger(metrics[@"seedFiles"],100002))safe[@"seedFiles"]=metrics[@"seedFiles"];
     if(CDInteger(metrics[@"filesAndDirectories"],200010))safe[@"filesAndDirectories"]=metrics[@"filesAndDirectories"];
     if(CDBoolean(metrics[@"cacheReused"]))safe[@"cacheReused"]=metrics[@"cacheReused"];
+    for(NSString *key in @[@"storageListedGenerations",@"storageVerifiedGenerations",@"storageListedJobs",@"storageListedShaders",@"storageAvailableShaders"])
+        if(CDInteger(metrics[key],128))safe[key]=metrics[key];
+    for(NSString *key in @[@"storageVerifiedAssetBytes",@"storageAvailableSeedBytes",@"storageAvailableRuntimeBytes"])
+        if(CDInteger(metrics[key],UINT64_C(1)<<44))safe[key]=metrics[key];
+    if(CDBoolean(metrics[@"storageListingComplete"]))safe[@"storageListingComplete"]=metrics[@"storageListingComplete"];
     // Native preparation reports bytes for hashing/writing, blocks for IVFC
     // and records for BKTR. Never relabel all progress counts as bytes.
     if(CDInteger(metrics[@"phaseDone"],INT64_MAX) && CDInteger(metrics[@"phaseTotal"],INT64_MAX) &&
@@ -205,5 +219,60 @@ static NSDictionary *CDSample(NSDictionary *entry,CanopyDiagnosticsPhase phase,C
         return nil;
     }
     return data;
+}
+@end
+
+static NSDictionary *CDStorage(id supplied) {
+    if(![supplied isKindOfClass:NSDictionary.class])return @{};
+    NSDictionary *snapshot=supplied;NSMutableDictionary *metrics=[NSMutableDictionary new];
+    if(CDBoolean(snapshot[@"complete"]))metrics[@"storageListingComplete"]=snapshot[@"complete"];
+    NSArray *generations=snapshot[@"generations"],*jobs=snapshot[@"jobs"],*shaders=snapshot[@"shaders"];
+    if([generations isKindOfClass:NSArray.class]&&generations.count<=128) {
+        uint64_t bytes=0;NSUInteger verified=0;
+        for(id value in generations)if([value isKindOfClass:NSDictionary.class]&&[value[@"verification"] isEqual:@"verified"]&&
+            CDInteger(value[@"logicalAssetBytes"],UINT64_C(64)<<30)) {bytes+=[value[@"logicalAssetBytes"] unsignedLongLongValue];verified++;}
+        metrics[@"storageListedGenerations"]=@(generations.count);metrics[@"storageVerifiedGenerations"]=@(verified);
+        metrics[@"storageVerifiedAssetBytes"]=@(bytes);
+    }
+    if([jobs isKindOfClass:NSArray.class]&&jobs.count<=128)metrics[@"storageListedJobs"]=@(jobs.count);
+    if([shaders isKindOfClass:NSArray.class]&&shaders.count<=128) {
+        uint64_t seed=0,runtime=0;NSUInteger available=0;
+        for(id value in shaders)if([value isKindOfClass:NSDictionary.class]&&[value[@"usageState"] isEqual:@"available"]&&
+            CDInteger(value[@"seedBytes"],UINT64_C(128)<<30)&&CDInteger(value[@"runtimeBytes"],UINT64_C(128)<<30)) {
+            seed+=[value[@"seedBytes"] unsignedLongLongValue];runtime+=[value[@"runtimeBytes"] unsignedLongLongValue];available++;
+        }
+        metrics[@"storageListedShaders"]=@(shaders.count);metrics[@"storageAvailableShaders"]=@(available);
+        metrics[@"storageAvailableSeedBytes"]=@(seed);metrics[@"storageAvailableRuntimeBytes"]=@(runtime);
+    }
+    return [metrics copy];
+}
+@implementation CanopyDiagnosticsSources
+- (NSDictionary *)capture {
+    NSAssert(NSThread.isMainThread,@"Diagnostics providers are main-thread observations");
+    NSDictionary *entry=CDPreparation(self.preparedEntry?self.preparedEntry():nil);
+    NSDictionary *observed=self.metrics?self.metrics():nil;
+    NSMutableDictionary *metrics=[CDMetrics(observed) mutableCopy];
+    // These two observations belong to CDSample's configuration/session fields,
+    // outside CDMetrics' counter-only projection. Preserve only their validated
+    // primitives, never the original provider dictionary or unknown fields.
+    if([observed isKindOfClass:NSDictionary.class]) {
+        if(CDBoolean(observed[@"nativeEntryInvoked"]))metrics[@"nativeEntryInvoked"]=observed[@"nativeEntryInvoked"];
+        if(CDInteger(observed[@"frameLimit"],60)&&[@[@30,@40,@60] containsObject:observed[@"frameLimit"]])metrics[@"frameLimit"]=observed[@"frameLimit"];
+    }
+    // Only the actual storage provider supplies these aggregate observations.
+    for(NSString *key in [metrics.allKeys copy])if([key hasPrefix:@"storage"])[metrics removeObjectForKey:key];
+    [metrics addEntriesFromDictionary:CDStorage(self.storageSnapshot?self.storageSnapshot():nil)];
+    return @{@"entry":entry,@"metrics":[metrics copy],@"phase":@(self.phase?self.phase():CanopyDiagnosticsPhaseUnknown),
+        @"error":@(self.errorCode?self.errorCode():CanopyDiagnosticsErrorNone)};
+}
+- (NSDictionary *)snapshotWithDiagnostics:(CanopyDiagnostics *)diagnostics recordIfEnabled:(BOOL)record {
+    NSDictionary *captured=[self capture];CanopyDiagnosticsPhase phase=[captured[@"phase"] integerValue];
+    CanopyDiagnosticsError error=[captured[@"error"] integerValue];
+    if(record)[diagnostics recordPreparedEntry:captured[@"entry"] phase:phase errorCode:error metrics:captured[@"metrics"]];
+    return [diagnostics snapshotPreparedEntry:captured[@"entry"] phase:phase errorCode:error metrics:captured[@"metrics"]];
+}
+- (NSData *)redactedJSONWithDiagnostics:(CanopyDiagnostics *)diagnostics error:(NSError **)failure {
+    NSDictionary *captured=[self capture];return [diagnostics redactedJSONPreparedEntry:captured[@"entry"]
+        phase:[captured[@"phase"] integerValue] errorCode:[captured[@"error"] integerValue] metrics:captured[@"metrics"] error:failure];
 }
 @end

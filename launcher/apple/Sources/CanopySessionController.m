@@ -2,6 +2,7 @@
 #import "CanopyRuntime.h"
 #import "CanopyOverlay.h"
 #import "CanopyGames.h"
+#import "CanopyDiagnosticsController.h"
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #include <time.h>
@@ -26,15 +27,21 @@ static CanopySessionController *ConsumedNativeSession;
     NSURL *_cache;
     CanopyRuntime *_runtime;
     CanopyOverlay *_overlay;
+    CanopyDiagnostics *_diagnostics;
     CADisplayLink *_displayLink;
     NSString *_seal;
     BOOL _attempted, _starting, _active, _returning, _cancelStartupRequested;
+    BOOL _diagnosticsModalOwnsInput;
     uint64_t _sequence;
     id<UIGestureRecognizerDelegate> _previousPopDelegate;
     BOOL _previousPopEnabled;
     UIView *_startupView;
     UILabel *_startupStatus;
     UIActivityIndicatorView *_startupSpinner;
+}
++ (BOOL)nativeSessionOwnsProcess {
+    NSAssert(NSThread.isMainThread,@"Session ownership belongs on main thread");
+    return ConsumedNativeSession != nil;
 }
 - (instancetype)initWithEntry:(NSDictionary *)entry preparedRootURL:(NSURL *)root
                      settings:(CanopySettings *)settings controllers:(CanopyControllers *)controllers
@@ -49,6 +56,7 @@ static CanopySessionController *ConsumedNativeSession;
         _entry = [entry copy]; _profile = [profile copy]; _settings = settings; _controllers = controllers;
         _saves = saves; _saveQueue = queue; _cache = [cache copy];
         _runtime = [[CanopyRuntime alloc] initWithPreparedRootURL:root];
+        _diagnostics = [CanopyDiagnostics new];
     }
     return self;
 }
@@ -57,6 +65,7 @@ static CanopySessionController *ConsumedNativeSession;
     [super viewDidLoad]; self.title = _entry[@"displayName"];
     self.navigationItem.hidesBackButton = YES;
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Session lifecycle" style:UIBarButtonItemStylePlain target:self action:@selector(endSession)];
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Diagnostics" style:UIBarButtonItemStylePlain target:self action:@selector(showDiagnostics)];
     CAMetalLayer *layer = (CAMetalLayer *)self.view.layer;
     layer.device = MTLCreateSystemDefaultDevice(); layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     _startupStatus = [UILabel new]; _startupStatus.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
@@ -82,7 +91,8 @@ static CanopySessionController *ConsumedNativeSession;
         return okay;
     } restoreInput:^BOOL(NSError **error) {
         CanopySessionController *owner = weakSelf; if (!owner) return NO;
-        if (!owner->_active || UIApplication.sharedApplication.applicationState != UIApplicationStateActive || !owner.view.window.isKeyWindow) {
+        if (!owner->_active || owner->_diagnosticsModalOwnsInput || owner.presentedViewController ||
+            UIApplication.sharedApplication.applicationState != UIApplicationStateActive || !owner.view.window.isKeyWindow) {
             if (error) *error = [NSError errorWithDomain:@"CanopySessionController" code:2 userInfo:@{NSLocalizedDescriptionKey:@"Return to the active game window before restoring gameplay input."}];
             return NO;
         }
@@ -93,6 +103,7 @@ static CanopySessionController *ConsumedNativeSession;
     _overlay.stateDidChange = ^(BOOL expanded) {
         CanopySessionController *owner = weakSelf; if (!owner) return;
         [owner setNeedsUpdateOfPrefersPointerLocked]; if (!expanded) [owner becomeFirstResponder];
+        [owner recordDiagnosticEvent];
     };
     [self addChildViewController:_overlay]; _overlay.view.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:_overlay.view];
@@ -101,6 +112,36 @@ static CanopySessionController *ConsumedNativeSession;
     _overlay.view.hidden = YES;
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(lostFocus:) name:UIApplicationWillResignActiveNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(windowResigned:) name:UIWindowDidResignKeyNotification object:nil];
+}
+- (CanopyDiagnosticsSources *)diagnosticSources {
+    CanopyDiagnosticsSources *sources=[CanopyDiagnosticsSources new];
+    __weak CanopySessionController *weakSelf=self;
+    sources.preparedEntry=^NSDictionary * {CanopySessionController *owner=weakSelf;return owner ? owner->_entry : nil;};
+    sources.metrics=^NSDictionary * {CanopySessionController *owner=weakSelf;return owner ? owner->_runtime.diagnosticMetrics : nil;};
+    sources.phase=^CanopyDiagnosticsPhase {CanopySessionController *owner=weakSelf;return [CanopyDiagnostics phaseForRuntimeState:owner ? owner->_runtime.state : nil];};
+    sources.errorCode=^CanopyDiagnosticsError {CanopySessionController *owner=weakSelf;return owner && [owner->_runtime.state isEqual:@"failed"] ? CanopyDiagnosticsErrorUnknown : CanopyDiagnosticsErrorNone;};
+    return sources;
+}
+- (void)recordDiagnosticEvent {
+    if(_diagnostics.enabled)(void)[[self diagnosticSources] snapshotWithDiagnostics:_diagnostics recordIfEnabled:YES];
+}
+- (void)showDiagnostics {
+    if(_starting || _diagnosticsModalOwnsInput || self.presentedViewController)return;
+    if(![_overlay open])return;
+    _diagnosticsModalOwnsInput=YES;
+    CanopyDiagnosticsController *screen=CanopyMakeDiagnosticsController(_diagnostics,[self diagnosticSources]);
+    screen.navigationItem.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:@"Done" style:UIBarButtonItemStyleDone target:self action:@selector(closeDiagnostics)];
+    UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:screen];
+    navigation.modalInPresentation=YES;
+    [self presentViewController:navigation animated:YES completion:nil];
+}
+- (void)closeDiagnostics {
+    [self dismissViewControllerAnimated:YES completion:^{
+        (void)[self->_controllers consumeUICommandEdges];
+        self->_diagnosticsModalOwnsInput=NO;
+        [self setNeedsUpdateOfPrefersPointerLocked];
+        // The expanded shield remains until an explicit Resume succeeds.
+    }];
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
@@ -118,13 +159,14 @@ static CanopySessionController *ConsumedNativeSession;
     [self becomeFirstResponder];
     if (!_attempted) [self startSession];
 }
-- (BOOL)prefersPointerLocked { return _active && !_overlay.expanded && UIApplication.sharedApplication.applicationState == UIApplicationStateActive && self.view.window.isKeyWindow; }
+- (BOOL)prefersPointerLocked { return _active && !_overlay.expanded && !_diagnosticsModalOwnsInput && !self.presentedViewController && UIApplication.sharedApplication.applicationState == UIApplicationStateActive && self.view.window.isKeyWindow; }
 - (BOOL)canBecomeFirstResponder { return YES; }
 - (NSArray<UIKeyCommand *> *)keyCommands {
     UIKeyCommand *escape = [UIKeyCommand keyCommandWithInput:UIKeyInputEscape modifierFlags:0 action:@selector(toggleSettings)];
     escape.discoverabilityTitle = _starting ? @"Cancel startup" : @"Session settings"; return @[escape];
 }
 - (void)toggleSettings {
+    if(_diagnosticsModalOwnsInput || self.presentedViewController)return;
     if (_starting) [self endSession];
     else if (_active) { if (_overlay.expanded) [_overlay close]; else [_overlay open]; }
 }
@@ -213,6 +255,7 @@ static CanopySessionController *ConsumedNativeSession;
 - (void)tick:(CADisplayLink *)link {
     (void)link;
     uint64_t commands = [_controllers consumeUICommandEdges];
+    if(_diagnosticsModalOwnsInput || self.presentedViewController)return;
     if (!_active || UIApplication.sharedApplication.applicationState != UIApplicationStateActive || !self.view.window.isKeyWindow) return;
     if (commands & (UINT64_C(1) << 16)) { if (_overlay.expanded) [_overlay close]; else [_overlay open]; return; }
     if (_overlay.expanded) return;
