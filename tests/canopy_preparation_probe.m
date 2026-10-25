@@ -26,9 +26,10 @@ static void Check(BOOL condition,const char *message) {
 }
 int main(int argc,char **argv) {
     @autoreleasepool {
-        Check(argc==6 || argc==7 || argc==9,"arguments");
+        Check(argc==6 || argc==7 || argc==8 || argc==9,"arguments");
         Check(NSThread.isMainThread,"main owner");
         NSString *mode=@(argv[1]);
+        BOOL reuse=[mode hasPrefix:@"reuse-"];if(reuse)mode=[mode substringFromIndex:6];
         BOOL addon=[mode hasPrefix:@"addon-"];if(addon)mode=[mode substringFromIndex:6];
         BOOL folder=[mode hasPrefix:@"folder-"];
         if(folder)mode=[mode substringFromIndex:7];
@@ -36,7 +37,9 @@ int main(int argc,char **argv) {
         NSURL *keys=strcmp(argv[3],"-") ? [NSURL fileURLWithPath:@(argv[3])]:nil;
         NSURL *store=[NSURL fileURLWithPath:@(argv[4]) isDirectory:YES];
         NSString *identifier=strcmp(argv[5],"-") ? @(argv[5]):nil;
-        NSURL *update=argc==7 ? [NSURL fileURLWithPath:@(argv[6])]:nil;
+        NSURL *update=(!addon&&((!reuse&&argc==7)||(reuse&&argc==9))) ? [NSURL fileURLWithPath:@(argv[argc-1])]:nil;
+        NSString *reuseTitle=reuse&&strcmp(argv[6],"-") ? @(argv[6]):nil;
+        NSString *reuseGeneration=reuse&&strcmp(argv[7],"-") ? @(argv[7]):nil;
         CanopyPreparation *job=[[CanopyPreparation alloc] initWithPreparedRootURL:store];
         Check(!job.busy,"initial busy");activeJob=job;
         __block BOOL completed=NO,cancelSent=NO;
@@ -63,7 +66,8 @@ int main(int argc,char **argv) {
                 Check(!weakJob.busy,"completion busy");
                 result=value;failure=error;completed=YES;
             };
-        BOOL started=addon ? [job startAddonURL:source keysURL:keys applicationID:@(argv[6]) baseGenerationID:@(argv[7]) addonTitleID:@(argv[8]) jobIdentifier:identifier completion:completion] : folder ? [job startFolderURL:source keysURL:keys jobIdentifier:identifier completion:completion] :
+        BOOL started=addon ? [job startAddonURL:source keysURL:keys applicationID:@(argv[6]) baseGenerationID:@(argv[7]) addonTitleID:@(argv[8]) jobIdentifier:identifier completion:completion] : reuse ?
+            [job startSourceURL:source updateURL:update keysURL:keys reuseTitleID:reuseTitle reuseGenerationID:reuseGeneration jobIdentifier:identifier completion:completion] : folder ? [job startFolderURL:source keysURL:keys jobIdentifier:identifier completion:completion] :
             [job startSourceURL:source updateURL:update keysURL:keys jobIdentifier:identifier completion:completion];
         if([mode isEqual:@"invalid"]){Check(!started&&!job.busy&&!completed,"invalid add-on accepted");puts("{\"status\":\"pass\",\"rejected\":true}");return 0;}
         Check(started,"job rejected");
@@ -96,7 +100,7 @@ int main(int argc,char **argv) {
             @"cancel_sent":@(cancelSent),@"late_cancel":lateCancelTriggered ? @YES : @NO,@"job":job.jobIdentifier ?: @""} mutableCopy];
         if(result)report[@"result"]=result;
         if(failure){NSMutableDictionary *error=[@{@"domain":failure.domain,@"code":@(failure.code),@"description":failure.localizedDescription} mutableCopy];
-            for(NSString *key in @[@"jobID",@"commitAttempted",@"publicationUncertain",@"reloadRequired",@"currentReadable",@"currentGenerationID"]){
+            for(NSString *key in @[@"jobID",@"commitAttempted",@"publicationUncertain",@"reloadRequired",@"currentReadable",@"currentGenerationID",@"ioMetrics"]){
                 if(failure.userInfo[key])error[key]=failure.userInfo[key];
             }
             report[@"error"]=error;

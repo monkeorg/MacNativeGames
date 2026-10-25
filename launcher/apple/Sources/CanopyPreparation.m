@@ -19,7 +19,8 @@
 - (BOOL)cancellationRequested;
 - (void)reportPhase:(NSString *)phase done:(uint64_t)done total:(uint64_t)total epoch:(NSUInteger)epoch;
 - (BOOL)startInputURL:(NSURL *)source updateURL:(NSURL * _Nullable)updateURL keysURL:(NSURL * _Nullable)keysURL
-    folder:(BOOL)folder jobIdentifier:(NSString * _Nullable)identifier
+    folder:(BOOL)folder reuseTitleID:(NSString * _Nullable)reuseTitle reuseGenerationID:(NSString * _Nullable)reuseGeneration
+    jobIdentifier:(NSString * _Nullable)identifier
     completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion;
 @end
 
@@ -133,6 +134,11 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
         default: message = published ? @"A verified generation may have been published, but final filesystem confirmation failed. Reopen the library and verify its state before retrying." : @"Preparation could not read or safely publish the private assets. Check local availability and storage, then retry or resume.";
     }
     return [NSError errorWithDomain:@"CanopyPreparation" code:status userInfo:@{NSLocalizedDescriptionKey:message, @"publishedGenerationMayExist":@(published)}];
+}
+static NSDictionary *CPIOMetrics(const struct mng_store_io_metrics *metrics) {
+    return @{@"scope":@"logicalPayloadIO",@"streamedBytes":@(metrics->streamed_bytes),@"writtenBytes":@(metrics->written_bytes),
+        @"clonedLogicalBytes":@(metrics->cloned_logical_bytes),@"comparedEqualBytes":@(metrics->compared_equal_bytes),
+        @"resumedBytes":@(metrics->resumed_bytes),@"clonedAssets":@(metrics->cloned_assets),@"cloneFallbackAssets":@(metrics->clone_fallback_assets)};
 }
 
 @implementation CanopyPreparation {
@@ -276,12 +282,13 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
             @"indexFileCount":@(installed.index.file_count),@"assetCount":@2,
             @"assetBytes":@(installed.addon.romfs_size+installed.index.index_size),
             @"exefsVerified":@NO,@"romfsVerified":@YES,@"romfsStructureVerified":@YES,
-            @"signatureVerified":@NO,@"executionVerified":@NO};
+            @"signatureVerified":@NO,@"executionVerified":@NO,@"ioMetrics":CPIOMetrics(&installed.io_metrics)};
         NSError *failure=nil;
         if(operation!=MNG_PREPARE_OK) {
             NSError *native=CPError(operation,installed.publication_uncertain!=0);
             NSMutableDictionary *info=[native.userInfo mutableCopy];
             info[@"jobID"]=job;info[@"commitAttempted"]=installed.commit_attempted ? @YES : @NO;
+            info[@"ioMetrics"]=CPIOMetrics(&installed.io_metrics);
             info[@"publicationUncertain"]=installed.publication_uncertain ? @YES : @NO;
             info[@"reloadRequired"]=installed.reload_required ? @YES : @NO;info[@"currentReadable"]=installed.current_readable ? @YES : @NO;
             if(installed.current_readable)info[@"currentGenerationID"]=[NSString stringWithUTF8String:installed.current_generation_id];
@@ -295,15 +302,23 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
     return [self startSourceURL:source updateURL:nil keysURL:keysURL jobIdentifier:identifier completion:completion];
 }
 - (BOOL)startSourceURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
-    return [self startInputURL:source updateURL:updateURL keysURL:keysURL folder:NO jobIdentifier:identifier completion:completion];
+    return [self startSourceURL:source updateURL:updateURL keysURL:keysURL reuseTitleID:nil reuseGenerationID:nil jobIdentifier:identifier completion:completion];
+}
+- (BOOL)startSourceURL:(NSURL *)source keysURL:(NSURL *)keysURL reuseTitleID:(NSString *)title reuseGenerationID:(NSString *)generation jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion {
+    return [self startSourceURL:source updateURL:nil keysURL:keysURL reuseTitleID:title reuseGenerationID:generation jobIdentifier:identifier completion:completion];
+}
+- (BOOL)startSourceURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL reuseTitleID:(NSString *)title reuseGenerationID:(NSString *)generation jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion {
+    return [self startInputURL:source updateURL:updateURL keysURL:keysURL folder:NO reuseTitleID:title reuseGenerationID:generation jobIdentifier:identifier completion:completion];
 }
 - (BOOL)startFolderURL:(NSURL *)folder keysURL:(NSURL *)keysURL jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
-    return [self startInputURL:folder updateURL:nil keysURL:keysURL folder:YES jobIdentifier:identifier completion:completion];
+    return [self startInputURL:folder updateURL:nil keysURL:keysURL folder:YES reuseTitleID:nil reuseGenerationID:nil jobIdentifier:identifier completion:completion];
 }
-- (BOOL)startInputURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL folder:(BOOL)folder jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
+- (BOOL)startInputURL:(NSURL *)source updateURL:(NSURL *)updateURL keysURL:(NSURL *)keysURL folder:(BOOL)folder reuseTitleID:(NSString *)reuseTitle reuseGenerationID:(NSString *)reuseGeneration jobIdentifier:(NSString *)identifier completion:(void (^)(NSDictionary<NSString *, id> * _Nullable, NSError * _Nullable))completion {
     NSAssert(NSThread.isMainThread, @"Canopy preparation is owned by the main thread");
     if (_busy || !source.isFileURL || (keysURL ? !keysURL.isFileURL : !folder) ||
-        (updateURL && (folder || !updateURL.isFileURL)) || !completion || (identifier && !CPJobID(identifier))) return NO;
+        (updateURL && (folder || !updateURL.isFileURL)) || !completion || (identifier && !CPJobID(identifier)) ||
+        (!!reuseTitle!=!!reuseGeneration) || (reuseTitle && (!CPIdentifier(reuseTitle,16)||[reuseTitle isEqual:@"0000000000000000"]||!CPIdentifier(reuseGeneration,64)))) return NO;
+    NSString *selectedTitle=[reuseTitle copy],*selectedGeneration=[reuseGeneration copy];
     _busy = YES; ++_epoch; NSUInteger epoch = _epoch;
     _jobIdentifier = identifier ?: [[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
     NSString *job = [_jobIdentifier copy];
@@ -333,7 +348,8 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
                     [self->_lock lock]; self->_nativeStore = store; [self->_lock unlock];
                     mng_store_set_cancel_check(store, CPStoreStopped, (__bridge void *)self);
                     if ([self cancellationRequested]) mng_store_cancel(store);
-                    operation = mng_store_begin(store, job.UTF8String);
+                    if(selectedGeneration)operation=mng_store_set_reuse_generation(store,strtoull(selectedTitle.UTF8String,NULL,16),selectedGeneration.UTF8String,NULL);
+                    if(operation==MNG_PREPARE_OK)operation = mng_store_begin(store, job.UTF8String);
                 }
                 if (operation == MNG_PREPARE_OK) {
                     BOOL scoped = [source startAccessingSecurityScopedResource];
@@ -402,6 +418,7 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
             }
             if (!commitAttempted && operation != MNG_PREPARE_OK && [self cancellationRequested]) operation = MNG_PREPARE_CANCELLED;
             [self->_lock lock]; self->_nativeStore = NULL; self->_coordinator = nil; [self->_lock unlock];
+            struct mng_store_io_metrics metrics={0};mng_store_get_io_metrics(store,&metrics);
             mng_keys_free(keys); mng_store_close(store);
             NSMutableDictionary *result = operation == MNG_PREPARE_OK ? [@{
                 @"titleID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.title_id],
@@ -414,7 +431,7 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
                 @"updateSourceSHA256":CPHex(prepared.update_source_sha256, 32), @"updateSourceSize":@(prepared.update_source_size),
                 @"generationID":[NSString stringWithUTF8String:generation], @"jobID":job,
                 @"sourceSHA256":CPHex(prepared.source_sha256, 32), @"sourceSize":@(prepared.source_size),
-                @"assetCount":@(prepared.asset_count), @"assetBytes":@(prepared.asset_bytes),
+                @"assetCount":@(prepared.asset_count), @"assetBytes":@(prepared.asset_bytes),@"ioMetrics":CPIOMetrics(&metrics),
                 @"exefsVerified":prepared.exefs_verified ? @YES : @NO, @"romfsVerified":prepared.romfs_verified ? @YES : @NO,
                 @"signatureVerified":@NO, @"executionVerified":@NO } mutableCopy] : nil;
             if (result && prepared.source_kind) {
@@ -426,6 +443,8 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
                 result[@"romfsStructureVerified"]=prepared.romfs_structure_verified ? @YES : @NO;
             }
             NSError *error = operation == MNG_PREPARE_OK ? nil : CPError(operation, published || (commitAttempted && operation == MNG_PREPARE_IO));
+            if(error){NSMutableDictionary *info=[error.userInfo mutableCopy];info[@"ioMetrics"]=CPIOMetrics(&metrics);
+                error=[NSError errorWithDomain:error.domain code:error.code userInfo:info];}
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (self->_epoch != epoch) return;
                 self->_busy = NO; completion(result, error);
