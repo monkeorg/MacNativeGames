@@ -1,0 +1,21 @@
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -19468,6 +19468,7 @@
+ uint32_t CompilerMSL::get_declared_type_alignment_msl(TypeID type_id, const SPIRType *special_type,
+                                                       bool is_packed, bool row_major) const
+ {
++	canopy_cross_budget::depth_scope canopy_depth;
+ 	auto &type = type_id ? get<SPIRType>(type_id) : *special_type;
+ 
+ 	// Pointers align on multiples of 8 bytes.
+@@ -19493,7 +19494,10 @@
+ 		// In MSL, a struct's alignment is equal to the maximum alignment of any of its members.
+ 		uint32_t alignment = 1;
+ 		for (uint32_t i = 0; i < type.member_types.size(); i++)
++		{
++			canopy_cross_budget::step();
+ 			alignment = max(alignment, uint32_t(get_declared_struct_member_alignment_msl(type, i)));
++		}
+ 		return alignment;
+ 	}
+ 

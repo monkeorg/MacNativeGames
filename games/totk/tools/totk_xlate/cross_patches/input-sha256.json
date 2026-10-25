@@ -400,6 +400,16 @@
       },
       "patch": "0035-member-metadata-growth-bounds.patch",
       "sha256": "ef15fb67b75f05924e03192a312d6ed21fd20d8151b0d8354d23dbfdfdf741dc"
+    },
+    {
+      "after": {
+        "spirv_msl.cpp": "59c149849bfefab36a1c0e7dcfe549259e8ff90173dc67f22774333a4c5b9d83"
+      },
+      "before": {
+        "spirv_msl.cpp": "e6c1ee0499468b1d84289be8d17247eccc3beeeea61861a9b3fe3be82d9976b9"
+      },
+      "patch": "0036-msl-type-alignment-depth-work.patch",
+      "sha256": "cbbc07e382088a2f3c1d8e8ce526e0f8a67bee27ed44999a9e44b4b1cbc0b45c"
     }
   ],
   "schemaVersion": 1

@@ -711,6 +711,11 @@
       "file": "spirv_glsl.cpp",
       "originalInventoryAnchor": "spirv_glsl.cpp:4433",
       "originalSourceLine": 4433
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:19225",
+      "originalSourceLine": 19225
     }
   ],
   "explicitArithmetic": [
@@ -743,7 +748,8 @@
     "MSL workgroup type parent/member marking",
     "scalar specialization-operation evaluation",
     "ParsedIR null-constant parent/member construction",
-    "combined member-decoration traversal"
+    "combined member-decoration traversal",
+    "MSL declared type alignment member traversal"
   ],
   "explicitGrowth": [
     "ParsedIR IDs",
@@ -755,8 +761,8 @@
     "Parser direct raw-ID self-alias refusal before source lookup and Variant replacement for OpTypeArray/RuntimeArray/Pointer only; UntypedPointer and distinct-pointee forward resolution unchanged, not a global ID/redefinition validator"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 495,
-  "instrumentedOriginallyUnbracedLoops": 138,
+  "instrumentedLoopCheckpoints": 496,
+  "instrumentedOriginallyUnbracedLoops": 139,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -825,7 +831,7 @@
       "reason": "At most four iterations after checked patch0033: fill_composite_constant preflight rejects a selected non-array/non-Struct vector width>4 or fewer than width initializers before target mutation/fixed writes. The existing vector branch uses the same type.vecsize and no callback can change it before the loop. Matrix/array/Struct and caller validity remain separate; no checkpoint added."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 8,
+  "unbracedLoopsInputDependentOrUnprovenCount": 7,
   "unbracedLoopsNotInstrumented": [
     "spirv_cross.cpp:3676",
     "spirv_cross.cpp:3842",
@@ -849,10 +855,9 @@
     "spirv_msl.cpp:4265",
     "spirv_msl.cpp:6099",
     "spirv_msl.cpp:9256",
-    "spirv_msl.cpp:19225",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 24,
+  "unbracedLoopsNotInstrumentedCount": 23,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",
