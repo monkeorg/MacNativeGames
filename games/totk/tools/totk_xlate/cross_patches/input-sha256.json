@@ -160,6 +160,16 @@
       },
       "patch": "0013-traversal-wrapper-loop-checkpoints.patch",
       "sha256": "2721d274d610d7d6f89f538ae8010211f2058f74e67ef5911a3ba1135eb7a9fa"
+    },
+    {
+      "after": {
+        "spirv_msl.cpp": "b29d63aad74a1628dda4dc2238638f9a3960c98b95f991bd0e08a8ba2ecfb3a1"
+      },
+      "before": {
+        "spirv_msl.cpp": "e81dbf93ce8c79d584a26bd0fcf6bdf6d77cbfb2dddc53f8b9a77af9fbbb020b"
+      },
+      "patch": "0014-msl-location-span-bounds.patch",
+      "sha256": "5cd2d4e518c6144b63b7edcfea7a96fa868faccc2855574dbe08b0e32313a83a"
     }
   ],
   "schemaVersion": 1
