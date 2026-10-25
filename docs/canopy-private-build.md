@@ -109,6 +109,14 @@ main pin, and the explicit final shader manifest pin. `gen_embed.py` supplies th
 existing writable module and executable text segment flags. The general runtime
 cache is not substituted for the separately verified shader cache.
 
+The private builder reuses the public build's reviewed `sips`/`actool` recipe in
+a separate staging directory containing only icon inputs and outputs. It copies
+the compiled icon assets into the private app and records actual tool versions,
+derivative geometry/hashes and compiled inventory in the private observation.
+No game payload is an asset-compiler input, and the approved source artwork is
+unchanged. Real private-app packaging and SpringBoard appearance remain local
+checks even when the public icon recipe has passed Apple CI.
+
 The resulting `Canopy.app` contains the original Canopy branding, embedded
 private native modules, verified shared fonts and the selected shader seed.
 The RomFS image is not bundled: prepare/import the matching private generation
