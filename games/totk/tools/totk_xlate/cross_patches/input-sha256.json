@@ -332,6 +332,16 @@
       },
       "patch": "0029-parser-type-copy-precharges.patch",
       "sha256": "6de99860d648350f1b7844a0b2e711615f7c2146083f83f9a11093ed4e5f14ee"
+    },
+    {
+      "after": {
+        "spirv_parser.cpp": "ad793162980bbaf372d570f1f7a5cd8f36645c5dc240a1dc1021d99ea86b8f84"
+      },
+      "before": {
+        "spirv_parser.cpp": "f727a28521aaa9f6809c2615cf913000f44b2c265384b718c4a1f986197b3528"
+      },
+      "patch": "0030-parser-self-alias-refusals.patch",
+      "sha256": "cd4627eff976d456da2aae838550362c73203f05c29e55b7814ea0a46bdc8196"
     }
   ],
   "schemaVersion": 1

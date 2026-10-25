@@ -1,0 +1,29 @@
+--- a/spirv_parser.cpp
++++ b/spirv_parser.cpp
+@@ -871,6 +871,8 @@
+ 	{
+ 		uint32_t id = ops[0];
+ 		uint32_t tid = ops[1];
++		if (id == tid)
++			SPIRV_CROSS_THROW("Self-aliasing type replacement is unsupported.");
+ 		auto &base = get<SPIRType>(tid);
+ 		parser_precharge_type_copy(base, true);
+ 		auto &arraybase = set<SPIRType>(id, base);
+@@ -899,6 +901,8 @@
+ 	case OpTypeRuntimeArray:
+ 	{
+ 		uint32_t id = ops[0];
++		if (id == ops[1])
++			SPIRV_CROSS_THROW("Self-aliasing type replacement is unsupported.");
+ 
+ 		auto &base = get<SPIRType>(ops[1]);
+ 		parser_precharge_type_copy(base, true);
+@@ -959,6 +963,8 @@
+ 	case OpTypePointer:
+ 	{
+ 		uint32_t id = ops[0];
++		if (op == OpTypePointer && id == ops[2])
++			SPIRV_CROSS_THROW("Self-aliasing type replacement is unsupported.");
+ 
+ 		// Very rarely, we might receive a FunctionPrototype here.
+ 		// We won't be able to compile it, but we shouldn't crash when parsing.

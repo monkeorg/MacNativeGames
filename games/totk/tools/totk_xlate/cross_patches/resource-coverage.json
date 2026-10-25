@@ -693,6 +693,9 @@
     "StringStream append/allocation/final copy",
     "ParsedIR null-constant requested reference slots for temporary plus subconstants (logical charges before noexcept constructors, not actual capacity/heap guarantees)"
   ],
+  "explicitOwnership": [
+    "Parser direct raw-ID self-alias refusal before source lookup and Variant replacement for OpTypeArray/RuntimeArray/Pointer only; UntypedPointer and distinct-pointee forward resolution unchanged, not a global ID/redefinition validator"
+  ],
   "instrumentedBracedLoops": 357,
   "instrumentedLoopCheckpoints": 485,
   "instrumentedOriginallyUnbracedLoops": 128,
