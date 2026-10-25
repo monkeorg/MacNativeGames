@@ -1,6 +1,6 @@
 # Canopy · development update
 
-**FOSS native game launcher · source development continues**  
+**FOSS native game launcher · source development continues**
 Source through [#100](https://github.com/monkeorg/MacNativeGames/pull/100),
 [`62dd868`](https://github.com/monkeorg/MacNativeGames/commit/62dd868c5e66d830ca1f5973462c4725a56aa759),
 on `feat/canopy-shader-removal-recovery`.

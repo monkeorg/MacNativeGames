@@ -176,7 +176,7 @@ UNRUN. No author currently owns further cache/store edits under that assignment.
 | native | Compiler recursion/noexcept/ownership source assessment | Read-only assessment, no new patch yet; report concrete source findings. |
 | artifact | this file, `todo.md`, `docs/canopy-issue-coverage.md` | Frozen for root review; no source/tests/probes. |
 | product | `docs/canopy-progress.md`, `docs/canopy-mac-ipad-checklist.md` | Separate documentation ownership. |
-| root | integration/build inventories/GitHub evidence | Plans documentation draft #101 on `feat/canopy-cloud-handoff`, base #100; not yet a published checkpoint here. Continue source work if assessments identify gaps. |
+| root | integration/build inventories/GitHub evidence | Documentation draft #101 is published on `feat/canopy-cloud-handoff`, based on #100 (initial doc commit78948c40904bb85d5fd1a1de106d8bee275194b9). Continue the approved compiler source slices. |
 
 Published recent source cohorts and limits:
 
