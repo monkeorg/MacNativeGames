@@ -114,6 +114,9 @@ class CanopyRuntimeTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.assertEqual(self.scenario(mode)['starts'], 0)
 
+    def test_shader_seed_import_with_actual_device_identity(self):
+        self.assertEqual(self.scenario('actual-shader-device')['starts'], 0)
+
     def test_verified_index_cache_reuse(self):
         self.assertEqual(self.scenario('cache-reuse')['starts'], 1)
 

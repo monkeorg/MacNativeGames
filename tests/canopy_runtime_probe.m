@@ -2,6 +2,7 @@
  * This fixture is not evidence that commercial TOTK code ran. */
 #import <Foundation/Foundation.h>
 #import "CanopyRuntime.h"
+#import "CanopyShaderCache.h"
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #include "../games/totk/runtime/canopy_host.h"
@@ -63,8 +64,21 @@ int main(int argc,char **argv) {
         for(NSURL *url in @[saves,identity,cache])Check([NSFileManager.defaultManager createDirectoryAtURL:url
             withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:NULL],"private directories");
         id<MTLDevice> device=MTLCreateSystemDefaultDevice();
-        BOOL deviceDependent=!strcmp(mode,"success") || !strcmp(mode,"entry-failure") || !strcmp(mode,"cache-reuse");
+        BOOL deviceDependent=!strcmp(mode,"success") || !strcmp(mode,"entry-failure") || !strcmp(mode,"cache-reuse") || !strcmp(mode,"actual-shader-device");
         if(!device && deviceDependent){puts("{\"status\":\"skip\",\"reason\":\"No actual native Metal device is available\"}");return 0;}
+        if(!strcmp(mode,"actual-shader-device")) {
+            NSError *shaderError=nil;
+            NSDictionary *deviceIdentity=[CanopyShaderCache deviceIdentityForDevice:device error:&shaderError];
+            Check(deviceIdentity!=nil,"actual shader device identity");
+            CanopyShaderCache *shaderCache=[[CanopyShaderCache alloc] initWithRootURL:[cache URLByAppendingPathComponent:@"actual-device" isDirectory:YES]];
+            CanopyShaderCacheLease *lease=[shaderCache prepareSeedURL:[resources URLByAppendingPathComponent:@"shader-seed" isDirectory:YES]
+                titleID:@"0100123456780000" sourceRomFSSHA256:@(romfsHash) expectedManifestSHA256:@(manifestHash)
+                expectedChain:@"original-fixture-chain" deviceIdentity:deviceIdentity cancelled:nil progress:nil error:&shaderError];
+            if(!lease)fprintf(stderr,"Actual-device shader verification refused: stage=%lu\n",(unsigned long)[shaderError.userInfo[@"verificationStage"] unsignedIntegerValue]);
+            Check(lease!=nil,"actual device shader seed import");
+            Check(lease.metrics[@"seedCopiedBytes"]!=nil,"actual device shader seed metrics");
+            puts("{\"status\":\"pass\",\"starts\":0,\"nativeEntryInvoked\":false}");return 0;
+        }
         CAMetalLayer *layer=CAMetalLayer.layer;layer.device=device;
         CanopyRuntime *runtime=[[CanopyRuntime alloc] initWithPreparedRootURL:root];NSError *error=nil;
         NSDictionary *settings=@{@"fpsLimit":@60,@"taa":@NO,@"hud":@1,@"language":@"en-US",@"aspect":@"16:9"};

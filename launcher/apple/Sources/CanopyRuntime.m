@@ -249,11 +249,15 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
             CanopyShaderCache *shaderCache=[[CanopyShaderCache alloc] initWithRootURL:[cache URLByAppendingPathComponent:@"shader-identities" isDirectory:YES]];
             if(deviceIdentity) {
                 preflightFailure=@"The private shader seed or cache does not match the approved native profile.";
+                NSError *shaderError=nil;
                 shaderLease=[shaderCache prepareSeedURL:[assets URLByAppendingPathComponent:@"shader-seed" isDirectory:YES]
                 titleID:titleID sourceRomFSSHA256:CRString(self->_host->romfs_sha256)
                 expectedManifestSHA256:CRString(self->_host->shader_seed_manifest_sha256) expectedChain:CRString(self->_host->shader_chain)
                 deviceIdentity:deviceIdentity cancelled:^BOOL{return atomic_load(&self->_preflightCancelled)!=0;}
-                progress:nil error:NULL];
+                progress:nil error:&shaderError];
+                NSNumber *stage=shaderError.userInfo[@"verificationStage"];
+                if(!shaderLease && [stage isKindOfClass:NSNumber.class] && stage.unsignedIntegerValue>=1 && stage.unsignedIntegerValue<=21)
+                    preflightFailure=[NSString stringWithFormat:@"The private shader seed or cache could not be verified safely (stage %lu).",(unsigned long)stage.unsignedIntegerValue];
             }
             if(!shaderLease)valid=NO;
         }

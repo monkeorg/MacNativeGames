@@ -281,72 +281,73 @@ static BOOL SCIdentity(NSDictionary *identity) {
     cancelled:(BOOL (^)(void))cancel progress:(void (^)(NSString *,uint64_t,uint64_t))progress error:(NSError **)error {
     CanopyShaderCacheLease *result=nil;int root=-1,lock=-1,input=-1,folder=-1,seed=-1,runtime=-1,lease=-1,stage=-1;
     NSString *stageName=nil,*identityHash=nil;NSData *raw=nil,*receipt=nil;NSDictionary *manifest=nil,*identity=nil;NSArray *names=nil;NSURL *owned=nil;
+    NSUInteger verificationStage=1; /* Fixed redacted stage IDs, never input-derived text. */
     NSMutableDictionary *files=nil;NSMutableSet *expected=nil;uint64_t copied=0,reused=0,total=0;__block uint64_t done=0,lastProgress=0;BOOL fresh=NO,published=NO;
     if(!SCHex(title,16) || !SCHex(romfs,64) || !SCHex(manifestSHA,64) || !SCText(chain,128) || !SCDevice(device))goto finish;
     if(cancel && cancel())goto finish;
-    device=SCParse(SCJSON(device));if(!SCDevice(device))goto finish;
-    root=SCRoot(_root,YES,YES);if(root<0)goto finish;lock=SCLock(root);if(lock<0)goto finish;
-    input=SCRoot(source,NO,NO);if(input<0)goto finish;
-    raw=SCData(input,@"seed-manifest.json",SCManifestBytes,NO);
+    verificationStage=2;device=SCParse(SCJSON(device));if(!SCDevice(device))goto finish;
+    verificationStage=3;root=SCRoot(_root,YES,YES);if(root<0)goto finish;lock=SCLock(root);if(lock<0)goto finish;
+    verificationStage=4;input=SCRoot(source,NO,NO);if(input<0)goto finish;
+    verificationStage=5;raw=SCData(input,@"seed-manifest.json",SCManifestBytes,NO);
     if(![SCDigest(raw) isEqual:manifestSHA])goto finish;
-    manifest=SCParse(raw);
+    verificationStage=6;manifest=SCParse(raw);
     if(![manifest isKindOfClass:NSDictionary.class] || !SCNumber(manifest[@"schema"],1,1) || !SCNumber(manifest[@"shaders"],1,SCFiles) ||
         ![manifest[@"chain"] isEqual:chain] || ![manifest[@"source_romfs_sha256"] isEqual:romfs] ||
         !SCText(manifest[@"game"],64) || !SCText(manifest[@"version"],64) || !SCHex(manifest[@"translator_sha256"],64) ||
         !SCHex(manifest[@"spirv_cross_sha256"],64) || !SCHex(manifest[@"preparation_sha256"],64) ||
         !SCHex(manifest[@"shader_map_sha256"],64) || ![manifest[@"files"] isKindOfClass:NSDictionary.class] ||
         ![manifest[@"files"] count] || [manifest[@"files"] count]>SCFiles)goto finish;
-    files=[manifest[@"files"] mutableCopy];
+    verificationStage=7;files=[manifest[@"files"] mutableCopy];
     for(id name in files)if((cancel && cancel()) || !SCName(name) || !SCHex(files[name],64))goto finish;
     files[@"shader_map.tsv"]=manifest[@"shader_map_sha256"];names=[files.allKeys sortedArrayUsingSelector:@selector(compare:)];
     identity=@{@"schema":@1,@"titleID":title,@"sourceRomFSSHA256":romfs,@"manifestSHA256":manifestSHA,@"chain":chain,
         @"translatorSHA256":manifest[@"translator_sha256"],@"spirvCrossSHA256":manifest[@"spirv_cross_sha256"],
         @"preparationSHA256":manifest[@"preparation_sha256"],@"device":device};
-    identityHash=SCDigest(SCJSON(identity));if(!identityHash)goto finish;
+    verificationStage=8;identityHash=SCDigest(SCJSON(identity));if(!identityHash)goto finish;
     receipt=SCJSON(@{@"schema":@1,@"identityHash":identityHash,@"identity":identity});
-    folder=openat(root,identityHash.UTF8String,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+    verificationStage=9;folder=openat(root,identityHash.UTF8String,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     if(folder<0 && errno!=ENOENT)goto finish;
     fresh=folder<0;
     if(!fresh && (!SCPrivate(folder,YES) || ![SCData(folder,@"identity.json",16384,YES) isEqual:receipt]))goto finish;
-    if(fresh) {
+    verificationStage=10;if(fresh) {
         stageName=[@".shader-stage-" stringByAppendingString:NSUUID.UUID.UUIDString.lowercaseString];
         if(mkdirat(root,stageName.UTF8String,0700)){stageName=nil;goto finish;}
         stage=SCChild(root,stageName.UTF8String,NO);if(stage<0)goto finish;folder=dup(stage);if(folder<0)goto finish;
     }
-    seed=SCChild(folder,"seed",fresh);runtime=SCChild(folder,"runtime",YES);if(seed<0 || runtime<0)goto finish;
+    verificationStage=11;seed=SCChild(folder,"seed",fresh);runtime=SCChild(folder,"runtime",YES);if(seed<0 || runtime<0)goto finish;
     /* Keep the legacy renderer on its existing per-file import path. Its
      * empty-folder clone path chmods the mutable cache0755. This private marker
      * is ignored by shader filename filters and prevents that path entirely. */
-    struct stat marker;
+    verificationStage=12;struct stat marker;
     if(fstatat(runtime,".canopy-private-cache",&marker,AT_SYMLINK_NOFOLLOW)) {
         if(errno!=ENOENT || !SCWrite(runtime,".canopy-private-cache",[NSData data]))goto finish;
     } else {int fd=openat(runtime,".canopy-private-cache",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
         BOOL valid=SCPrivate(fd,NO) && !fstat(fd,&marker) && marker.st_size==0;if(fd>=0)close(fd);if(!valid)goto finish;}
-    total=raw.length;
+    verificationStage=13;total=raw.length;
     for(NSString *name in names) {struct stat s;if(cancel && cancel())goto finish;
         if(fstatat(fresh ? input:seed,name.fileSystemRepresentation,&s,AT_SYMLINK_NOFOLLOW) || !S_ISREG(s.st_mode) ||
             s.st_size<0 || (uint64_t)s.st_size>SCFileBytes || (uint64_t)s.st_size>SCTotalBytes-total)goto finish;total+=(uint64_t)s.st_size;}
-    for(NSString *name in names) {@autoreleasepool {uint64_t bytes=0;
+    verificationStage=14;for(NSString *name in names) {@autoreleasepool {uint64_t bytes=0;
         if(!SCFile(fresh ? input:seed,name,fresh ? seed:-1,files[name],!fresh,cancel,^(uint64_t n){
             done+=n;SCReport(progress,fresh ? @"copy-private-shader-seed":@"verify-private-shader-seed",done,total,&lastProgress);
         },&bytes))goto finish;
         if(fresh)copied+=bytes;else reused+=bytes;
     }}
-    if(fresh && (!SCWrite(seed,"seed-manifest.json",raw) || !SCWrite(folder,"identity.json",receipt)))goto finish;
-    if(![SCData(seed,@"seed-manifest.json",SCManifestBytes,YES) isEqual:raw] ||
+    verificationStage=15;if(fresh && (!SCWrite(seed,"seed-manifest.json",raw) || !SCWrite(folder,"identity.json",receipt)))goto finish;
+    verificationStage=16;if(![SCData(seed,@"seed-manifest.json",SCManifestBytes,YES) isEqual:raw] ||
         !SCSeedStructure(seed,manifest,[manifest[@"files"] allKeys],cancel))goto finish;
     done+=raw.length;if(fresh)copied+=raw.length;else reused+=raw.length;
     SCReport(progress,fresh ? @"copy-private-shader-seed":@"verify-private-shader-seed",done,total,&lastProgress);
     expected=[NSMutableSet setWithArray:names];[expected addObject:@"seed-manifest.json"];
-    if(!SCShape(seed,expected,cancel))goto finish;
-    uint64_t runtimeBytes=0,runtimeCount=0;
+    verificationStage=17;if(!SCShape(seed,expected,cancel))goto finish;
+    verificationStage=18;uint64_t runtimeBytes=0,runtimeCount=0;
     if(!SCWalk(runtime,0,&runtimeBytes,&runtimeCount,NO,NO,cancel))goto finish;
     if(cancel && cancel())goto finish;
-    if(fresh) {lease=openat(folder,".lease",O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    verificationStage=19;if(fresh) {lease=openat(folder,".lease",O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
         if(lease<0 || fchmod(lease,0400) || fsync(lease) || fsync(seed) || fsync(runtime) || fsync(folder))goto finish;
     } else lease=openat(folder,".lease",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
-    struct stat st;if(!SCPrivate(lease,NO) || fstat(lease,&st) || st.st_size || flock(lease,LOCK_SH|LOCK_NB) || !SCIdentityShape(folder))goto finish;
-    if(fresh) {if(cancel && cancel())goto finish;
+    verificationStage=20;struct stat st;if(!SCPrivate(lease,NO) || fstat(lease,&st) || st.st_size || flock(lease,LOCK_SH|LOCK_NB) || !SCIdentityShape(folder))goto finish;
+    verificationStage=21;if(fresh) {if(cancel && cancel())goto finish;
         if(renameatx_np(root,stageName.UTF8String,root,identityHash.UTF8String,RENAME_EXCL))goto finish;
         stageName=nil;published=YES;if(fsync(root))goto finish;
     }
@@ -358,7 +359,11 @@ finish:
     if(stage>=0 && stageName){uint64_t bytes=0,count=0;(void)SCWalk(stage,0,&bytes,&count,YES,YES,nil);}if(stage>=0)close(stage);
     if(stageName && root>=0)(void)unlinkat(root,stageName.UTF8String,AT_REMOVEDIR);
     if(input>=0)close(input);if(lock>=0)close(lock);if(root>=0)close(root);
-    if(!result && error)*error=SCError(!published && cancel && cancel() ? 2:1);return result;
+    if(!result && error) {
+        NSError *base=SCError(!published && cancel && cancel() ? 2:1);
+        NSMutableDictionary *info=[base.userInfo mutableCopy];info[@"verificationStage"]=@(verificationStage);
+        *error=[NSError errorWithDomain:base.domain code:base.code userInfo:info];
+    }return result;
 }
 /* Storage controls validate the class-owned identity receipt before walking.
  * No actual device details or caller/source paths appear in returned metrics. */
