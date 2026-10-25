@@ -107,6 +107,7 @@ int runtime_ios_fps_limit_supported(unsigned fps);
 int runtime_ios_taa_supported(void);
 void runtime_ios_set_taa_enabled(int enabled);
 int runtime_ios_taa_enabled(void);
+void runtime_ios_set_thermal_hud_visible(int visible);
 void runtime_shortcut_help_toggle(void);
 int fps_overlay_toggle_hints(void);   /* key 1: all -> minimal (FPS only) -> off; returns the new mode, 0 = off */
 int fps_overlay_hud_mode(void);

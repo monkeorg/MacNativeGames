@@ -374,6 +374,9 @@ final class DeviceLauncherUI: XCTestCase {
         let frames = expectation(description: "Allow the game renderer to present frames")
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) { frames.fulfill() }
         wait(for: [frames], timeout: 35)
+        let thermal = app.staticTexts["TOTKThermalHUD"]
+        XCTAssertTrue(thermal.waitForExistence(timeout: 10))
+        XCTAssertTrue(["Nominal", "Fair", "Serious", "Critical"].contains(thermal.value as? String ?? ""))
         record("Game after Play with native HUD enabled")
     }
 
@@ -448,11 +451,13 @@ final class DeviceLauncherUI: XCTestCase {
         choose("On", for: "Apple Metal HUD")
         choose("Off", for: "Apple Metal HUD")
         closeGameMenu()
+        XCTAssertFalse(app.staticTexts["TOTKThermalHUD"].exists)
         record("Native HUD disabled live")
         openGameMenu()
         XCTAssertEqual(cell("Apple Metal HUD").value as? String, "Off")
         choose("On", for: "Apple Metal HUD")
         closeGameMenu()
+        XCTAssertTrue(app.staticTexts["TOTKThermalHUD"].waitForExistence(timeout: 5))
         record("Native HUD enabled live")
         openGameMenu()
         XCTAssertEqual(cell("Performance overlay").value as? String, "Off")

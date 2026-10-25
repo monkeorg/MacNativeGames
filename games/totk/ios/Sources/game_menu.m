@@ -180,6 +180,7 @@
     BOOL enabled = TOTKLauncherMetalHUD(defaults);
     [defaults setBool:enabled forKey:@"MetalHUDForceEnabled"];
     [self applyMetalHUD:enabled toView:self.parentViewController.view];
+    runtime_ios_set_thermal_hud_visible(enabled || fps_overlay_full_hud());
     runtime_ios_set_fps_limit((unsigned)TOTKLauncherFPSLimit(defaults));
     runtime_ios_set_taa_enabled(TOTKLauncherTAA(defaults));
     TOTKTouchPad *pad = TOTKSetTouchControlsVisible(self.parentViewController.view,TOTKLauncherTouch(defaults));
