@@ -14,6 +14,7 @@
 #import "CanopyGameProfiles.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include "mng_preparation_selection.h"
+#include "mng_prepare.h"
 
 static UITableViewCell *GamesCell(UITableView *table, NSString *title, NSString *detail) {
     UITableViewCell *cell = [table dequeueReusableCellWithIdentifier:@"value"];
@@ -36,6 +37,19 @@ static NSString *GamesDisplayName(NSDictionary *entry, CanopySettings *settings)
 }
 static NSString *GamesVersion(NSDictionary *entry) {
     return CanopyGameVersionLabel(entry[@"titleID"], [entry[@"titleVersion"] unsignedIntValue], [entry[@"versionIdentified"] boolValue]);
+}
+// Closed native phase labels only: never speak provider paths, keys, job IDs,
+// arbitrary progress text or raw error descriptions.
+static NSString *PreparationAnnouncement(NSString *phase) {
+    if([@[@"hash-source",@"hash-base-source",@"hash-update-source",@"fingerprint-folder-members"] containsObject:phase])
+        return @"Preparation: checking source files.";
+    if([phase isEqual:@"hash-content-nca"] || [phase isEqual:@"verify-metadata"])
+        return @"Preparation: checking content integrity.";
+    if([@[@"verify-exefs",@"verify-base-exefs"] containsObject:phase])return @"Preparation: verifying executable assets.";
+    if([@[@"verify-ivfc",@"validate-romfs-structure"] containsObject:phase])return @"Preparation: verifying filesystem assets.";
+    if([@[@"write-private-asset",@"copy-plaintext-assets"] containsObject:phase])return @"Preparation: writing private assets.";
+    if([phase isEqual:@"verify-and-publish"])return @"Preparation: verifying and publishing the generation.";
+    return nil;
 }
 static NSString *PreparationIOSummary(NSDictionary *metrics) {
     if(![metrics isKindOfClass:NSDictionary.class] || ![metrics[@"scope"] isEqual:@"logicalPayloadIO"])return nil;
@@ -792,7 +806,9 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     NSArray *_entries, *_issues;
     NSString *_status, *_metadataError, *_progressText;
     BOOL _refreshing, _cancelRequested;
-    NSUInteger _scanToken;
+    NSUInteger _scanToken, _preparationAnnouncementEpoch;
+    NSMutableSet<NSString *> *_announcedPreparationPhases;
+    BOOL _preparationAnnouncementsActive, _preparationScreenVisible;
     struct mng_preparation_selection _selection;
     CanopyGameDetails *_selectionOrigin;
     dispatch_queue_t _catalogQueue;
@@ -820,6 +836,13 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
         owner->_observedPhase=phase; owner->_phaseDone=done; owner->_phaseTotal=total;
         owner->_progressText = [NSString stringWithFormat:@"%@ • %llu / %llu",phase,(unsigned long long)done,(unsigned long long)total];
         [owner refreshUI];
+        if(changed && owner->_preparationAnnouncementsActive && owner->_preparation.busy) {
+            NSString *announcement=PreparationAnnouncement(phase);
+            // Each human phase is spoken at most once per attempt, even when
+            // native per-asset phases alternate repeatedly. Never per-byte.
+            if(announcement && ![owner->_announcedPreparationPhases containsObject:announcement] &&
+               [owner announcePreparation:announcement]) [owner->_announcedPreparationPhases addObject:announcement];
+        }
         if(changed && owner->_diagnostics.enabled)(void)[[owner diagnosticSources] snapshotWithDiagnostics:owner->_diagnostics recordIfEnabled:YES];
     };
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(background:) name:UIApplicationDidEnterBackgroundNotification object:nil];
@@ -829,6 +852,15 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated]; (void)[_controllers setFocused:NO];
     if (_settings && !_selection.stage) [self reloadCatalog];
+}
+- (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated];_preparationScreenVisible=YES; }
+- (void)viewWillDisappear:(BOOL)animated { _preparationScreenVisible=NO;[super viewWillDisappear:animated]; }
+- (BOOL)announcePreparation:(NSString *)message {
+    if(!NSThread.isMainThread || !_preparationScreenVisible || !UIAccessibilityIsVoiceOverRunning() ||
+       self.navigationController.topViewController!=self || self.presentedViewController || !self.viewIfLoaded.window.isKeyWindow ||
+       UIApplication.sharedApplication.applicationState!=UIApplicationStateActive ||
+       self.viewIfLoaded.window.windowScene.activationState!=UISceneActivationStateForegroundActive)return NO;
+    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,message);return YES;
 }
 - (BOOL)working { return _refreshing || _preparation.busy || _selection.stage != MNG_SELECT_IDLE; }
 - (void)refreshUI {
@@ -1091,7 +1123,17 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     NSString *reuseTitle=request.reuse_title[0] ? [NSString stringWithUTF8String:request.reuse_title] : nil;
     NSString *reuseGeneration=request.reuse_generation[0] ? [NSString stringWithUTF8String:request.reuse_generation] : nil;
     _cancelRequested=NO;_progressText=nil;_status=nil;
+    _preparationAnnouncementEpoch=epoch;_preparationAnnouncementsActive=YES;
+    _announcedPreparationPhases=[NSMutableSet set];
     void (^completion)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable)=^(NSDictionary *result,NSError *error){
+        if(self->_preparationAnnouncementsActive && self->_preparationAnnouncementEpoch==epoch) {
+            self->_preparationAnnouncementsActive=NO;
+            NSString *announcement=result ? @"Preparation published assets. The library will verify the current generation. This does not establish game compatibility." :
+                [error.domain isEqual:@"CanopyPreparation"] && error.code==MNG_PREPARE_CANCELLED ?
+                @"Preparation cancellation completed. Check the library and retained work before resuming." :
+                @"Preparation ended without a published result. The library will reload to check the current generation.";
+            (void)[self announcePreparation:announcement];
+        }
         self->_cancelRequested=NO;self->_progressText=nil;
         self->_lastPreparationResult=[result copy];self->_lastPreparationError=error;
         if(self->_diagnostics.enabled)(void)[[self diagnosticSources] snapshotWithDiagnostics:self->_diagnostics recordIfEnabled:YES];
@@ -1105,12 +1147,17 @@ static UIViewController *MakePlayersController(CanopyControllers *controllers) {
     BOOL accepted=mode>=MNG_SELECT_NCA_FOLDER ? [_preparation startFolderURL:source keysURL:keys jobIdentifier:job completion:completion] :
         [_preparation startSourceURL:source updateURL:update keysURL:keys reuseTitleID:reuseTitle reuseGenerationID:reuseGeneration jobIdentifier:job completion:completion];
     if(accepted){_observedPhase=nil;_phaseDone=0;_phaseTotal=0;_lastPreparationError=nil;_lastPreparationResult=nil;}
-    else _status=@"The job could not start. Its retained data is unchanged; select it in Storage and reselect inputs.";
+    else {
+        _preparationAnnouncementsActive=NO;
+        _status=@"The job could not start. Its retained data is unchanged; select it in Storage and reselect inputs.";
+        (void)[self announcePreparation:@"Preparation could not start. Reselect the retained work and local inputs."];
+    }
     [self refreshUI];
 }
 - (void)cancelPreparation {
     if (!_preparation.busy || _cancelRequested) return;
     _cancelRequested = YES; [_preparation cancel];
+    (void)[self announcePreparation:@"Preparation cancellation requested. Waiting for the authoritative result; publication may already have completed."];
     _status = @"Cancellation requested. Waiting for the provider and preparation worker to finish; publication may already have completed.";
     [self refreshUI];
 }
