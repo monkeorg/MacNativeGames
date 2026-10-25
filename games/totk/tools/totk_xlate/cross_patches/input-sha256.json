@@ -410,6 +410,20 @@
       },
       "patch": "0036-msl-type-alignment-depth-work.patch",
       "sha256": "cbbc07e382088a2f3c1d8e8ce526e0f8a67bee27ed44999a9e44b4b1cbc0b45c"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "af77d05b7582cc8229bfccb8f8b0fb1816e0fa4fd403913c534da475fa0073d4",
+        "spirv_cross_parsed_ir.cpp": "89f98c0bd29bab23e33326d57a706653f243f35563c5ac88ab9c4404b81fe7cc",
+        "spirv_cross_parsed_ir.hpp": "d0ba37a17b5b283accaafb3c811b04d0ac88ceb8de72abea169b55a8610a27a0"
+      },
+      "before": {
+        "spirv_cross.cpp": "8ee9516b6cce1fa51a4357efaca354cd9e7af2776c9417ebae52697a2c12a177",
+        "spirv_cross_parsed_ir.cpp": "791024217aa78f791492c15dffebcf9a337f3fc64b1dbf4e50ad016866fed3da",
+        "spirv_cross_parsed_ir.hpp": "a724e129d3d1ba8b0bda3ee48cbf7d19bcc5d380b280269f33e0396080b3d808"
+      },
+      "patch": "0037-shared-member-metadata-preparation.patch",
+      "sha256": "b1a0b22a72e6bb77e2dd0fd0bc6171136915280f1c767a43d50d919dc46d07ae"
     }
   ],
   "schemaVersion": 1
