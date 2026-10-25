@@ -712,7 +712,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self.tableView reloadData]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView;return section==3 ? (self.prepareUpdate ? 5:4) : section==2 ? 7 : section==0 ? 7 : section==1 ? 6:1;
+    (void)tableView;return section==3 ? (self.prepareUpdate ? 5:4) : section==2 ? 8 : section==0 ? 7 : section==1 ? 6:1;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section { (void)tableView; return @[@"Prepared assets",@"Graphics preferences",@"Control preferences",self.prepareUpdate ? @"Updates, saves & native session" : @"Saves & native session",@"Language"][(NSUInteger)section]; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -727,7 +727,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 }
 - (NSArray *)keysForSection:(NSInteger)section {
     if (section == 1) return @[@"fpsLimit",@"renderHeight",@"aspect",@"hud",@"metalHUD",@"taa"];
-    if (section == 2) return @[@"touch",@"controllerType",@"mouseSensitivity",@"mouseInvertY",@"buttonMappings",@"players",@"keyboardBindings"];
+    if (section == 2) return @[@"touch",@"controllerType",@"mouseSensitivity",@"mouseInvertY",@"buttonMappings",@"players",@"keyboardBindings",@"mouseEnabled"];
     return @[@"language"];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
@@ -769,7 +769,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
         else { cell.selectionStyle = UITableViewCellSelectionStyleNone; cell.textLabel.textColor = UIColor.secondaryLabelColor; }
         return cell;
     }
-    NSArray *titles = path.section == 1 ? @[@"Target frame rate",@"Render height",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD",@"Temporal anti-aliasing"] : path.section == 2 ? @[@"Touch controls",@"Controller layout",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Players & controllers",@"Keyboard bindings"] : @[@"Language"];
+    NSArray *titles = path.section == 1 ? @[@"Target frame rate",@"Render height",@"Aspect ratio",@"Performance overlay",@"Apple Metal HUD",@"Temporal anti-aliasing"] : path.section == 2 ? @[@"Touch controls",@"Controller layout",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Players & controllers",@"Keyboard bindings",@"Mouse input"] : @[@"Language"];
     NSString *key = [self keysForSection:path.section][(NSUInteger)path.row];
     NSError *error = nil; NSDictionary *values = [_settings settingsForTitleID:_entry[@"titleID"] error:&error];
     id value = values[key];
@@ -781,7 +781,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     if ([key isEqual:@"players"]) detail = @"Assign, unassign or swap connected controllers";
     else if (values && self.settingStates) detail = SettingApplicationDetail(key,value,self.settingStates);
     UITableViewCell *cell = GamesCell(tableView,titles[(NSUInteger)path.row],detail);
-    if (values && [@[@"touch",@"mouseInvertY",@"metalHUD",@"taa"] containsObject:key]) {
+    if (values && [@[@"touch",@"mouseInvertY",@"metalHUD",@"taa",@"mouseEnabled"] containsObject:key]) {
         UISwitch *toggle = [UISwitch new]; toggle.on = [value boolValue]; toggle.accessibilityIdentifier = key;
         toggle.accessibilityLabel = titles[(NSUInteger)path.row];
         toggle.accessibilityHint = self.settingStates ? SettingApplicationDetail(key,value,self.settingStates) : @"Saves this preference for this game. Runtime application is unverified.";
@@ -838,7 +838,7 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     NSError *error = nil; NSDictionary *values = [_settings settingsForTitleID:_entry[@"titleID"] error:&error];
     if (!values) { GamesAlert(self,@"Settings unavailable",error.localizedDescription); return; }
     NSString *key = [self keysForSection:path.section][(NSUInteger)path.row];
-    if ([@[@"touch",@"mouseInvertY",@"metalHUD",@"taa"] containsObject:key]) return;
+    if ([@[@"touch",@"mouseInvertY",@"metalHUD",@"taa",@"mouseEnabled"] containsObject:key]) return;
     if ([key isEqual:@"keyboardBindings"]) {
         CanopyKeyboardBindingsController *keyboard=[[CanopyKeyboardBindingsController alloc] initWithSettings:_settings titleID:_entry[@"titleID"]];
         keyboard.applySettings=self.applySettings;keyboard.settingStates=self.settingStates;

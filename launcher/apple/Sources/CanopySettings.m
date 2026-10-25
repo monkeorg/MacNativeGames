@@ -40,7 +40,7 @@ static BOOL KeyboardBindingsValid(id value) {
 }
 static BOOL ValidOption(NSString *key, id value) {
     if ([key isEqual:@"keyboardBindings"]) return KeyboardBindingsValid(value);
-    if ([@[@"metalHUD", @"taa", @"touch", @"mouseInvertY"] containsObject:key]) return IsBoolean(value);
+    if ([@[@"metalHUD", @"taa", @"touch", @"mouseInvertY", @"mouseEnabled"] containsObject:key]) return IsBoolean(value);
     if ([key isEqual:@"fpsLimit"]) return IsInteger(value, 30, 60) && [@[@30,@40,@60] containsObject:value];
     if ([key isEqual:@"renderHeight"]) return IsInteger(value, 720, 1080) && [@[@720,@1080] containsObject:value];
     if ([key isEqual:@"hud"]) return IsInteger(value, 0, 2);
@@ -72,7 +72,7 @@ static BOOL ValidSettings(id value) {
 + (NSDictionary *)defaults {
     return @{@"fpsLimit":@60, @"renderHeight":@720, @"aspect":@"16:9", @"hud":@1,
         @"metalHUD":@NO, @"taa":@NO, @"touch":@YES, @"mouseSensitivity":@50,
-        @"mouseInvertY":@NO, @"controllerType":@"auto", @"language":@"", @"buttonMappings":@{}, @"keyboardBindings":@{}};
+        @"mouseInvertY":@NO, @"mouseEnabled":@YES, @"controllerType":@"auto", @"language":@"", @"buttonMappings":@{}, @"keyboardBindings":@{}};
 }
 + (NSArray *)keyboardActions {
     NSMutableArray *actions = [NSMutableArray array];

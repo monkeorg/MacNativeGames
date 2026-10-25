@@ -8,6 +8,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithHostController:(UIViewController *)host hostView:(UIView *)view
                            controllers:(CanopyControllers *)controllers localPlayer:(unsigned)player;
 /// Validated title preferences. Returns actual per-key apply/effective outcomes.
+/// mouseEnabled defaults YES; disabling clears pending input, detaches owned
+/// mouse callbacks and withdraws pointer-lock requests without capturing keys.
 - (NSDictionary<NSString *,NSDictionary *> *)applySettings:(NSDictionary *)settings;
 /// Both transitions clear pending inputs and invalidate old hardware callbacks.
 - (void)setCaptured:(BOOL)captured;

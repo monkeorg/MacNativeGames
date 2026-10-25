@@ -47,14 +47,14 @@ static NSDictionary *Applied(id value,NSString *message) {
     id _keyboardHandler;
     uint64_t _epoch;
     unsigned _localPlayer;
-    BOOL _captured,_textEntry,_touchEnabled,_eligible,_rebuilding;
+    BOOL _captured,_textEntry,_touchEnabled,_mouseEnabled,_eligible,_rebuilding;
 }
 - (instancetype)initWithHostController:(UIViewController *)host hostView:(UIView *)view
                            controllers:(CanopyControllers *)controllers localPlayer:(unsigned)player {
     NSAssert(NSThread.isMainThread,@"Frontend input belongs on main thread");
     if(player>=MNG_PLAYER_COUNT)return nil;
     if((self=[super init])) {
-        _host=host;_hostView=view;_controllers=controllers;_localPlayer=player;_captured=YES;_epoch=1;
+        _host=host;_hostView=view;_controllers=controllers;_localPlayer=player;_captured=YES;_mouseEnabled=YES;_epoch=1;
         mng_keyboard_init(&_keyboard);_settings=CanopySettings.defaults;
         _mice=[NSMutableArray array];_observers=[NSMutableArray array];
         _touch=[[CanopyTouchPad alloc] initWithFrame:view.bounds];_touch.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
@@ -72,7 +72,7 @@ static NSDictionary *Applied(id value,NSString *message) {
     return self;
 }
 - (unsigned)localPlayer{return _localPlayer;}
-- (BOOL)hasLocalInput{return !_captured && (_touchEnabled || _attachedKeyboard || _mice.count);}
+- (BOOL)hasLocalInput{return !_captured && (_touchEnabled || _attachedKeyboard || (_mouseEnabled && _mice.count));}
 - (BOOL)eligible {
     UIWindow *window=_hostView.window;
     return !_captured && !_host.presentedViewController && !_textEntry && window.isKeyWindow &&
@@ -81,12 +81,12 @@ static NSDictionary *Applied(id value,NSString *message) {
 }
 - (TOTKMouseCapture)captureState {
     UIWindow *window=_hostView.window;
-    return (TOTKMouseCapture){.requested=!_captured && !_host.presentedViewController,.foreground=UIApplication.sharedApplication.applicationState==UIApplicationStateActive,
+    return (TOTKMouseCapture){.requested=_mouseEnabled && !_captured && !_host.presentedViewController,.foreground=UIApplication.sharedApplication.applicationState==UIApplicationStateActive,
         .text_entry=_textEntry||TextOwnsInput(window),.key_window=window.isKeyWindow,
         .active_scene=window.windowScene.activationState==UISceneActivationStateForegroundActive};
 }
-- (BOOL)wantsPointerLock { TOTKMouseCapture state=[self captureState];return _mice.count && totk_mouse_wants_capture(&state); }
-- (BOOL)acceptsMouseInput { return [self eligible] && _hostView.window.windowScene.pointerLockState.locked && _mice.count; }
+- (BOOL)wantsPointerLock { TOTKMouseCapture state=[self captureState];return _mouseEnabled && _mice.count && totk_mouse_wants_capture(&state); }
+- (BOOL)acceptsMouseInput { return _mouseEnabled && [self eligible] && _hostView.window.windowScene.pointerLockState.locked && _mice.count; }
 - (void)clearInput {
     mng_keyboard_clear(&_keyboard);[_touch cancelInput];
     for(CanopyMouseDevice *device in _mice)mng_pointer_clear(&device->pointer);
@@ -158,6 +158,7 @@ static NSDictionary *Applied(id value,NSString *message) {
     _keyboardHandler=[handler copy];_attachedKeyboard.keyboardInput.keyChangedHandler=handler;
     struct mng_input_mapping mapping;[self mapping:&mapping settings:_settings];
     for(GCMouse *mouse in GCMouse.mice) {
+        if(!_mouseEnabled)break; // Disabled sessions must not own global mouse handlers.
         if(_mice.count>=4)break;
         CanopyMouseDevice *device=[CanopyMouseDevice new];device.mouse=mouse;mng_pointer_init(&device->pointer);
         (void)mng_pointer_configure(&device->pointer,[_settings[@"mouseSensitivity"] intValue],[_settings[@"mouseInvertY"] boolValue],&mapping);
@@ -167,7 +168,7 @@ static NSDictionary *Applied(id value,NSString *message) {
             (void)input;CanopyInputController *owner=weakSelf;
             if(!owner || !NSThread.isMainThread || owner->_rebuilding || owner->_epoch!=epoch)return;
             [owner refreshGates];CanopyMouseDevice *current=weakDevice;
-            if(!current || owner->_rebuilding || owner->_epoch!=epoch)return;
+            if(!current || owner->_rebuilding || owner->_epoch!=epoch || ![owner acceptsMouseInput])return;
             (void)mng_pointer_motion(&current->pointer,dx,-dy);
         };
         device.motionHandler=[motion copy];mouse.mouseInput.mouseMovedHandler=motion;
@@ -178,7 +179,7 @@ static NSDictionary *Applied(id value,NSString *message) {
                 (void)button;(void)value;CanopyInputController *owner=weakSelf;
                 if(!owner || !NSThread.isMainThread || owner->_rebuilding || owner->_epoch!=epoch)return;
                 [owner refreshGates];CanopyMouseDevice *current=weakDevice;
-                if(!current || owner->_rebuilding || owner->_epoch!=epoch)return;
+                if(!current || owner->_rebuilding || owner->_epoch!=epoch || ![owner acceptsMouseInput])return;
                 (void)mng_pointer_button(&current->pointer,index,pressed,InputNow());
             };
             [handlers addObject:[pressedHandler copy]];((GCControllerButtonInput *)buttons[index]).pressedChangedHandler=pressedHandler;
@@ -204,11 +205,14 @@ static NSDictionary *Applied(id value,NSString *message) {
     NSError *error=nil;
     if(![self mapping:&mapping settings:settings] || !mng_keyboard_bindings_valid(bindings) ||
        ![_controllers applySettings:settings error:&error])return @{@"keyboardBindings":@{@"state":@"rejected",@"desiredValue":settings[@"keyboardBindings"] ?: @{},@"effectiveValue":_settings[@"keyboardBindings"],@"message":error.localizedDescription ?: @"Input configuration was rejected."}};
-    _settings=[settings copy];_touchEnabled=[settings[@"touch"] boolValue];
+    _settings=[settings copy];_touchEnabled=[settings[@"touch"] boolValue];_mouseEnabled=[settings[@"mouseEnabled"] boolValue];
     (void)mng_keyboard_set_bindings(&_keyboard,bindings);[self clearInput];_eligible=[self eligible];[self rebuildHardware];[self refreshGates];
     NSMutableDictionary *states=[NSMutableDictionary dictionary];
-    for(NSString *key in @[@"touch",@"mouseSensitivity",@"mouseInvertY",@"controllerType",@"buttonMappings",@"keyboardBindings"])
+    for(NSString *key in @[@"touch",@"mouseSensitivity",@"mouseInvertY",@"mouseEnabled",@"controllerType",@"buttonMappings",@"keyboardBindings"])
         states[key]=Applied(settings[key] ?: CanopySettings.defaults[key],@"Configured in this session's input frontend. Hardware availability and pointer-lock grant are checked for every event.");
+    states[@"mouseEnabled"]=Applied(@(_mouseEnabled),_mouseEnabled ?
+        @"Mouse input is enabled by this session's frontend policy. Motion and buttons still require active focus and an actual pointer-lock grant." :
+        @"Mouse input is disabled. Pending mouse state was cleared, owned mouse handlers detached and the pointer-lock request withdrawn. System lock transition is asynchronous.");
     return states;
 }
 - (BOOL)handlePress:(UIPress *)press down:(BOOL)down {
