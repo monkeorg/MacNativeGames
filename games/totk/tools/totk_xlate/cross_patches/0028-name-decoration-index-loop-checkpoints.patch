@@ -1,0 +1,72 @@
+--- a/spirv_glsl.cpp
++++ b/spirv_glsl.cpp
+@@ -2252,7 +2252,10 @@
+ 	{
+ 		Bitset combined_decoration;
+ 		for (uint32_t i = 0; i < ir.meta[type.self].members.size(); i++)
++		{
++			canopy_cross_budget::step();
+ 			combined_decoration.merge_or(combined_decoration_for_member(type, i));
++		}
+ 
+ 		// If our members have location decorations, we don't need to
+ 		// emit location decorations at the top as well (looks weird).
+@@ -3375,8 +3378,11 @@
+ 			m.alias = join("_", m.alias);
+ 
+ 		for (auto &memb : meta->members)
++		{
++			canopy_cross_budget::step();
+ 			if (keywords.find(memb.alias) != end(keywords))
+ 				memb.alias = join("_", memb.alias);
++		}
+ 	});
+ }
+ 
+@@ -17337,7 +17343,10 @@
+ 		{
+ 			set_decoration(var.self, promoted_decoration);
+ 			for (uint32_t i = 0; i < member_count; i++)
++			{
++				canopy_cross_budget::step();
+ 				unset_member_decoration(type.self, i, promoted_decoration);
++			}
+ 		}
+ 	}
+ }
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -17495,8 +17495,11 @@
+ 			return;
+ 
+ 		for (auto &mbr_dec : meta->members)
++		{
++			canopy_cross_budget::step();
+ 			if (keywords.find(mbr_dec.alias) != end(keywords))
+ 				mbr_dec.alias += "0";
++		}
+ 	});
+ 
+ 	CompilerGLSL::replace_illegal_names();
+@@ -17524,7 +17527,10 @@
+ void CompilerMSL::sync_entry_point_aliases_and_names()
+ {
+ 	for (auto &entry : ir.entry_points)
++	{
++		canopy_cross_budget::step();
+ 		entry.second.name = ir.meta[entry.first].decoration.alias;
++	}
+ }
+ 
+ string CompilerMSL::to_member_reference(uint32_t base, const SPIRType &type, uint32_t index, bool ptr_chain_is_resolved)
+@@ -20195,7 +20201,10 @@
+ 	{
+ 		type.member_type_index_redirection.resize(mbr_cnt);
+ 		for (uint32_t map_idx = 0; map_idx < mbr_cnt; map_idx++)
++		{
++			canopy_cross_budget::step();
+ 			type.member_type_index_redirection[mbr_idxs[map_idx]] = map_idx;
++		}
+ 	}
+ }
+ 

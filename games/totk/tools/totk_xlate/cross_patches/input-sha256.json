@@ -310,6 +310,18 @@
       },
       "patch": "0027-resource-binding-arithmetic-bounds.patch",
       "sha256": "2ba497c1763cea8fd293e0750f97044daf65553e93d1050b0f04f34b99ad9864"
+    },
+    {
+      "after": {
+        "spirv_glsl.cpp": "1f0cc56c5ab28616f1ba3befd55cd41fcc19dbde1a3fe5ee8f35fe92d4d3134e",
+        "spirv_msl.cpp": "e6c1ee0499468b1d84289be8d17247eccc3beeeea61861a9b3fe3be82d9976b9"
+      },
+      "before": {
+        "spirv_glsl.cpp": "2e3a9e1f71c7842bf590759e605fb46a33425656049897edc711930126b3f4fd",
+        "spirv_msl.cpp": "6267dd4f6af544eff5445b64f89414be0a30b4a80572045dfc13708b79fa8b84"
+      },
+      "patch": "0028-name-decoration-index-loop-checkpoints.patch",
+      "sha256": "9b72d63d3ebcca55dc141a85c9d1b039c465032e0087e6b4beb06551b92d952c"
     }
   ],
   "schemaVersion": 1
