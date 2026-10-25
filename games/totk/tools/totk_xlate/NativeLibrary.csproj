@@ -10,6 +10,10 @@
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>CanopyShaderNative</AssemblyName>
     <DefineConstants Condition="'$(NativeLib)' == 'Static'">$(DefineConstants);CANOPY_STATIC</DefineConstants>
+    <!-- Plain net10 library, not an iOS workload app. Public NativeAOT iOS
+         runtime packs are selected explicitly; no JIT/Mono fallback. -->
+    <PublishAotUsingRuntimePack Condition="$(RuntimeIdentifier.StartsWith('ios'))">true</PublishAotUsingRuntimePack>
+    <AppleMinOSVersion Condition="$(RuntimeIdentifier.StartsWith('ios'))">16.0</AppleMinOSVersion>
     <RyuSrc Condition="'$(RyuSrc)' == ''">$(MSBuildThisFileDirectory)../../../../vendor/ryujinx</RyuSrc>
   </PropertyGroup>
   <ItemGroup>
@@ -18,4 +22,13 @@
     <ProjectReference Include="$(RyuSrc)/src/Ryujinx.Graphics.Shader/Ryujinx.Graphics.Shader.csproj" />
     <ProjectReference Include="$(RyuSrc)/src/Ryujinx.Common/Ryujinx.Common.csproj" />
   </ItemGroup>
+  <!-- A static NativeAOT archive contains the compiled managed object, NOT
+       its runtime archives. Record the actual SDK's dependency/link choices
+       for the native consumer instead of guessing platform libraries. -->
+  <Target Name="CanopyWriteNativeLinkPlan" AfterTargets="LinkNative"
+          Condition="'$(NativeLib)' == 'Static' and '$(CanopyLinkPlan)' != ''">
+    <WriteLinesToFile File="$(CanopyLinkPlan)" Lines="@(LinkerArg)" Overwrite="true" Encoding="utf-8" />
+    <WriteLinesToFile File="$(CanopyLinkPlan).properties" Overwrite="true" Encoding="utf-8"
+      Lines="NETCoreSdkVersion=$(NETCoreSdkVersion);RuntimeIdentifier=$(RuntimeIdentifier);TargetFramework=$(TargetFramework);PublishAotUsingRuntimePack=$(PublishAotUsingRuntimePack);AppleMinOSVersion=$(AppleMinOSVersion);IlcHostPackagePath=$(IlcHostPackagePath);IlcFrameworkNativePath=$(IlcFrameworkNativePath)" />
+  </Target>
 </Project>

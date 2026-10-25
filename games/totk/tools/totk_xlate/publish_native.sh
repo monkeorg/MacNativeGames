@@ -15,7 +15,7 @@ trap 'rm -rf "$WORK"' EXIT INT TERM HUP
 mkdir -p "$WORK/ryujinx-src" "$WORK/xlate"
 cp -R "$REPO/vendor/ryujinx/." "$WORK/ryujinx-src/"
 find "$WORK/ryujinx-src/src" -maxdepth 2 \( -name obj -o -name bin \) -type d -exec rm -rf {} +
-for p in "$HERE"/patches/*.patch; do patch -s -d "$WORK/ryujinx-src" -p1 --forward < "$p"; done
+python3 "$HERE/checked_patches.py" "$WORK/ryujinx-src" "$HERE/patches"
 cp "$HERE"/*.cs "$HERE"/totk_xlate.csproj "$WORK/xlate/"
 "$DOTNET" publish "$WORK/xlate/totk_xlate.csproj" -c Release -r osx-arm64 -p:PublishAot=true -p:InvariantGlobalization=true \
   -p:RyuSrc="$WORK/ryujinx-src" -o "$WORK/out"

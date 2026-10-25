@@ -16,6 +16,23 @@ struct task {const unsigned char *code,*request;size_t cn,rn;int status;};
 static pthread_mutex_t mutex=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t condition=PTHREAD_COND_INITIALIZER;
 static int ready,go;
+static int cancel_now(void *context) { unsigned *calls=context;(*calls)++;return 1; }
+struct delayed_cancel {unsigned calls,limit;};
+static int cancel_later(void *context) {
+    struct delayed_cancel *state=context;return ++state->calls>=state->limit;
+}
+static int first_cancel(unsigned char *code,size_t cn,unsigned char *request,size_t rn,unsigned limit) {
+    unsigned char *output=malloc(16u<<20);if(!output)return 30;
+    memset(output,0x5a,16u<<20);size_t length=99;
+    struct delayed_cancel cancel={0,limit};
+    struct canopy_shader_control control={0};control.version=1;control.size=sizeof(control);control.cancel=cancel_later;control.context=&cancel;
+    int status=canopy_shader_translate_controlled(code,cn,request,rn,output,16u<<20,&length,&control);
+    if(status!=6 || length || cancel.calls!=limit || output[0]!=0x5a){free(output);return 31;}
+    // A canceled first use must not poison managed static tables or retain a
+    // broken compiler pool. This is an actual full-translator call, not a mock.
+    status=canopy_shader_translate(code,cn,request,rn,output,16u<<20,&length);
+    free(output);if(status || !length)return 32;puts("{\"status\":0}");return 0;
+}
 static void *thread_call(void *context) {
     struct task *task=context;unsigned char *output=malloc(16u<<20);size_t n=0;
     pthread_mutex_lock(&mutex);ready++;pthread_cond_broadcast(&condition);
@@ -30,6 +47,22 @@ static int self_test(unsigned char *code,size_t cn,unsigned char *request,size_t
     if(canopy_shader_translate(code,cn,request,rn,&sentinel,1,&n)!=2 || n<=1 || sentinel!=0x5a)return 11;
     const unsigned char malformed[]="{";
     if(canopy_shader_translate(code,cn,malformed,1,&sentinel,1,&n)!=1 || n || sentinel!=0x5a)return 12;
+    struct canopy_shader_control control={0};control.version=1;control.size=sizeof(control);
+    unsigned calls=0;control.cancel=cancel_now;control.context=&calls;
+    if(canopy_shader_translate_controlled(code,cn,request,rn,&sentinel,1,&n,&control)!=6 || n || sentinel!=0x5a || !calls)return 15;
+    control.cancel=NULL;control.context=NULL;control.max_work=1;
+    if(canopy_shader_translate_controlled(code,cn,request,rn,&sentinel,1,&n,&control)!=5 || n || sentinel!=0x5a)return 16;
+    control.max_work=0;control.reserved=1;
+    if(canopy_shader_translate_controlled(code,cn,request,rn,&sentinel,1,&n,&control)!=1 || n || sentinel!=0x5a)return 17;
+    control.reserved=0;control.version=2;
+    if(canopy_shader_translate_controlled(code,cn,request,rn,&sentinel,1,&n,&control)!=1)return 18;
+    control.version=1;control.size--;
+    if(canopy_shader_translate_controlled(code,cn,request,rn,&sentinel,1,&n,&control)!=1)return 19;
+    control.size=sizeof(control);control.max_nodes=262145;
+    if(canopy_shader_translate_controlled(code,cn,request,rn,&sentinel,1,&n,&control)!=1)return 20;
+    const unsigned char graphics_request[]="{\"variant\":\"0000000000000000000000000000000000000000000000000000000000000000-000000000000\",\"stage\":\"vs\",\"chain\":\"original\"}";
+    unsigned char graphics[0x60]={0};graphics[1]=20; /* SPH Fragment5, rq Vertex1 */
+    if(canopy_shader_translate(graphics,sizeof(graphics),graphics_request,sizeof(graphics_request)-1,&sentinel,1,&n)!=1 || n || sentinel!=0x5a)return 21;
     struct task tasks[2]={{code,request,cn,rn,0},{code,request,cn,rn,0}};pthread_t threads[2];
     if(pthread_create(&threads[0],NULL,thread_call,&tasks[0]))return 13;
     if(pthread_create(&threads[1],NULL,thread_call,&tasks[1])){
@@ -47,8 +80,9 @@ static int self_test(unsigned char *code,size_t cn,unsigned char *request,size_t
 }
 int main(int argc,char **argv) {
     if(argc!=4 || canopy_shader_abi_version()!=1)return 2;
-    int self=!strcmp(argv[1],"--self-test");
-    size_t cn=0,rn=0,n=0;unsigned char *code=load(argv[self?2:1],&cn),*request=load(argv[self?3:2],&rn);
+    int self=!strcmp(argv[1],"--self-test"),first=!strncmp(argv[1],"--first-cancel=",15),mode=self||first;
+    size_t cn=0,rn=0,n=0;unsigned char *code=load(argv[mode?2:1],&cn),*request=load(argv[mode?3:2],&rn);
+    if(first){int status=code && request ? first_cancel(code,cn,request,rn,(unsigned)strtoul(argv[1]+15,NULL,10)):2;free(code);free(request);return status;}
     if(self){int status=code && request ? self_test(code,cn,request,rn):2;free(code);free(request);return status;}
     unsigned char *output=malloc(16u<<20);int status=1;
     if(code && request && output)status=canopy_shader_translate(code,cn,request,rn,output,16u<<20,&n);

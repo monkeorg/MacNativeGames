@@ -1,0 +1,3047 @@
+--- /dev/null
++++ b/src/Ryujinx.Common/Utilities/CanopyTranslationGuard.cs
+@@ -0,0 +1,26 @@
++using System;
++namespace Ryujinx.Common.Utilities
++{
++    public sealed class CanopyBudgetExceededException : Exception { }
++    // Null for the original desktop CLI. Only the bounded NativeAOT request
++    // owner installs a thread-local callback and clears it in finally.
++    public static class CanopyTranslationGuard
++    {
++        [ThreadStatic] public static Action<ulong,ulong,ulong> Checkpoint;
++        [ThreadStatic] public static Action Cleanup;
++        [ThreadStatic] static int depth;
++        public static void Step(ulong work=1,ulong nodes=0,ulong bytes=0) => Checkpoint?.Invoke(work,nodes,bytes);
++        public static void ResetDepth() => depth=0;
++        public readonly struct Scope : IDisposable
++        {
++            readonly bool active;
++            internal Scope(bool value) { active=value; }
++            public void Dispose() { if(active)depth--; }
++        }
++        public static Scope Enter()
++        {
++            if(Checkpoint==null)return new Scope(false);
++            Step();if(++depth>256)throw new CanopyBudgetExceededException();return new Scope(true);
++        }
++    }
++}
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/CodeGenContext.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/CodeGenContext.cs
+@@ -96,6 +96,7 @@
+ 
+             for (int index = 0; index < level; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 indentationBuilder.Append(Tab);
+             }
+ 
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Declarations.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Declarations.cs
+@@ -208,6 +208,7 @@
+         {
+             foreach (AstOperand decl in function.Locals)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 string name = context.OperandManager.DeclareLocal(decl);
+ 
+                 context.AppendLine(GetVarTypeName(context, decl.VarType) + " " + name + ";");
+@@ -262,6 +263,7 @@
+         {
+             foreach (BufferDefinition buffer in buffers)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 string layout = buffer.Layout switch
+                 {
+                     BufferLayout.Std140 => "std140",
+@@ -280,6 +282,7 @@
+ 
+                 foreach (StructureField field in buffer.Type.Fields)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (field.Type.HasFlag(AggregateType.Array))
+                     {
+                         string typeName = GetVarTypeName(context, field.Type & ~AggregateType.Array);
+@@ -314,6 +317,7 @@
+ 
+             foreach (MemoryDefinition memory in memories)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 string typeName = GetVarTypeName(context, memory.Type & ~AggregateType.Array);
+ 
+                 if (memory.Type.HasFlag(AggregateType.Array))
+@@ -340,6 +344,7 @@
+         {
+             foreach (TextureDefinition definition in definitions)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 string arrayDecl = string.Empty;
+ 
+                 if (definition.ArrayLength > 1)
+@@ -368,6 +373,7 @@
+         {
+             foreach (TextureDefinition definition in definitions)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 string arrayDecl = string.Empty;
+ 
+                 if (definition.ArrayLength > 1)
+@@ -415,6 +421,7 @@
+             {
+                 foreach (IoDefinition ioDefinition in inputs.OrderBy(x => x.Location))
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     DeclareInputAttribute(context, ioDefinition.Location, ioDefinition.Component);
+                 }
+ 
+@@ -429,6 +436,7 @@
+         {
+             foreach (IoDefinition ioDefinition in inputs.OrderBy(x => x.Location))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 DeclareInputAttributePerPatch(context, ioDefinition.Location);
+             }
+ 
+@@ -519,6 +527,7 @@
+ 
+                 foreach (IoDefinition ioDefinition in outputs)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     DeclareOutputAttribute(context, ioDefinition.Location, ioDefinition.Component);
+                 }
+ 
+@@ -604,6 +613,7 @@
+         {
+             foreach (IoDefinition ioDefinition in outputs)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 DeclareOutputAttributePerPatch(context, ioDefinition.Location);
+             }
+ 
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/GlslGenerator.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/GlslGenerator.cs
+@@ -21,6 +21,7 @@
+             {
+                 for (int i = 1; i < info.Functions.Count; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     context.AppendLine($"{GetFunctionSignature(context, info.Functions[i])};");
+                 }
+ 
+@@ -28,6 +29,7 @@
+ 
+                 for (int i = 1; i < info.Functions.Count; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     PrintFunction(context, info.Functions[i]);
+ 
+                     context.AppendLine();
+@@ -59,11 +61,13 @@
+ 
+             for (int i = 0; i < function.InArguments.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 args[i] = $"{Declarations.GetVarTypeName(context, function.InArguments[i])} {OperandManager.GetArgumentName(i)}";
+             }
+ 
+             for (int i = 0; i < function.OutArguments.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int j = i + function.InArguments.Length;
+ 
+                 args[j] = $"out {Declarations.GetVarTypeName(context, function.OutArguments[i])} {OperandManager.GetArgumentName(j)}";
+@@ -118,6 +122,7 @@
+ 
+             foreach (IAstNode node in visitor.Visit())
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (node is AstOperation operation)
+                 {
+                     if (!supportsBarrierDivergence)
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGen.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGen.cs
+@@ -80,6 +80,7 @@
+ 
+                     for (int argIndex = operation.SourcesCount - arity + 2; argIndex < operation.SourcesCount; argIndex++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         builder.Append($", {GetSourceExpr(context, operation.GetSource(argIndex), dstType)}");
+                     }
+                 }
+@@ -87,6 +88,7 @@
+                 {
+                     for (int argIndex = 0; argIndex < arity; argIndex++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (argIndex != 0)
+                         {
+                             builder.Append(", ");
+@@ -116,6 +118,7 @@
+ 
+                 for (int index = 0; index < arity; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     IAstNode src = operation.GetSource(index);
+ 
+                     string srcExpr = GetSourceExpr(context, src, GetSrcVarType(inst, index));
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGenCall.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGenCall.cs
+@@ -20,6 +20,7 @@
+ 
+             for (int i = 0; i < args.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 args[i] = GetSourceExpr(context, operation.GetSource(i + 1), function.GetArgumentType(i));
+             }
+ 
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGenMemory.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Glsl/Instructions/InstGenMemory.cs
+@@ -70,6 +70,7 @@
+ 
+                 for (int index = 0; index < pCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     elems[index] = Src(AggregateType.S32);
+                 }
+ 
+@@ -88,6 +89,7 @@
+ 
+                 for (int index = 0; index < 4; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (srcIndex < texOp.SourcesCount)
+                     {
+                         cElems[index] = Src(type);
+@@ -175,6 +177,7 @@
+ 
+                 for (int index = 0; index < coordsCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     elems[index] = GetSourceExpr(context, texOp.GetSource(coordsIndex + index), AggregateType.FP32);
+                 }
+ 
+@@ -315,6 +318,7 @@
+ 
+                     for (int index = 0; index < count; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (arrayIndexElem == index)
+                         {
+                             elems[index] = Src(AggregateType.S32);
+@@ -354,6 +358,7 @@
+ 
+                     for (int index = 0; index < count; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         elems[index] = Src(AggregateType.FP32);
+                     }
+ 
+@@ -393,6 +398,7 @@
+ 
+                     for (int index = 0; index < count; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         elems[index] = Src(AggregateType.S32);
+                     }
+ 
+@@ -606,6 +612,7 @@
+ 
+             for (; srcIndex < inputsCount; srcIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 IAstNode src = operation.GetSource(srcIndex);
+ 
+                 if ((varType & AggregateType.ElementCountMask) != 0 &&
+@@ -689,6 +696,7 @@
+ 
+             for (int i = 0; i < 4; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if ((mask & (1 << i)) != 0)
+                 {
+                     swizzleBuilder.Append("xyzw"[i]);
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/CodeGenContext.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/CodeGenContext.cs
+@@ -65,6 +65,7 @@
+             {
+                 while (index >= _labels.Count)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     _labels.Add(context.Label());
+                 }
+ 
+@@ -196,6 +197,7 @@
+ 
+         public Instruction Get(AggregateType type, IAstNode node)
+         {
++            using var canopyDepth = Ryujinx.Common.Utilities.CanopyTranslationGuard.Enter();
+             if (node is AstOperation operation)
+             {
+                 OperationResult opResult = Instructions.Generate(this, operation);
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Declarations.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Declarations.cs
+@@ -22,6 +22,7 @@
+         {
+             foreach (AggregateType argType in argTypes)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 SpvInstruction argPointerType = context.TypePointer(StorageClass.Function, context.GetType(argType));
+                 SpvInstruction spvArg = context.FunctionParameter(argPointerType);
+ 
+@@ -33,6 +34,7 @@
+         {
+             foreach (AstOperand local in function.Locals)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 SpvInstruction localPointerType = context.TypePointer(StorageClass.Function, context.GetType(local.VarType));
+                 SpvInstruction spvLocal = context.Variable(localPointerType, StorageClass.Function);
+ 
+@@ -60,6 +62,7 @@
+         {
+             foreach ((int id, MemoryDefinition memory) in memories)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 SpvInstruction pointerType = context.TypePointer(storage, context.GetType(memory.Type, memory.ArrayLength));
+                 SpvInstruction variable = context.Variable(pointerType, storage);
+ 
+@@ -85,6 +88,7 @@
+ 
+             foreach (BufferDefinition buffer in buffers)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int setIndex = context.TargetApi == TargetApi.Vulkan ? buffer.Set : 0;
+                 int alignment = buffer.Layout == BufferLayout.Std140 ? 16 : 4;
+                 int alignmentMask = alignment - 1;
+@@ -95,6 +99,7 @@
+ 
+                 for (int fieldIndex = 0; fieldIndex < buffer.Type.Fields.Length; fieldIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     StructureField field = buffer.Type.Fields[fieldIndex];
+                     int fieldSize = (field.Type.GetSizeInBytes() + alignmentMask) & ~alignmentMask;
+ 
+@@ -131,6 +136,7 @@
+ 
+                     for (int fieldIndex = 0; fieldIndex < structFieldOffsets.Length; fieldIndex++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         context.MemberDecorate(structType, fieldIndex, Decoration.Offset, (LiteralInteger)structFieldOffsets[fieldIndex]);
+                     }
+                 }
+@@ -158,6 +164,7 @@
+         {
+             foreach (TextureDefinition sampler in samplers)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int setIndex = context.TargetApi == TargetApi.Vulkan ? sampler.Set : 0;
+ 
+                 SpvInstruction imageType;
+@@ -227,6 +234,7 @@
+         {
+             foreach (TextureDefinition image in images)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int setIndex = context.TargetApi == TargetApi.Vulkan ? image.Set : 0;
+ 
+                 Dim dim = GetDim(image.Type);
+@@ -340,6 +348,7 @@
+             {
+                 foreach (IoDefinition ioDefinition in info.IoDefinitions)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (ioDefinition.IoVariable == IoVariable.FragmentOutputColor && ioDefinition.Location < firstLocation)
+                     {
+                         firstLocation = ioDefinition.Location;
+@@ -349,6 +358,7 @@
+ 
+             foreach (IoDefinition ioDefinition in info.IoDefinitions)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 PixelImap iq = PixelImap.Unused;
+ 
+                 if (context.Definitions.Stage == ShaderStage.Fragment)
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Instructions.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Instructions.cs
+@@ -314,6 +314,7 @@
+ 
+             for (int i = 0; i < args.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 IAstNode operand = operation.GetSource(i + 1);
+ 
+                 AstOperand local = (AstOperand)operand;
+@@ -645,6 +646,7 @@
+ 
+                 for (int i = 0; i < pCount; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     elems[i] = Src(AggregateType.S32);
+                 }
+ 
+@@ -729,6 +731,7 @@
+ 
+                 for (int i = 0; i < pCount; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     elems[i] = Src(AggregateType.S32);
+                 }
+ 
+@@ -792,6 +795,7 @@
+ 
+                 for (int i = 0; i < pCount; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     elems[i] = Src(AggregateType.S32);
+                 }
+ 
+@@ -811,6 +815,7 @@
+ 
+             for (int i = 0; i < ComponentsCount; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (srcIndex < texOp.SourcesCount)
+                 {
+                     cElems[i] = Src(componentType);
+@@ -880,6 +885,7 @@
+ 
+                 for (int i = 0; i < pCount; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     elems[i] = Src(AggregateType.FP32);
+                 }
+ 
+@@ -928,6 +934,7 @@
+             AstBlock loopBlock = context.CurrentBlock;
+             while (loopBlock.Type != AstBlockType.DoWhile)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 loopBlock = loopBlock.Parent;
+             }
+ 
+@@ -941,6 +948,7 @@
+             AstBlock loopBlock = context.CurrentBlock;
+             while (loopBlock.Type != AstBlockType.DoWhile)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 loopBlock = loopBlock.Parent;
+             }
+ 
+@@ -1215,6 +1223,7 @@
+ 
+                     for (int index = 0; index < count; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (arrayIndexElem == index)
+                         {
+                             elems[index] = Src(AggregateType.S32);
+@@ -1250,7 +1259,8 @@
+                 if (pCount > 1)
+                 {
+                     SpvInstruction[] nfElems = new SpvInstruction[pCount];
+-                    for (int nfI = 0; nfI < pCount; nfI++) { nfElems[nfI] = nfZero; }
++                    for (int nfI = 0; nfI < pCount; nfI++) {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(); nfElems[nfI] = nfZero; }
+                     nfZero = context.ConstantComposite(nfType, nfElems);
+                 }
+ 
+@@ -1266,6 +1276,7 @@
+ 
+                     for (int index = 0; index < count; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         elems[index] = Src(AggregateType.FP32);
+                     }
+ 
+@@ -1316,6 +1327,7 @@
+ 
+                     for (int index = 0; index < count; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         elems[index] = Src(AggregateType.S32);
+                     }
+ 
+@@ -1836,6 +1848,7 @@
+ 
+                 for (; index < inputsCount + 1; srcIndex++, index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     indexes[index] = context.Get(AggregateType.S32, operation.GetSource(srcIndex));
+                 }
+ 
+@@ -1876,6 +1889,7 @@
+ 
+                     for (; index < inputsCount; srcIndex++, index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         indexes[index] = context.Get(AggregateType.S32, operation.GetSource(srcIndex));
+                     }
+ 
+@@ -1906,6 +1920,7 @@
+ 
+                 for (int i = 0; i < 4; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if ((mask & (1 << i)) != 0)
+                     {
+                         components[componentIndex++] = i;
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/SpirvGenerator.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/SpirvGenerator.cs
+@@ -124,6 +124,7 @@
+ 
+             for (int funcIndex = 0; funcIndex < info.Functions.Count; funcIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 StructuredFunction function = info.Functions[funcIndex];
+                 SpvInstruction retType = context.GetType(function.ReturnType);
+ 
+@@ -131,6 +132,7 @@
+ 
+                 for (int argIndex = 0; argIndex < funcArgs.Length; argIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     SpvInstruction argType = context.GetType(function.GetArgumentType(argIndex));
+                     SpvInstruction argPointerType = context.TypePointer(StorageClass.Function, argType);
+                     funcArgs[argIndex] = argPointerType;
+@@ -144,6 +146,7 @@
+ 
+             for (int funcIndex = 0; funcIndex < info.Functions.Count; funcIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Generate(context, info, funcIndex);
+             }
+ 
+@@ -396,6 +399,7 @@
+ 
+             foreach (IAstNode node in visitor.Visit())
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (node is AstAssignment assignment)
+                 {
+                     AstOperand dest = (AstOperand)assignment.Destination;
+--- a/src/Ryujinx.Graphics.Shader/Decoders/Block.cs
++++ b/src/Ryujinx.Graphics.Shader/Decoders/Block.cs
+@@ -43,6 +43,7 @@
+ 
+         public Block(ulong address)
+         {
++            Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,1,384);
+             Address = address;
+ 
+             Predecessors = [];
+@@ -85,6 +86,7 @@
+             // Update push consumers that points to this block.
+             foreach (SyncTarget syncTarget in SyncTargets.Values)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 PushOpInfo pushOpInfo = syncTarget.PushOpInfo;
+ 
+                 Operand local = pushOpInfo.Consumers[this];
+@@ -94,6 +96,7 @@
+ 
+             foreach ((ulong key, SyncTarget value) in SyncTargets)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 rightBlock.SyncTargets.Add(key, value);
+             }
+ 
+@@ -102,6 +105,7 @@
+             // Move push ops.
+             for (int i = 0; i < PushOpCodes.Count; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (PushOpCodes[i].Op.Address >= rightBlock.Address)
+                 {
+                     int count = PushOpCodes.Count - i;
+@@ -120,6 +124,7 @@
+ 
+             while (left <= right)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int size = right - left;
+ 
+                 middle = left + (size >> 1);
+--- a/src/Ryujinx.Graphics.Shader/Decoders/Decoder.cs
++++ b/src/Ryujinx.Graphics.Shader/Decoders/Decoder.cs
+@@ -66,6 +66,7 @@
+ 
+             while (functionsQueue.TryDequeue(out DecodedFunction currentFunction))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 List<Block> blocks = [];
+                 Queue<Block> workQueue = new();
+                 Dictionary<ulong, Block> visited = new();
+@@ -89,8 +90,10 @@
+ 
+                 do
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     while (workQueue.TryDequeue(out Block currBlock))
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         // Check if the current block is inside another block.
+                         if (BinarySearch(blocks, currBlock.Address, out int nBlkIndex))
+                         {
+@@ -134,6 +137,7 @@
+                             // including those from PBK/PCNT/SSY instructions.
+                             foreach (PushOpInfo pushOp in currBlock.PushOpCodes)
+                             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                                 GetBlock(pushOp.Op.GetAbsoluteAddress());
+                             }
+ 
+@@ -178,8 +182,10 @@
+                     // Propagate SSY/PBK addresses into their uses (SYNC/BRK).
+                     foreach (Block block in blocks.Where(x => x.PushOpCodes.Count != 0))
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         for (int pushOpIndex = 0; pushOpIndex < block.PushOpCodes.Count; pushOpIndex++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             PropagatePushOp(visited, block, pushOpIndex);
+                         }
+                     }
+@@ -215,6 +221,7 @@
+ 
+             while (left <= right)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int size = right - left;
+ 
+                 int middle = left + (size >> 1);
+@@ -257,6 +264,7 @@
+ 
+             do
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (address + 7 >= limitAddress)
+                 {
+                     break;
+@@ -388,6 +396,7 @@
+             {
+                 for (int elemIndex = 0; elemIndex < count; elemIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int attr = offset + elemIndex * 4;
+ 
+                     if (perPatch)
+@@ -521,6 +530,7 @@
+ 
+             foreach (Block block in blocks)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 InstOp lastOp = block.GetLastOp();
+                 bool hasNext = block.HasNext();
+ 
+@@ -542,6 +552,7 @@
+ 
+                     for (int i = 0; i < cbOffsetsCount; i++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         uint targetOffset = context.ConstantBuffer1Read(cbBaseOffset + i * 4);
+                         ulong targetAddress = baseOffset + targetOffset;
+ 
+@@ -648,9 +659,11 @@
+ 
+             while (toVisit.TryDequeue(out BlockLocation currentLocation))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Block block = currentLocation.Block;
+                 for (int i = currentLocation.Index - 1; i >= 0; i--)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (WritesToRegister(block.OpCodes[i], regIndex))
+                     {
+                         return new BlockLocation(block, i);
+@@ -659,6 +672,7 @@
+ 
+                 foreach (Block predecessor in block.Predecessors)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (visited.Add(predecessor))
+                     {
+                         toVisit.Enqueue(new BlockLocation(predecessor, predecessor.OpCodes.Count));
+@@ -744,6 +758,7 @@
+                 {
+                     while (branchStack.Count > (uint)_restoreValue)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         branchStack.Pop();
+                     }
+                 }
+@@ -780,6 +795,7 @@
+ 
+             while (workQueue.TryPop(out PathBlockState pbs))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (pbs.ReturningFromVisit)
+                 {
+                     pbs.RestoreStackState(branchStack);
+@@ -804,6 +820,7 @@
+ 
+                     for (int index = pushOpIndex; index < pushOpsCount; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         InstOp currentPushOp = current.PushOpCodes[index].Op;
+                         MergeType pushMergeType = GetMergeTypeFromPush(currentPushOp.Name);
+                         branchStack.Push((currentPushOp.GetAbsoluteAddress(), pushMergeType));
+@@ -829,6 +846,7 @@
+ 
+                     do
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (branchStack.Count == 0)
+                         {
+                             found = false;
+@@ -874,6 +892,7 @@
+                     // in order (of ascending address), since we work with a LIFO.
+                     foreach (Block possibleTarget in current.Successors.OrderByDescending(x => x.Address))
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (!hasNext || possibleTarget != current.Successors[0])
+                         {
+                             Push(new PathBlockState(possibleTarget));
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitAttribute.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitAttribute.cs
+@@ -33,6 +33,7 @@
+ 
+             for (int index = 0; index < (int)op.AlSize + 1; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Register rd = new(op.Dest + index, RegisterType.Gpr);
+ 
+                 if (rd.IsRZ)
+@@ -108,6 +109,7 @@
+ 
+             for (int index = 0; index < (int)op.AlSize + 1; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (op.SrcB + index > RegisterConsts.RegisterZeroIndex)
+                 {
+                     break;
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitFloatArithmetic.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitFloatArithmetic.cs
+@@ -493,6 +493,7 @@
+ 
+             for (int index = 0; index < res.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (isAdd)
+                 {
+                     res[index] = context.FPAdd(srcA[index], srcB[index]);
+@@ -521,6 +522,7 @@
+ 
+             for (int index = 0; index < res.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 res[index] = context.FPFusedMultiplyAdd(srcA[index], srcB[index], srcC[index]);
+                 res[index] = context.FPSaturate(res[index], saturate);
+             }
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitFlowControl.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitFlowControl.cs
+@@ -47,6 +47,7 @@
+ 
+             foreach (Block target in targets.OrderBy(x => x.Address))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (++count < total && (target.Predecessors.Count > 1 || target.Address <= context.CurrBlock.Address))
+                 {
+                     allTargetsSinglePred = false;
+@@ -71,6 +72,7 @@
+ 
+                 foreach (Block nextTarget in sortedTargets)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (currentTarget != null)
+                     {
+                         if (currentTarget.Address != nextTarget.Address)
+@@ -100,6 +102,7 @@
+ 
+                 foreach (Block target in sortedTargets)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand label = context.GetLabel(target.Address);
+ 
+                     if (++count < total)
+@@ -242,6 +245,7 @@
+ 
+             foreach (KeyValuePair<Block, Operand> kv in consumers)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Block consumerBlock = kv.Key;
+                 Operand local = kv.Value;
+ 
+@@ -266,6 +270,7 @@
+                 // TODO: Support CC here as well (condition).
+                 foreach (SyncTarget target in targets.Values)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     PushOpInfo pushOpInfo = target.PushOpInfo;
+ 
+                     Operand label = context.GetLabel(pushOpInfo.Op.GetAbsoluteAddress());
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitHelper.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitHelper.cs
+@@ -130,6 +130,7 @@
+         {
+             for (int index = 0; index < operands.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 operands[index] = context.FPAbsNeg(operands[index], abs, neg);
+             }
+ 
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+@@ -84,6 +84,7 @@
+ 
+             for (int index = 0; index < count; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Register dest = new(op.Dest + index, RegisterType.Gpr);
+ 
+                 if (dest.IsRZ)
+@@ -184,6 +185,7 @@
+ 
+                 while (cbUseMask != 0)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int cbIndex = BitOperations.TrailingZeroCount(cbUseMask);
+                     int binding = context.ResourceManager.GetConstantBufferBinding(cbIndex);
+ 
+@@ -335,6 +337,7 @@
+ 
+             for (int index = 0; index < count; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Register dest = new(rd + index, RegisterType.Gpr);
+ 
+                 if (dest.IsRZ)
+@@ -373,6 +376,7 @@
+ 
+             for (int index = 0; index < count; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Register dest = new(rd + index, RegisterType.Gpr);
+ 
+                 if (dest.IsRZ)
+@@ -416,6 +420,7 @@
+ 
+             for (int index = 0; index < count; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 bool isRz = rd + index >= RegisterConsts.RegisterZeroIndex;
+ 
+                 Operand value = Register(isRz ? rd : rd + index, RegisterType.Gpr);
+@@ -477,6 +482,7 @@
+ 
+             for (int index = 0; index < count; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 bool isRz = rd + index >= RegisterConsts.RegisterZeroIndex;
+ 
+                 Operand value = Register(isRz ? rd : rd + index, RegisterType.Gpr);
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMove.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMove.cs
+@@ -262,6 +262,7 @@
+ 
+             for (int bit = 0; bit < count; bit++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand flag = Register(bit, type);
+                 Operand res = context.ConditionalSelect(Test(mask, bit), Test(value, bit + shift), flag);
+                 context.Copy(flag, res);
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitPredicate.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitPredicate.cs
+@@ -98,6 +98,7 @@
+             Operand insert = Const(0);
+             for (int i = 0; i < count; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand condition = ccpr
+                     ? Register(i, RegisterType.Flag)
+                     : Register(i, RegisterType.Predicate);
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitSurface.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitSurface.cs
+@@ -232,6 +232,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Ra());
+             }
+ 
+@@ -339,6 +340,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Ra());
+             }
+ 
+@@ -374,6 +376,7 @@
+ 
+                 for (int i = 0; i < dests.Length; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (srcB + i >= RegisterConsts.RegisterZeroIndex)
+                     {
+                         break;
+@@ -417,6 +420,7 @@
+ 
+                 for (int i = 0; i < dests.Length; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (srcB + i >= RegisterConsts.RegisterZeroIndex)
+                     {
+                         break;
+@@ -511,6 +515,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Ra());
+             }
+ 
+@@ -616,6 +621,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Ra());
+             }
+ 
+@@ -638,6 +644,7 @@
+             {
+                 for (int compMask = (int)componentMask, compIndex = 0; compMask != 0; compMask >>= 1, compIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if ((compMask & 1) != 0)
+                     {
+                         sourcesList.Add(Rb());
+@@ -662,6 +669,7 @@
+ 
+                 for (int compIndex = 0; compIndex < components; compIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     sourcesList.Add(Rb());
+                 }
+ 
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitTexture.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitTexture.cs
+@@ -231,6 +231,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Ra());
+             }
+ 
+@@ -273,6 +274,7 @@
+             {
+                 for (int index = 0; index < coordsCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     sourcesList.Add(context.BitfieldExtractS32(packedOffs, Const(index * 4), Const(4)));
+                 }
+ 
+@@ -305,6 +307,7 @@
+ 
+             for (int i = 0; i < dests.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (rdIndex + i >= RegisterConsts.RegisterZeroIndex)
+                 {
+                     break;
+@@ -367,6 +370,7 @@
+ 
+                 for (int index = 0; index < coordsCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     sourcesList.Add(context.BitfieldExtractS32(packedOffs, Const(index * stride), Const(size)));
+                 }
+             }
+@@ -620,6 +624,7 @@
+ 
+             for (int i = 0; i < componentsCount; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int high = i >> 1;
+                 int low = i & 1;
+ 
+@@ -718,6 +723,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Ra());
+             }
+ 
+@@ -755,6 +761,7 @@
+ 
+                 for (int index = 0; index < coordsCount * offsetTexelsCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand packed = packedOffs[(index >> 2) & 1];
+ 
+                     sourcesList.Add(context.BitfieldExtractS32(packed, Const((index & 3) * 8), Const(6)));
+@@ -764,6 +771,7 @@
+                 {
+                     for (int index = 0; index < offsetTexelsCount; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         sourcesList.Add(Const(0));
+                     }
+                 }
+@@ -783,6 +791,7 @@
+ 
+             for (int i = 0; i < dests.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (dest + i >= RegisterConsts.RegisterZeroIndex)
+                 {
+                     break;
+@@ -859,6 +868,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Ra());
+             }
+ 
+@@ -896,6 +906,7 @@
+ 
+             for (int compMask = componentMask, compIndex = 0; compMask != 0; compMask >>= 1, compIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if ((compMask & 1) != 0)
+                 {
+                     Operand d = GetDest();
+@@ -959,6 +970,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Ra());
+             }
+ 
+@@ -987,6 +999,7 @@
+             // Derivatives (X and Y).
+             for (int dIndex = 0; dIndex < 2 * coordsCount; dIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sourcesList.Add(Rb());
+ 
+                 if (is1DTo2D)
+@@ -999,6 +1012,7 @@
+             {
+                 for (int index = 0; index < coordsCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     sourcesList.Add(context.BitfieldExtractS32(packedParams, Const(16 + index * 4), Const(4)));
+                 }
+ 
+@@ -1017,6 +1031,7 @@
+ 
+             for (int i = 0; i < dests.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (dest + i >= RegisterConsts.RegisterZeroIndex)
+                 {
+                     break;
+@@ -1134,6 +1149,7 @@
+ 
+                     for (int compMask = componentMask, compIndex = 0; compMask != 0; compMask >>= 1, compIndex++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if ((compMask & 1) != 0)
+                         {
+                             Operand d = GetDest();
+--- a/src/Ryujinx.Graphics.Shader/Instructions/Lop3Expression.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/Lop3Expression.cs
+@@ -35,6 +35,7 @@
+         {
+             for (int i = 0; i < 0x40; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 TruthTable currImm = (TruthTable)imm;
+ 
+                 Operand x = srcA;
+--- a/src/Ryujinx.Graphics.Shader/IntermediateRepresentation/BasicBlock.cs
++++ b/src/Ryujinx.Graphics.Shader/IntermediateRepresentation/BasicBlock.cs
+@@ -34,6 +34,7 @@
+ 
+         public BasicBlock()
+         {
++            Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,1,256);
+             Operations = [];
+ 
+             Predecessors = [];
+--- a/src/Ryujinx.Graphics.Shader/IntermediateRepresentation/Operand.cs
++++ b/src/Ryujinx.Graphics.Shader/IntermediateRepresentation/Operand.cs
+@@ -20,6 +20,7 @@
+ 
+         private Operand()
+         {
++            Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,1,128);
+             UseOps = [];
+         }
+ 
+--- a/src/Ryujinx.Graphics.Shader/IntermediateRepresentation/Operation.cs
++++ b/src/Ryujinx.Graphics.Shader/IntermediateRepresentation/Operation.cs
+@@ -46,11 +46,13 @@
+ 
+         private Operation(Operand[] sources)
+         {
++            Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,1,checked(128UL+(ulong)sources.Length*16));
+             // The array may be modified externally, so we store a copy.
+             _sources = (Operand[])sources.Clone();
+ 
+             for (int index = 0; index < _sources.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand source = _sources[index];
+ 
+                 if (source.Type == OperandType.LocalVariable)
+@@ -72,6 +74,7 @@
+ 
+                 for (int dstIndex = 0; dstIndex < dests.Length; dstIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand dest = dests[dstIndex];
+ 
+                     if (dest != null && dest.Type == OperandType.LocalVariable)
+@@ -132,6 +135,7 @@
+ 
+             for (int index = 0; index < operands.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand dest = operands[index];
+ 
+                 if (dest != null && dest.Type == OperandType.LocalVariable)
+@@ -152,6 +156,7 @@
+ 
+             for (int index = 0; index < operands.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand source = operands[index];
+ 
+                 if (source.Type == OperandType.LocalVariable)
+@@ -247,6 +252,7 @@
+ 
+             foreach (Operand oldSrc in _sources)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (oldSrc != null && oldSrc.Type == OperandType.LocalVariable)
+                 {
+                     oldSrc.UseOps.Remove(this);
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/AstBlockVisitor.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/AstBlockVisitor.cs
+@@ -33,9 +33,11 @@
+ 
+             while (node != null)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 // We reached a child block, visit the nodes inside.
+                 while (node is AstBlock childBlock)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Block = childBlock;
+ 
+                     node = childBlock.First;
+@@ -56,6 +58,7 @@
+                 // We reached the end of the list, go up on tree to the parent blocks.
+                 while (node == null && Block.Type != AstBlockType.Main)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BlockLeft?.Invoke(this, new BlockVisitationEventArgs(Block));
+ 
+                     node = Next(Block);
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/AstNode.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/AstNode.cs
+@@ -4,6 +4,7 @@
+ {
+     class AstNode : IAstNode
+     {
++        protected AstNode() { Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,1,128); }
+         public AstBlock Parent { get; set; }
+ 
+         public LinkedListNode<IAstNode> LLNode { get; set; }
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/AstOperation.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/AstOperation.cs
+@@ -20,6 +20,7 @@
+ 
+         public AstOperation(Instruction inst, StorageKind storageKind, bool forcePrecise, IAstNode[] sources, int sourcesCount)
+         {
++            Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,0,checked((ulong)sources.Length*16));
+             Inst = inst;
+             StorageKind = storageKind;
+             ForcePrecise = forcePrecise;
+@@ -27,6 +28,7 @@
+ 
+             for (int index = 0; index < sources.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (index < sourcesCount)
+                 {
+                     AddUse(sources[index], this);
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs
+@@ -20,6 +20,7 @@
+ 
+                 foreach (IAstNode node in visitor.Visit())
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (node is AstAssignment assignment && assignment.Destination is AstOperand propVar)
+                     {
+                         // TOTK (2026-10-16): an atomic / call / image atomic whose result is unused (Maxwell RED, ATOM with
+@@ -97,6 +98,7 @@
+ 
+             foreach (IAstNode useNode in uses)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (useNode is AstBlock useBlock)
+                 {
+                     useBlock.Condition = source;
+@@ -105,6 +107,7 @@
+                 {
+                     for (int srcIndex = 0; srcIndex < useOperation.SourcesCount; srcIndex++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (useOperation.GetSource(srcIndex) == propVar)
+                         {
+                             useOperation.SetSource(srcIndex, source);
+@@ -128,8 +131,10 @@
+ 
+             while (pending.TryDequeue(out AstBlock block))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 foreach (IAstNode node in block)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (node is AstBlock childBlock)
+                     {
+                         pending.Enqueue(childBlock);
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/GotoElimination.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/GotoElimination.cs
+@@ -13,6 +13,7 @@
+         {
+             for (int index = gotos.Length - 1; index >= 0; index--)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 GotoStatement stmt = gotos[index];
+ 
+                 AstBlock gBlock = ParentBlock(stmt.Goto);
+@@ -29,6 +30,7 @@
+ 
+                     do
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         drBlock = drBlock.Parent;
+ 
+                         drLevel--;
+@@ -124,6 +126,7 @@
+ 
+             while (blockLvl >= otherLvl)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (block == other)
+                 {
+                     return true;
+@@ -179,6 +182,7 @@
+ 
+             while (loopLevel > lLevel)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 AstBlock child = loopBlock;
+ 
+                 loopBlock = loopBlock.Parent;
+@@ -203,6 +207,7 @@
+ 
+             while (gLevel > lLevel)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Enclose(block, AstBlockType.If, stmt.Condition, Next(stmt.Goto));
+ 
+                 block.Remove(stmt.Goto);
+@@ -250,6 +255,7 @@
+ 
+             for (int index = path.Length - 1; index >= 0; index--)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 AstBlock child = path[index];
+                 AstBlock last = child;
+ 
+@@ -293,6 +299,7 @@
+         {
+             while (node is AstOperation operation && operation.SourcesCount == 2)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (operation.Inst == inst && IsSameCond(operation.GetSource(1), newCond))
+                 {
+                     return true;
+@@ -372,6 +379,7 @@
+ 
+             while (first != last)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 IAstNode next = Next(first);
+ 
+                 block.Remove(first);
+@@ -419,6 +427,7 @@
+ 
+             while (node is not AstBlock)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 node = node.Parent;
+             }
+ 
+@@ -433,6 +442,7 @@
+ 
+             while (block != top)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 path.Add(block);
+ 
+                 block = block.Parent;
+@@ -447,6 +457,7 @@
+ 
+             while (node != null)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 level++;
+ 
+                 node = node.Parent;
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/PhiFunctions.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/PhiFunctions.cs
+@@ -9,12 +9,14 @@
+         {
+             for (int blkIndex = 0; blkIndex < blocks.Length; blkIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 BasicBlock block = blocks[blkIndex];
+ 
+                 LinkedListNode<INode> node = block.Operations.First;
+ 
+                 while (node != null)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     LinkedListNode<INode> nextNode = node.Next;
+ 
+                     if (node.Value is not PhiNode phi)
+@@ -28,6 +30,7 @@
+ 
+                     for (int index = 0; index < phi.SourcesCount; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand src = phi.GetSource(index);
+                         BasicBlock srcBlock = phi.GetBlock(index);
+ 
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgram.cs
+@@ -24,6 +24,7 @@
+ 
+             for (int funcIndex = 0; funcIndex < functions.Count; funcIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Function function = functions[funcIndex];
+ 
+                 BasicBlock[] blocks = function.Blocks;
+@@ -35,11 +36,13 @@
+ 
+                 for (int i = 0; i < inArguments.Length; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     inArguments[i] = FuncParameterType;
+                 }
+ 
+                 for (int i = 0; i < outArguments.Length; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     outArguments[i] = FuncParameterType;
+                 }
+ 
+@@ -49,12 +52,14 @@
+ 
+                 for (int blkIndex = 0; blkIndex < blocks.Length; blkIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock block = blocks[blkIndex];
+ 
+                     context.EnterBlock(block);
+ 
+                     for (LinkedListNode<INode> opNode = block.Operations.First; opNode != null; opNode = opNode.Next)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operation operation = (Operation)opNode.Value;
+ 
+                         if (IsBranchInst(operation.Inst))
+@@ -136,6 +141,7 @@
+                 // Remaining ones are parameters, copy them to a temp local variable.
+                 for (int index = 1; index < operation.SourcesCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     IAstNode source = context.GetOperandOrCbLoad(operation.GetSource(index));
+ 
+                     if (index - 1 < inArgsCount)
+@@ -154,12 +160,14 @@
+             {
+                 for (int index = 0; index < operation.SourcesCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     sources[index] = context.GetOperandOrCbLoad(operation.GetSource(index));
+                 }
+             }
+ 
+             for (int index = 0; index < outDestsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 AstOperand oper = context.GetOperand(operation.GetDest(1 + index));
+ 
+                 oper.VarType = InstructionInfo.GetSrcVarType(inst, sourcesCount + index);
+@@ -231,6 +239,7 @@
+ 
+                 for (int i = 0; i < operation.DestsCount; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     AstOperand dest = context.GetOperand(operation.GetDest(i));
+                     AstOperand index = new(OperandType.Constant, i);
+ 
+@@ -364,8 +373,10 @@
+ 
+             while (pending.TryDequeue(out Operand operand))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 foreach (INode useNode in operand.UseOps)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (useNode is not Operation operation)
+                     {
+                         continue;
+@@ -389,6 +400,7 @@
+                     {
+                         for (int index = 0; index < operation.SourcesCount; index++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             if (operation.GetSource(index) == operand)
+                             {
+                                 return InstructionInfo.GetSrcVarType(operation.Inst, index);
+@@ -405,6 +417,7 @@
+         {
+             foreach (IAstNode node in sources)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (node is not AstOperand operand)
+                 {
+                     return false;
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgramContext.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/StructuredProgramContext.cs
+@@ -49,6 +49,7 @@
+                 int passthroughAttributes = attributeUsage.PassthroughAttributes;
+                 while (passthroughAttributes != 0)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int index = BitOperations.TrailingZeroCount(passthroughAttributes);
+ 
+                     Info.IoDefinitions.Add(new IoDefinition(StorageKind.Input, IoVariable.UserDefined, index));
+@@ -96,6 +97,7 @@
+         {
+             while (_currEndIndex == block.Index)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 (_currBlock, _currEndIndex, _loopEndIndex) = _blockStack.Pop();
+             }
+ 
+@@ -120,6 +122,7 @@
+ 
+             foreach (BasicBlock predecessor in block.Predecessors.OrderByDescending(x => x.Index))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 // If not a loop, break.
+                 if (predecessor.Index < block.Index)
+                 {
+--- a/src/Ryujinx.Graphics.Shader/Translation/AttributeUsage.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/AttributeUsage.cs
+@@ -71,6 +71,7 @@
+ 
+                 foreach (int attr in UsedOutputAttributesPerPatch)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int location = BitOperations.TrailingZeroCount(freeMask);
+                     if (location == 32)
+                     {
+@@ -135,6 +136,7 @@
+ 
+             while (useMask != -1)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 bit = BitOperations.TrailingZeroCount(~useMask);
+ 
+                 if (bit == 32)
+--- a/src/Ryujinx.Graphics.Shader/Translation/ControlFlowGraph.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/ControlFlowGraph.cs
+@@ -27,6 +27,7 @@
+ 
+             while (blockStack.TryPop(out BasicBlock block))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (block.Next != null && visited.Add(block.Next))
+                 {
+                     blockStack.Push(block);
+@@ -79,6 +80,7 @@
+ 
+             for (int index = 0; index < operations.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operation operation = operations[index];
+ 
+                 if (operation.Inst == Instruction.MarkLabel)
+@@ -134,10 +136,12 @@
+ 
+             do
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 hasUnreachable = false;
+ 
+                 for (int blkIndex = 1; blkIndex < blocks.Count; blkIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock block = blocks[blkIndex];
+ 
+                     if (block.Predecessors.Count == 0)
+--- a/src/Ryujinx.Graphics.Shader/Translation/Dominance.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Dominance.cs
+@@ -12,13 +12,16 @@
+             {
+                 while (block1 != block2)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     while (cfg.PostOrderMap[block1.Index] < cfg.PostOrderMap[block2.Index])
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         block1 = block1.ImmediateDominator;
+                     }
+ 
+                     while (cfg.PostOrderMap[block2.Index] < cfg.PostOrderMap[block1.Index])
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         block2 = block2.ImmediateDominator;
+                     }
+                 }
+@@ -32,16 +35,19 @@
+ 
+             do
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 modified = false;
+ 
+                 for (int blkIndex = cfg.PostOrderBlocks.Length - 2; blkIndex >= 0; blkIndex--)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock block = cfg.PostOrderBlocks[blkIndex];
+ 
+                     BasicBlock newIDom = null;
+ 
+                     foreach (BasicBlock predecessor in block.Predecessors)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (predecessor.ImmediateDominator != null)
+                         {
+                             if (newIDom != null)
+@@ -70,6 +76,7 @@
+         {
+             for (int blkIndex = 0; blkIndex < blocks.Length; blkIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 BasicBlock block = blocks[blkIndex];
+ 
+                 if (block.Predecessors.Count < 2)
+@@ -79,10 +86,12 @@
+ 
+                 for (int pBlkIndex = 0; pBlkIndex < block.Predecessors.Count; pBlkIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock current = block.Predecessors[pBlkIndex];
+ 
+                     while (current != block.ImmediateDominator)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         current.DominanceFrontiers.Add(block);
+ 
+                         current = current.ImmediateDominator;
+--- a/src/Ryujinx.Graphics.Shader/Translation/EmitterContext.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/EmitterContext.cs
+@@ -141,6 +141,7 @@
+ 
+                     for (int index = 0; index < inputVertices; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand vertexIndex = Local();
+ 
+                         this.TextureSample(
+@@ -257,6 +258,7 @@
+ 
+                 for (int tfbIndex = 0; tfbIndex < ResourceReservations.TfeBuffersCount; tfbIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     ReadOnlySpan<byte> locations = TranslatorContext.GpuAccessor.QueryTransformFeedbackVaryingLocations(tfbIndex);
+                     int stride = TranslatorContext.GpuAccessor.QueryTransformFeedbackStride(tfbIndex);
+ 
+@@ -276,6 +278,7 @@
+ 
+                     for (int j = 0; j < locations.Length; j++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         byte location = locations[j];
+                         if (location == 0xff)
+                         {
+@@ -410,11 +413,13 @@
+ 
+                     for (int primIndex = inputStart; primIndex < inputEnd; primIndex += inputStep)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         WritePositionOutput(primIndex);
+ 
+                         int passthroughAttributes = TranslatorContext.AttributeUsage.PassthroughAttributes;
+                         while (passthroughAttributes != 0)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             int index = BitOperations.TrailingZeroCount(passthroughAttributes);
+                             WriteUserDefinedOutput(index, primIndex);
+                             passthroughAttributes &= ~(1 << index);
+@@ -483,8 +488,10 @@
+ 
+                 for (int rtIndex = 0; rtIndex < 8; rtIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     for (int component = 0; component < 4; component++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         bool componentEnabled = (TranslatorContext.Definitions.OmapTargets & (1 << (rtIndex * 4 + component))) != 0;
+                         if (!componentEnabled)
+                         {
+@@ -545,6 +552,7 @@
+ 
+                     for (int offset = 0; offset < stride; offset++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand vertexOffset = this.IAdd(baseOffset, Const(offset));
+                         Operand value = this.Load(StorageKind.LocalMemory, ResourceManager.LocalVertexDataMemoryId, Const(offset));
+ 
+--- a/src/Ryujinx.Graphics.Shader/Translation/FunctionMatch.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/FunctionMatch.cs
+@@ -20,6 +20,7 @@
+ 
+             foreach (DecodedFunction function in program)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (function == program.MainFunction)
+                 {
+                     continue;
+@@ -64,6 +65,7 @@
+ 
+             foreach (DecodedFunction function in program)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (function.IsCompilerGenerated || function == program.MainFunction)
+                 {
+                     continue;
+@@ -219,6 +221,7 @@
+ 
+             for (int index = 0; index < blocks.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Block block = blocks[index];
+ 
+                 if (block.Predecessors.Count > 1)
+@@ -230,6 +233,7 @@
+ 
+                 for (int opIndex = 0; opIndex < block.OpCodes.Count; opIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     InstOp op = block.OpCodes[opIndex];
+ 
+                     TreeNode node = new(op, IsOrderDependant(op.Name) ? order : (byte)0);
+@@ -462,6 +466,7 @@
+ 
+             for (int index = 0; index < pTree.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (!Matches(pTree[index], cTree[index], externalRegs))
+                 {
+                     return false;
+@@ -490,6 +495,7 @@
+ 
+                 for (int index = 0; index < pTreeNode.Uses.Count; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     PatternTreeNodeUse pUse = pTreeNode.Uses[index];
+                     TreeNodeUse cUse = cTreeNode.Uses[index];
+ 
+@@ -824,6 +830,7 @@
+ 
+             for (int i = 0; i < node.Uses.Count; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 TreeNodeUse use = node.Uses[i];
+                 bool last = i == node.Uses.Count - 1;
+                 char separator = last ? '`' : '|';
+@@ -846,6 +853,7 @@
+ 
+             for (int i = 0; i < node.Uses.Count; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 PatternTreeNodeUse use = node.Uses[i];
+                 bool last = i == node.Uses.Count - 1;
+                 char separator = last ? '`' : '|';
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessElimination.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessElimination.cs
+@@ -20,6 +20,7 @@
+ 
+             for (LinkedListNode<INode> node = block.Operations.First; node != null; node = nextNode)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 nextNode = node.Next;
+ 
+                 if (node.Value is not TextureOperation texOp)
+@@ -46,6 +47,7 @@
+ 
+                     for (int destIndex = 0; destIndex < texOp.DestsCount; destIndex++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         block.Operations.AddBefore(node, new Operation(Instruction.Copy, texOp.GetDest(destIndex), OperandHelper.Const(0)));
+                     }
+ 
+@@ -74,6 +76,7 @@
+             {
+                 for (int srcIndex = 0; srcIndex < phi.SourcesCount; srcIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand phiSource = phi.GetSource(srcIndex);
+ 
+                     if (phiSource.AsgOp is not PhiNode && !IsBindlessAccessAllowed(phiSource))
+@@ -364,6 +367,7 @@
+ 
+                 for (int index = 1; index < phi.SourcesCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (!IsSameOperand(firstSrc, phi.GetSource(index)))
+                     {
+                         outOperation = null;
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessToArray.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BindlessToArray.cs
+@@ -23,6 +23,7 @@
+             // The base offset of the array of handles on the constant buffer is the constant offset.
+             for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (node.Value is not TextureOperation texOp)
+                 {
+                     continue;
+@@ -116,6 +117,7 @@
+             // The base offset of the array of handles on the constant buffer is the constant offset.
+             for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (node.Value is not TextureOperation texOp)
+                 {
+                     continue;
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BranchElimination.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/BranchElimination.cs
+@@ -46,6 +46,7 @@
+ 
+             while (block != null && block.Operations.Count == 0)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (block.HasBranch)
+                 {
+                     throw new InvalidOperationException("Found a bogus empty block that \"ends with a branch\".");
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/ConstantFolding.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/ConstantFolding.cs
+@@ -220,6 +220,7 @@
+         {
+             for (int index = 0; index < operation.SourcesCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (operation.GetSource(index).Type != OperandType.Constant)
+                 {
+                     return false;
+@@ -235,6 +236,7 @@
+ 
+             for (int bit = 0; bit < 32; bit++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (value.Extract(bit))
+                 {
+                     count++;
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/DoubleToFloat.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/DoubleToFloat.cs
+@@ -11,6 +11,7 @@
+         {
+             for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (node.Value is not Operation)
+                 {
+                     continue;
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs
+@@ -95,6 +95,7 @@
+             {
+                 foreach (Entry entry in _entries)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (entry.Inst != baseOp.Inst ||
+                         entry.StorageKind != baseOp.StorageKind ||
+                         entry.IsMultiTarget != isMultiTarget ||
+@@ -107,6 +108,7 @@
+ 
+                     for (int index = 0; index < targetCbs.Count; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (targetCbs[index] != entry.TargetCbs[index])
+                         {
+                             allEqual = false;
+@@ -217,8 +219,10 @@
+ 
+             foreach (BasicBlock block in blocks)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (node.Value is not Operation operation)
+                     {
+                         continue;
+@@ -465,6 +469,7 @@
+ 
+                 for (int srcIndex = 2; srcIndex < operation.SourcesCount; srcIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     sources[srcIndex] = operation.GetSource(srcIndex);
+                 }
+             }
+@@ -474,6 +479,7 @@
+ 
+                 for (int srcIndex = 0; srcIndex < operation.SourcesCount; srcIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     sources[srcIndex + 1] = operation.GetSource(srcIndex);
+                 }
+             }
+@@ -628,8 +634,10 @@
+ 
+             while (phis.TryDequeue(out phi))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 for (int srcIndex = 0; srcIndex < phi.SourcesCount; srcIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock phiBlock = phi.GetBlock(srcIndex);
+                     Operand phiSource = phi.GetSource(srcIndex);
+ 
+@@ -681,6 +689,7 @@
+ 
+             foreach (uint targetCb in targetCbs)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 (int sbCbSlot, int sbCbOffset) = UnpackCbSlotAndOffset(targetCb);
+ 
+                 Operand baseAddrLow = Cbuf(sbCbSlot, sbCbOffset);
+@@ -805,6 +814,7 @@
+ 
+             foreach (uint targetCb in targetCbs)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 (int sbCbSlot, int sbCbOffset) = UnpackCbSlotAndOffset(targetCb);
+ 
+                 nameBuilder.Append($"_c{sbCbSlot}o{sbCbOffset}");
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/Optimizer.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/Optimizer.cs
+@@ -11,6 +11,7 @@
+         {
+             for (int blkIndex = 0; blkIndex < context.Blocks.Length; blkIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 XmadOptimizer.RunPass(context.Blocks[blkIndex]);
+             }
+ 
+@@ -25,6 +26,7 @@
+             // Those passes are looking for specific patterns and only needs to run once.
+             for (int blkIndex = 0; blkIndex < context.Blocks.Length; blkIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (context.TargetApi == TargetApi.OpenGL)
+                 {
+                     BindlessToArray.RunPassOgl(context.Blocks[blkIndex], context.ResourceManager);
+@@ -59,16 +61,19 @@
+ 
+             do
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 modified = false;
+ 
+                 for (int blkIndex = 0; blkIndex < blocks.Length; blkIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock block = blocks[blkIndex];
+ 
+                     LinkedListNode<INode> node = block.Operations.First;
+ 
+                     while (node != null)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         LinkedListNode<INode> nextNode = node.Next;
+ 
+                         bool isUnused = IsUnused(node.Value);
+@@ -143,8 +148,10 @@
+ 
+             foreach (INode useNode in uses)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 for (int index = 0; index < useNode.SourcesCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (useNode.GetSource(index) == dest)
+                     {
+                         useNode.SetSource(index, src);
+@@ -171,8 +178,10 @@
+ 
+             foreach (INode useNode in uses)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 for (int index = 0; index < useNode.SourcesCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (useNode.GetSource(index) == dest)
+                     {
+                         useNode.SetSource(index, firstSrc);
+@@ -197,6 +206,7 @@
+ 
+             foreach (INode useNode in uses)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (useNode is not Operation operation || operation.Inst != Instruction.UnpackHalf2x16)
+                 {
+                     continue;
+@@ -246,6 +256,7 @@
+ 
+             foreach (INode use in uses)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (use is not Operation test)
+                 {
+                     continue;
+@@ -295,6 +306,7 @@
+         {
+             foreach (INode node in block.Operations)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (node is Operation operation)
+                 {
+                     EliminateMultiplyByFragmentCoordW(operation);
+@@ -372,8 +384,10 @@
+ 
+             while (nodes.TryDequeue(out INode node))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 for (int index = 0; index < node.SourcesCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand src = node.GetSource(index);
+ 
+                     if (src.Type != OperandType.LocalVariable)
+@@ -438,6 +452,7 @@
+ 
+             for (int index = 0; index < node.DestsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand dest = node.GetDest(index);
+ 
+                 if (dest != null && dest.Type != OperandType.LocalVariable)
+@@ -453,6 +468,7 @@
+         {
+             for (int index = 0; index < node.DestsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand dest = node.GetDest(index);
+ 
+                 if (dest != null && dest.UseOps.Count != 0)
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/Utils.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/Utils.cs
+@@ -54,6 +54,7 @@
+ 
+             for (int index = 0; index < node.SourcesCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (!IsSameOperand(node.GetSource(index), otherNode.GetSource(index)))
+                 {
+                     return false;
+@@ -69,6 +70,7 @@
+ 
+             for (int index = 1; index < node.SourcesCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (!IsSameOperand(firstSrc, node.GetSource(index)))
+                 {
+                     return false;
+@@ -82,6 +84,7 @@
+         {
+             foreach (BasicBlock sourceBlock in block.Predecessors)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (sourceBlock.Operations.Count > 0)
+                 {
+                     if (sourceBlock.GetLastOp() is Operation lastOp && IsConditionalBranch(lastOp.Inst) && sourceBlock.Next == block)
+@@ -142,6 +145,7 @@
+ 
+                 for (int i = phiNode.SourcesCount - 1; i >= 0; i--)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock phiBlock = phiNode.GetBlock(i);
+                     Operand phiSource = phiNode.GetSource(i);
+ 
+@@ -174,6 +178,7 @@
+                 {
+                     for (int i = phiNode.SourcesCount - 1; i >= 0; i--)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand phiSource = phiNode.GetSource(i);
+ 
+                         if (phiSource.Type != OperandType.Undefined)
+@@ -193,6 +198,7 @@
+ 
+             for (int srcIndex = 0; srcIndex < operation.SourcesCount; srcIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 operation.SetSource(srcIndex, null);
+             }
+ 
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/XmadOptimizer.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/XmadOptimizer.cs
+@@ -9,6 +9,7 @@
+         {
+             for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (node.Value is not Operation operation)
+                 {
+                     continue;
+@@ -323,6 +324,7 @@
+         {
+             while (value.AsgOp is Operation operation && IsCopy(operation))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 value = operation.GetSource(0);
+             }
+ 
+--- a/src/Ryujinx.Graphics.Shader/Translation/RegisterUsage.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/RegisterUsage.cs
+@@ -137,12 +137,15 @@
+ 
+             foreach (BasicBlock block in cfg.Blocks)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operation operation = node.Value as Operation;
+ 
+                     for (int srcIndex = 0; srcIndex < operation.SourcesCount; srcIndex++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand source = operation.GetSource(srcIndex);
+ 
+                         if (source.Type != OperandType.Register)
+@@ -157,6 +160,7 @@
+ 
+                     for (int dstIndex = 0; dstIndex < operation.DestsCount; dstIndex++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand dest = operation.GetDest(dstIndex);
+ 
+                         if (dest != null && dest.Type == OperandType.Register)
+@@ -182,11 +186,13 @@
+ 
+             do
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 modified = false;
+ 
+                 // Compute register outputs.
+                 for (int index = cfg.PostOrderBlocks.Length - 1; index >= 0; index--)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock block = cfg.PostOrderBlocks[index];
+ 
+                     if (block.Predecessors.Count != 0)
+@@ -199,6 +205,7 @@
+ 
+                         for (int pIndex = 1; pIndex < block.Predecessors.Count; pIndex++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             predecessor = block.Predecessors[pIndex];
+ 
+                             cmnOutputs &= localOutputs[predecessor.Index] | globalCmnOutputs[predecessor.Index];
+@@ -241,6 +248,7 @@
+                 // Compute register inputs.
+                 for (int index = 0; index < cfg.PostOrderBlocks.Length; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     BasicBlock block = cfg.PostOrderBlocks[index];
+ 
+                     RegisterMask inputs = localInputs[block.Index];
+@@ -270,6 +278,7 @@
+             // Insert load and store context instructions where needed.
+             foreach (BasicBlock block in cfg.Blocks)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 // The only block without any predecessor should be the entry block.
+                 // It always needs a context load as it is the first block to run.
+                 if (block.Predecessors.Count == 0)
+@@ -292,8 +301,10 @@
+         {
+             foreach (BasicBlock block in blocks)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operation operation = node.Value as Operation;
+ 
+                     if (operation.Inst == Instruction.Call)
+@@ -308,6 +319,7 @@
+ 
+                         for (int i = 0; i < fru.InArguments.Length; i++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             inRegs[i] = OperandHelper.Register(fru.InArguments[i]);
+                         }
+ 
+@@ -317,6 +329,7 @@
+ 
+                         for (int i = 0; i < fru.OutArguments.Length; i++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             outRegs[1 + i] = OperandHelper.Register(fru.OutArguments[i]);
+                         }
+ 
+@@ -385,11 +398,13 @@
+ 
+             for (int i = 0; i < TotalMasks; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 (RegisterType regType, int baseRegIndex) = GetRegTypeAndBaseIndex(i);
+                 long mask = masks.GetMask(i);
+ 
+                 while (mask != 0)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int bit = BitOperations.TrailingZeroCount(mask);
+ 
+                     mask &= ~(1L << bit);
+@@ -425,11 +440,13 @@
+ 
+             for (int i = 0; i < TotalMasks; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 (RegisterType regType, int baseRegIndex) = GetRegTypeAndBaseIndex(i);
+                 long mask = masks.GetMask(i);
+ 
+                 while (mask != 0)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int bit = BitOperations.TrailingZeroCount(mask);
+ 
+                     mask &= ~(1L << bit);
+--- a/src/Ryujinx.Graphics.Shader/Translation/ResourceManager.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/ResourceManager.cs
+@@ -210,6 +210,7 @@
+         {
+             for (slot = 0; slot < _cbSlotToBindingMap.Length; slot++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (_cbSlotToBindingMap[slot].Binding == binding)
+                 {
+                     return true;
+@@ -420,6 +421,7 @@
+ 
+             foreach ((TextureInfo info, TextureMeta meta) in _usedTextures)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (meta.Binding == binding)
+                 {
+                     selectedInfo = info;
+@@ -460,6 +462,7 @@
+ 
+             for (int slot = 0; slot < _cbSlotToBindingMap.Length; slot++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 SetBindingPair setAndBinding = _cbSlotToBindingMap[slot];
+ 
+                 if (setAndBinding.Binding >= 0 && _usedConstantBufferBindings.Contains(setAndBinding.Binding))
+@@ -484,6 +487,7 @@
+ 
+             foreach ((int key, int slot) in _sbSlots)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 SetBindingPair setAndBinding = _sbSlotToBindingMap[slot];
+ 
+                 if (setAndBinding.Binding >= 0)
+@@ -520,6 +524,7 @@
+ 
+             foreach ((TextureInfo info, TextureMeta meta) in usedResources)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (info.ArrayLength > 1)
+                 {
+                     hasAnyArray = true;
+@@ -542,6 +547,7 @@
+             {
+                 foreach ((TextureInfo info, TextureMeta meta) in usedResources)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (info.ArrayLength <= 1)
+                     {
+                         continue;
+@@ -567,6 +573,7 @@
+         {
+             foreach ((TextureInfo info, TextureMeta meta) in _usedTextures)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (meta.Binding == binding)
+                 {
+                     cbufSlot = info.CbufSlot;
+@@ -600,6 +607,7 @@
+         {
+             foreach ((TextureInfo info, TextureMeta meta) in isImage ? _usedImages : _usedTextures)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (meta.Binding == binding)
+                 {
+                     return info.ArrayLength != 1;
+--- a/src/Ryujinx.Graphics.Shader/Translation/ResourceReservations.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/ResourceReservations.cs
+@@ -97,6 +97,7 @@
+ 
+             for (int c = 0; c < 4; c++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 _offsets.Add(new IoDefinition(storageKind, IoVariable.Position, 0, c), offset++);
+             }
+ 
+@@ -106,6 +107,7 @@
+ 
+             while (clipDistancesWrittenMap != 0)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int index = BitOperations.TrailingZeroCount(clipDistancesWrittenMap);
+ 
+                 _offsets.Add(new IoDefinition(storageKind, IoVariable.ClipDistance, 0, index), offset++);
+@@ -132,10 +134,12 @@
+ 
+             while (usedDefinedMap != 0)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int location = BitOperations.TrailingZeroCount(usedDefinedMap);
+ 
+                 for (int c = 0; c < 4; c++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     _offsets.Add(new IoDefinition(storageKind, IoVariable.UserDefined, location, c), offset++);
+                 }
+ 
+--- a/src/Ryujinx.Graphics.Shader/Translation/ShaderDefinitions.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/ShaderDefinitions.cs
+@@ -175,10 +175,12 @@
+         {
+             while (transformFeedbackVecMap != 0)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int vecIndex = BitOperations.TrailingZeroCount(transformFeedbackVecMap);
+ 
+                 for (int subIndex = 0; subIndex < 4; subIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int wordOffset = vecIndex * 4 + subIndex;
+                     int byteOffset = wordOffset * 4;
+ 
+@@ -271,6 +273,7 @@
+ 
+             for (; count < 4; count++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 ref TransformFeedbackOutput prev = ref _transformFeedbackOutputs[baseIndex + count - 1];
+                 ref TransformFeedbackOutput curr = ref _transformFeedbackOutputs[baseIndex + count];
+ 
+--- a/src/Ryujinx.Graphics.Shader/Translation/ShaderHeader.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/ShaderHeader.cs
+@@ -150,6 +150,7 @@
+ 
+             for (int i = 0; i < 32; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 byte imap = (byte)(header[6 + (i >> 2)] >> ((i & 3) * 8));
+ 
+                 ImapTypes[i] = new ImapPixelType(
+--- a/src/Ryujinx.Graphics.Shader/Translation/Ssa.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Ssa.cs
+@@ -100,6 +100,7 @@
+             {
+                 for (int i = 0; i < UseCount; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     _map[_uses[i]] = null;
+                 }
+ 
+@@ -126,6 +127,7 @@
+ 
+             for (int blkIndex = 0; blkIndex < blocks.Length; blkIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 globalDefs[blkIndex] = new DefMap();
+             }
+ 
+@@ -134,6 +136,7 @@
+             // First pass, get all defs and locals uses.
+             for (int blkIndex = 0; blkIndex < blocks.Length; blkIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand RenameLocal(Operand operand)
+                 {
+                     if (operand != null && operand.Type == OperandType.Register)
+@@ -152,15 +155,18 @@
+ 
+                 while (node != null)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (node.Value is Operation operation)
+                     {
+                         for (int index = 0; index < operation.SourcesCount; index++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             operation.SetSource(index, RenameLocal(operation.GetSource(index)));
+                         }
+ 
+                         for (int index = 0; index < operation.DestsCount; index++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             Operand dest = operation.GetDest(index);
+ 
+                             if (dest != null && dest.Type == OperandType.Register)
+@@ -180,6 +186,7 @@
+                 int localUses = localDefs.UseCount;
+                 for (int index = 0; index < localUses; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand local = localDefs.GetUse(index, out int key);
+ 
+                     Register reg = GetRegisterFromKey(key);
+@@ -190,8 +197,10 @@
+ 
+                     while (dfPhiBlocks.TryDequeue(out BasicBlock dfPhiBlock))
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         foreach (BasicBlock domFrontier in dfPhiBlock.DominanceFrontiers)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             if (globalDefs[domFrontier.Index].AddPhi(reg))
+                             {
+                                 dfPhiBlocks.Enqueue(domFrontier);
+@@ -206,6 +215,7 @@
+             // Second pass, rename variables with definitions on different blocks.
+             for (int blkIndex = 0; blkIndex < blocks.Length; blkIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 BasicBlock block = blocks[blkIndex];
+ 
+                 Operand RenameGlobal(Operand operand)
+@@ -231,10 +241,12 @@
+ 
+                 for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (node.Value is Operation operation)
+                     {
+                         for (int index = 0; index < operation.SourcesCount; index++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             operation.SetSource(index, RenameGlobal(operation.GetSource(index)));
+                         }
+                     }
+@@ -266,6 +278,7 @@
+         {
+             foreach (BasicBlock block in SelfAndImmediateDominators(current))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 DefMap defMap = globalDefs[block.Index];
+ 
+                 if (defMap.TryGetOperand(reg, out Operand lastDef))
+@@ -286,6 +299,7 @@
+         {
+             while (block != block.ImmediateDominator)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 yield return block;
+ 
+                 block = block.ImmediateDominator;
+@@ -310,6 +324,7 @@
+ 
+             foreach (BasicBlock predecessor in block.Predecessors)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Definition def = FindDefinition(globalDefs, predecessor, reg);
+ 
+                 phi.AddSource(def.Block, def.Local);
+@@ -326,6 +341,7 @@
+             {
+                 while (node.Next?.Value is PhiNode)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     node = node.Next;
+                 }
+             }
+--- a/src/Ryujinx.Graphics.Shader/Translation/Transforms/DrawParametersReplace.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Transforms/DrawParametersReplace.cs
+@@ -44,6 +44,7 @@
+ 
+             for (int srcIndex = 0; srcIndex < operation.SourcesCount; srcIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand src = operation.GetSource(srcIndex);
+ 
+                 if (src.Type == OperandType.ConstantBuffer && src.GetCbufSlot() == 0)
+@@ -73,6 +74,7 @@
+         {
+             for (int srcIndex = 0; srcIndex < operation.SourcesCount; srcIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand src = operation.GetSource(srcIndex);
+ 
+                 if (src.Type == OperandType.ConstantBuffer && src.GetCbufSlot() == 0)
+--- a/src/Ryujinx.Graphics.Shader/Translation/Transforms/GeometryToCompute.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Transforms/GeometryToCompute.cs
+@@ -160,6 +160,7 @@
+ 
+             for (int offset = 0; offset < stride; offset++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand vertexOffset;
+ 
+                 if (offset > 0)
+--- a/src/Ryujinx.Graphics.Shader/Translation/Transforms/TexturePass.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Transforms/TexturePass.cs
+@@ -66,6 +66,7 @@
+ 
+                 for (int index = 0; index < coordsCount; index++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand scaledCoord = Local();
+                     Operand[] callArgs;
+ 
+@@ -111,6 +112,7 @@
+ 
+                 for (int index = texOp.DestsCount - 1; index >= 0; index--)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand dest = texOp.GetDest(index);
+ 
+                     Operand unscaledSize = Local();
+@@ -119,8 +121,10 @@
+                     // This must be done before the call is added, since it also is a use of the original size.
+                     foreach (INode useOp in dest.UseOps)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         for (int srcIndex = 0; srcIndex < useOp.SourcesCount; srcIndex++)
+                         {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                             if (useOp.GetSource(srcIndex) == dest)
+                             {
+                                 useOp.SetSource(srcIndex, unscaledSize);
+@@ -174,6 +178,7 @@
+ 
+             for (int index = 0; index < normCoordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand coordSize = Local();
+ 
+                 Operand[] texSizeSources = [Const(0)];
+@@ -233,6 +238,7 @@
+ 
+             for (int index = 0; index < normCoordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand coordSize = Local();
+                 Operand scaledSize = Local();
+                 Operand bias = Local();
+@@ -348,6 +354,7 @@
+ 
+             for (int index = 0; index < lodSources.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 lodSources[index] = texOp.GetSource(index);
+             }
+ 
+@@ -382,6 +389,7 @@
+ 
+             for (int index = 0; index < copyCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 sources[dstIndex++] = texOp.GetSource(srcIndex++);
+             }
+ 
+@@ -389,6 +397,7 @@
+ 
+             for (int index = 0; index < offsetsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand offset = texOp.GetSource(srcIndex++);
+ 
+                 areAllOffsetsConstant &= offset.Type == OperandType.Constant;
+@@ -424,6 +433,7 @@
+ 
+             for (int i = 0; i < texOp.DestsCount; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 dests[i] = texOp.GetDest(i);
+             }
+ 
+@@ -443,6 +453,7 @@
+ 
+                 for (int compIndex = 0; compIndex < 4; compIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (((texOp.Index >> compIndex) & 1) == 0)
+                     {
+                         continue;
+@@ -450,6 +461,7 @@
+ 
+                     for (int index = 0; index < coordsCount; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand offset = Local();
+ 
+                         Operand intOffset = offsets[index + compIndex * coordsCount];
+@@ -489,6 +501,7 @@
+                 {
+                     for (int index = 0; index < coordsCount; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand source = sources[coordsIndex + index];
+ 
+                         Operand coordPlusOffset = Local();
+@@ -506,6 +519,7 @@
+ 
+                     for (int index = 0; index < coordsCount; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         Operand offset = Local();
+ 
+                         Operand intOffset = offsets[index];
+@@ -544,6 +558,7 @@
+ 
+             for (int index = 0; index < texOp.SourcesCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 texOp.SetSource(index, null);
+             }
+ 
+@@ -560,6 +575,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 texSizes[index] = Local();
+ 
+                 Operand[] texSizeSources;
+@@ -622,6 +638,7 @@
+ 
+             for (int index = 0; index < coordsCount; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 texSizes[index] = Local();
+ 
+                 Operand[] texSizeSources;
+@@ -685,6 +702,7 @@
+             // as replacement for SNORM (which is not supported).
+             for (int i = 0; i < texOp.DestsCount; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand dest = texOp.GetDest(i);
+ 
+                 INode[] uses = dest.UseOps.ToArray();
+@@ -697,6 +715,7 @@
+ 
+                 foreach (INode useOp in uses)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (useOp is not Operation op)
+                     {
+                         continue;
+@@ -705,6 +724,7 @@
+                     // Replace all uses of the texture pixel value with the normalized value.
+                     for (int index = 0; index < op.SourcesCount; index++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         if (op.GetSource(index) == dest)
+                         {
+                             op.SetSource(index, normOp.Dest);
+--- a/src/Ryujinx.Graphics.Shader/Translation/Transforms/TransformPasses.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Transforms/TransformPasses.cs
+@@ -27,10 +27,12 @@
+ 
+             for (int blkIndex = 0; blkIndex < context.Blocks.Length; blkIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 BasicBlock block = context.Blocks[blkIndex];
+ 
+                 for (LinkedListNode<INode> node = block.Operations.First; node != null; node = node.Next)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (node.Value is not Operation)
+                     {
+                         continue;
+--- a/src/Ryujinx.Graphics.Shader/Translation/Transforms/VectorComponentSelect.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Transforms/VectorComponentSelect.cs
+@@ -55,11 +55,13 @@
+ 
+             for (int i = 0; i < elemCount; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operand value = Local();
+                 Operand[] inputs = new Operand[operation.SourcesCount];
+ 
+                 for (int srcIndex = 0; srcIndex < inputs.Length - 1; srcIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     inputs[srcIndex] = operation.GetSource(srcIndex);
+                 }
+ 
+--- a/src/Ryujinx.Graphics.Shader/Translation/Translator.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Translator.cs
+@@ -53,8 +53,10 @@
+ 
+             foreach (DecodedFunction function in program)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 foreach (Block block in function.Blocks)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if (maxEndAddress < block.EndAddress)
+                     {
+                         maxEndAddress = block.EndAddress;
+@@ -110,11 +112,13 @@
+ 
+                 for (int tfbIndex = 0; tfbIndex < 4; tfbIndex++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     ReadOnlySpan<byte> locations = gpuAccessor.QueryTransformFeedbackVaryingLocations(tfbIndex);
+                     int stride = gpuAccessor.QueryTransformFeedbackStride(tfbIndex);
+ 
+                     for (int i = 0; i < locations.Length; i++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         byte wordOffset = locations[i];
+                         if (wordOffset < 0xc0)
+                         {
+@@ -147,6 +151,7 @@
+ 
+             foreach (DecodedFunction function in program.Where(x => !x.IsCompilerGenerated).OrderBy(x => x.Address))
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 program.AddFunctionAndSetId(function);
+             }
+ 
+@@ -154,6 +159,7 @@
+ 
+             for (int index = 0; index < functions.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 EmitterContext context = new(translatorContext, resourceManager, program, vertexAsCompute, index != 0);
+ 
+                 if (initializeOutputs && index == 0)
+@@ -166,6 +172,7 @@
+ 
+                 foreach (Block block in function.Blocks)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     context.CurrBlock = block;
+ 
+                     context.EnterBlock(block.Address);
+@@ -197,6 +204,7 @@
+                 {
+                     for (int i = 0; i < 4; i++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         context.Store(StorageKind.Output, IoVariable.FragmentOutputColor, null, Const(1), Const(i), ConstF(0));
+                     }
+                 }
+@@ -212,6 +220,7 @@
+             UInt128 usedAttributes = context.TranslatorContext.AttributeUsage.NextInputAttributesComponents;
+             while (usedAttributes != UInt128.Zero)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int index = (int)UInt128.TrailingZeroCount(usedAttributes);
+                 int vecIndex = index / 4;
+ 
+@@ -232,6 +241,7 @@
+             {
+                 for (int location = 0; location < AttributeConsts.UserAttributesCount; location++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     if ((attributeUsage.UsedOutputAttributes & (1 << location)) != 0 &&
+                         (attributeUsage.PassthroughAttributes & (1 << location)) == 0)
+                     {
+@@ -244,6 +254,7 @@
+             {
+                 foreach (int vecIndex in context.TranslatorContext.AttributeUsage.NextUsedInputAttributesPerPatch.Order())
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     InitializeOutput(context, vecIndex, perPatch: true);
+                 }
+             }
+@@ -255,6 +266,7 @@
+ 
+                 for (int i = fixedStartAttr; i < fixedStartAttr + 5 + AttributeConsts.TexCoordCount; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int index = attributeUsage.GetFreeUserAttribute(isOutput: true, i);
+                     if (index < 0)
+                     {
+@@ -270,6 +282,7 @@
+         {
+             for (int c = 0; c < 4; c++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 context.Store(StorageKind.Output, IoVariable.Position, null, Const(c), ConstF(c == 3 ? 1f : 0f));
+             }
+ 
+@@ -277,6 +290,7 @@
+             {
+                 for (int i = 0; i < 8; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     context.Store(StorageKind.Output, IoVariable.ClipDistance, null, Const(i), ConstF(0f));
+                 }
+             }
+@@ -286,6 +300,7 @@
+         {
+             for (int c = 0; c < 4; c++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 InitializeOutputComponent(context, location, c, perPatch);
+             }
+         }
+@@ -325,6 +340,7 @@
+         {
+             for (int opIndex = 0; opIndex < block.OpCodes.Count; opIndex++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 InstOp op = block.OpCodes[opIndex];
+ 
+                 if (context.TranslatorContext.Options.Flags.HasFlag(TranslationFlags.DebugMode))
+--- a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs
+@@ -92,6 +92,7 @@
+ 
+             for (int index = aStart; index < a[0].Code.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operation operation = a[0].Code[index];
+ 
+                 if (IsStoreUserDefined(operation))
+@@ -125,6 +126,7 @@
+ 
+             for (int index = 0; index < b[0].Code.Length; index++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Operation operation = b[0].Code[index];
+ 
+                 if (IsLoadUserDefined(operation))
+@@ -146,11 +148,13 @@
+ 
+             for (int i = 1; i < a.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 output[i] = a[i];
+             }
+ 
+             for (int i = 1; i < b.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 output[a.Length + i - 1] = b[i];
+             }
+ 
+@@ -247,6 +251,7 @@
+ 
+             for (int i = 0; i < functions.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 cfgs[i] = ControlFlowGraph.Create(functions[i].Code);
+ 
+                 if (i != 0)
+@@ -259,6 +264,7 @@
+ 
+             for (int i = 0; i < functions.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 funcs.Add(null);
+             }
+ 
+@@ -266,6 +272,7 @@
+ 
+             for (int i = 0; i < functions.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 ControlFlowGraph cfg = cfgs[i];
+ 
+                 int inArgumentsCount = 0;
+@@ -391,6 +398,7 @@
+ 
+                 for (int i = 0; i < ResourceReservations.TfeBuffersCount; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int binding = resourceManager.Reservations.GetTfeBufferStorageBufferBinding(i);
+                     BufferDefinition tfeDataBuffer = new(BufferLayout.Std430, 1, binding, $"tfe_data{i}", tfeDataStruct);
+                     resourceManager.Properties.AddOrUpdateStorageBuffer(tfeDataBuffer);
+@@ -422,6 +430,7 @@
+ 
+                     while (inputMap != 0)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         int location = BitOperations.TrailingZeroCount(inputMap);
+                         SetBindingPair setAndBinding = resourceManager.Reservations.GetVertexBufferTextureSetAndBinding(location);
+                         TextureDefinition vaBuffer = new(setAndBinding.SetIndex, setAndBinding.Binding, $"vb_data{location}", SamplerType.TextureBuffer);
+@@ -531,6 +540,7 @@
+ 
+             foreach ((IoDefinition ioDefinition, int inputOffset) in reservations.Offsets)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (ioDefinition.StorageKind != StorageKind.Output)
+                 {
+                     continue;
+@@ -612,16 +622,19 @@
+ 
+             for (int v = 0; v < maxOutputVertices; v++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 int outAttrsMask = outputAttributesMask;
+ 
+                 while (outAttrsMask != 0)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     int attrIndex = BitOperations.TrailingZeroCount(outAttrsMask);
+ 
+                     outAttrsMask &= ~(1 << attrIndex);
+ 
+                     for (int c = 0; c < 4; c++)
+                     {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                         int attr = AttributeConsts.UserAttributeBase + attrIndex * 16 + c * 4;
+ 
+                         Operand value = context.Load(StorageKind.Input, IoVariable.UserDefined, Const(attrIndex), Const(v), Const(c));
+@@ -639,6 +652,7 @@
+ 
+                 for (int c = 0; c < 4; c++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     Operand value = context.Load(StorageKind.Input, IoVariable.Position, Const(v), Const(c));
+ 
+                     context.Store(StorageKind.Output, IoVariable.Position, null, Const(c), value);
+--- a/src/Spv.Generator/DeterministicHashCode.cs
++++ b/src/Spv.Generator/DeterministicHashCode.cs
+@@ -21,6 +21,7 @@
+ 
+             for (int i = 0; i < value.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 hash += (hash << 7) ^ value[i];
+             }
+ 
+@@ -34,6 +35,7 @@
+ 
+             foreach (T value in values)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 uint hc = (uint)(value?.GetHashCode() ?? 0);
+                 hashCode = MixStep(hashCode, hc);
+             }
+--- a/src/Spv.Generator/GeneratorPool.cs
++++ b/src/Spv.Generator/GeneratorPool.cs
+@@ -22,6 +22,7 @@
+ 
+         public T Allocate()
+         {
++            Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,1,256);
+             if (++_poolIndex >= _poolSizeIncrement)
+             {
+                 AddChunkIfNeeded();
+@@ -34,12 +35,14 @@
+ 
+         private void AddChunkIfNeeded()
+         {
++            Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,0,checked((ulong)_poolSizeIncrement*256));
+             if (++_chunkIndex >= _pool.Count)
+             {
+                 T[] pool = new T[_poolSizeIncrement];
+ 
+                 for (int i = 0; i < _poolSizeIncrement; i++)
+                 {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                     pool[i] = new T();
+                 }
+ 
+--- a/src/Spv.Generator/Instruction.cs
++++ b/src/Spv.Generator/Instruction.cs
+@@ -50,6 +50,7 @@
+             Span<IOperand> operands = _operands.AsSpan();
+             for (int i = 0; i < operands.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 result += operands[i].WordCount;
+             }
+ 
+@@ -68,6 +69,7 @@
+         {
+             foreach (IOperand instruction in value)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 AddOperand(instruction);
+             }
+         }
+@@ -76,6 +78,7 @@
+         {
+             foreach (LiteralInteger instruction in value)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 AddOperand(instruction);
+             }
+         }
+@@ -89,6 +92,7 @@
+         {
+             foreach (Instruction instruction in value)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 AddOperand(instruction);
+             }
+         }
+@@ -124,6 +128,7 @@
+             Span<IOperand> operands = _operands.AsSpan();
+             for (int i = 0; i < operands.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 operands[i].WriteOperand(writer);
+             }
+         }
+@@ -196,6 +201,7 @@
+ 
+             for (int i = 0; i < thisOperands.Length; i++)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 if (!thisOperands[i].Equals(cmpOperands[i]))
+                 {
+                     return false;
+--- a/src/Spv.Generator/InstructionOperands.cs
++++ b/src/Spv.Generator/InstructionOperands.cs
+@@ -31,6 +31,7 @@
+ 
+         public void Add(IOperand operand)
+         {
++            Ryujinx.Common.Utilities.CanopyTranslationGuard.Step(1,0,16);
+             if (Count < InternalCount)
+             {
+                 MemoryMarshal.CreateSpan(ref this.Operand1, Count + 1)[Count] = operand;
+--- a/src/Spv.Generator/Module.cs
++++ b/src/Spv.Generator/Module.cs
+@@ -66,6 +66,7 @@
+             _integerPool = integerPool ?? new GeneratorPool<LiteralInteger>();
+ 
+             LiteralInteger.RegisterPool(_integerPool);
++            if (Ryujinx.Common.Utilities.CanopyTranslationGuard.Checkpoint != null) Ryujinx.Common.Utilities.CanopyTranslationGuard.Cleanup = LiteralInteger.UnregisterPool;
+         }
+ 
+         private uint GetNewId()
+@@ -280,6 +281,7 @@
+             // 1.
+             foreach (Capability capability in _capabilities)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Instruction capabilityInstruction = NewInstruction(Op.OpCapability);
+ 
+                 capabilityInstruction.AddOperand(capability);
+@@ -289,6 +291,7 @@
+             // 2.
+             foreach (string extension in _extensions)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 Instruction extensionInstruction = NewInstruction(Op.OpExtension);
+ 
+                 extensionInstruction.AddOperand(extension);
+@@ -298,6 +301,7 @@
+             // 3.
+             foreach (Instruction extInstImport in _extInstImports.Values)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 extInstImport.Write(writer);
+             }
+ 
+@@ -310,12 +314,14 @@
+             // 5.
+             foreach (Instruction entrypoint in _entrypoints)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 entrypoint.Write(writer);
+             }
+ 
+             // 6.
+             foreach (Instruction executionMode in _executionModes)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 executionMode.Write(writer);
+             }
+ 
+@@ -323,12 +329,14 @@
+             // TODO: Order debug information correctly.
+             foreach (Instruction debug in _debug)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 debug.Write(writer);
+             }
+ 
+             // 8.
+             foreach (Instruction annotation in _annotations)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 annotation.Write(writer);
+             }
+ 
+@@ -342,18 +350,21 @@
+             // 9.
+             foreach (Instruction declaration in declarations)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 declaration.Write(writer);
+             }
+ 
+             // 10.
+             foreach (Instruction functionDeclaration in _functionsDeclarations)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 functionDeclaration.Write(writer);
+             }
+ 
+             // 11.
+             foreach (Instruction functionDefinition in _functionsDefinitions)
+             {
++                Ryujinx.Common.Utilities.CanopyTranslationGuard.Step();
+                 functionDefinition.Write(writer);
+             }
+ 
+--- a/src/Spv.Generator/Spv.Generator.csproj
++++ b/src/Spv.Generator/Spv.Generator.csproj
+@@ -4,4 +4,7 @@
+     <DefaultItemExcludes>$(DefaultItemExcludes);._*</DefaultItemExcludes>
+   </PropertyGroup>
+ 
++  <ItemGroup>
++    <ProjectReference Include="../Ryujinx.Common/Ryujinx.Common.csproj" />
++  </ItemGroup>
+ </Project>
