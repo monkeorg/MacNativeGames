@@ -20,6 +20,13 @@
 static pthread_mutex_t gamepadLock = PTHREAD_MUTEX_INITIALIZER;
 static RuntimeGamepadState gamepadState;
 static uint64_t pressedEdges;
+#if TARGET_OS_IPHONE
+// Keep mouse taps separate so capture loss cannot replay them or discard a
+// controller/touch tap mapped to the same Switch button.
+static uint64_t mousePressedEdges;
+static uint64_t mouseMappedButtons, controllerMappedButtons;
+static const uint64_t mousePhysicalMask = ((1ULL << CONTROLLER_MOUSE_BUTTONS) - 1) << CONTROLLER_MOUSE_FIRST;
+#endif
 static BOOL started;
 static uint16_t controllerMap[CONTROLLER_BUTTONS];
 static uint8_t controllerModes[CONTROLLER_BUTTONS];
@@ -405,8 +412,26 @@ void runtime_mouse_button(int button, int down) {   /* main thread */
 void runtime_mouse_release(void) {   /* main thread: the window let the pointer go (focus lost, text entry, mouse mode off) */
     pthread_mutex_lock(&gamepadLock);
     mouse_look_reset(&mouseLook); mouseRX = mouseRY = 0;
+#if TARGET_OS_IPHONE
+    mousePressedEdges = 0;
+    mouseMappedButtons = 0;
+    gamepadState.buttons = controllerMappedButtons;
+#endif
     pthread_mutex_unlock(&gamepadLock);
+#if TARGET_OS_IPHONE
+    // A tap/toggle may remain active after its physical mouse button is up.
+    // Cancel only mouse slots; the menu intentionally leaves controllers live.
+    int refresh = mouseButtons != 0 || (physicalPrev & mousePhysicalMask) != 0;
+    for (int i = CONTROLLER_MOUSE_FIRST; i < CONTROLLER_BUTTONS; i++) {
+        refresh |= tapUntil[i] != 0 || toggleOn[i] != 0 || toggleMoved[i] != 0;
+        tapUntil[i] = 0; toggleOn[i] = 0; toggleMoved[i] = 0;
+    }
+    physicalPrev &= ~mousePhysicalMask;
+    mouseButtons = 0;
+    if (refresh) refresh_gamepads();
+#else
     if (mouseButtons) { mouseButtons = 0; refresh_gamepads(); }
+#endif
 }
 
 static void refresh_gamepads(void) {
@@ -433,6 +458,9 @@ static void refresh_gamepads(void) {
     /* Modes work on the physical buttons, not on the mapped ones: two physical buttons may share a Switch button
        (X and L3 both running), and a mapped edge would be lost while the other one is held. */
     uint64_t now = runtime_now_ns(), edges = physical & ~physicalPrev, synthetic = 0, suppressed = 0;
+#if TARGET_OS_IPHONE
+    uint64_t mouseSynthetic = 0, controllerSynthetic = 0;
+#endif
     int moving = next.lx || next.ly;
     physicalPrev = physical;
     for (int i = 0; i < CONTROLLER_BUTTONS; i++) {
@@ -455,16 +483,41 @@ static void refresh_gamepads(void) {
                fire button does nothing else meanwhile. */
             uint64_t fire = 1ULL << controller_mode_fire(controllerModes[i]);
             suppressed |= fire;
-            if (!(physical & fire)) synthetic |= controllerMap[i];
+            if (!(physical & fire)) {
+                synthetic |= controllerMap[i];
+#if TARGET_OS_IPHONE
+                if (i >= CONTROLLER_MOUSE_FIRST) mouseSynthetic |= controllerMap[i];
+                else controllerSynthetic |= controllerMap[i];
+#endif
+            }
         }
         int active = kind == CONTROLLER_TAP ? now < tapUntil[i] : kind == CONTROLLER_TOGGLE ? toggleOn[i] : 0;
-        if (active) synthetic |= controllerMap[i];
+        if (active) {
+            synthetic |= controllerMap[i];
+#if TARGET_OS_IPHONE
+            if (i >= CONTROLLER_MOUSE_FIRST) mouseSynthetic |= controllerMap[i];
+            else controllerSynthetic |= controllerMap[i];
+#endif
+        }
     }
     uint64_t held = physical & ~suppressed;
     for (int i = 0; i < CONTROLLER_BUTTONS; i++) if (controllerModes[i] != CONTROLLER_HOLD) held &= ~(1ULL << i);
     next.buttons |= controller_map_apply(controllerMap, held) | synthetic;
     pthread_mutex_lock(&gamepadLock);
+#if TARGET_OS_IPHONE
+    // Compare each source with its own previous mapped state. A controller tap
+    // can start while the mouse already holds that same Switch button; deriving
+    // it from the combined state would discard it when mouse capture ends.
+    // Touch edges stay in pressedEdges through their existing independent path.
+    uint64_t mappedMouse = controller_map_apply(controllerMap, held & mousePhysicalMask) | mouseSynthetic;
+    uint64_t mappedController = controller_map_apply(controllerMap, held & ~mousePhysicalMask) | controllerSynthetic;
+    mousePressedEdges |= mappedMouse & ~mouseMappedButtons;
+    pressedEdges |= mappedController & ~controllerMappedButtons;
+    mouseMappedButtons = mappedMouse;
+    controllerMappedButtons = mappedController;
+#else
     pressedEdges |= next.buttons & ~gamepadState.buttons;
+#endif
     gamepadState = next;
     pthread_mutex_unlock(&gamepadLock);
 }
@@ -542,6 +595,10 @@ void runtime_gamepad_clear(void) {
     pthread_mutex_lock(&gamepadLock);
     gamepadState = (RuntimeGamepadState){0};
     pressedEdges = 0;
+#if TARGET_OS_IPHONE
+    mousePressedEdges = 0;
+    mouseMappedButtons = controllerMappedButtons = 0;
+#endif
     mouse_look_reset(&mouseLook); mouseRX = mouseRY = 0;
     pthread_mutex_unlock(&gamepadLock);
 }
@@ -561,6 +618,10 @@ void runtime_gamepad_read(RuntimeGamepadState *out) {
     pthread_mutex_lock(&gamepadLock);
     *out = gamepadState;
     out->buttons |= touchState.buttons | pressedEdges;
+#if TARGET_OS_IPHONE
+    out->buttons |= mousePressedEdges;
+    mousePressedEdges = 0;
+#endif
     out->lx = stronger_axis(out->lx, touchState.lx); out->ly = stronger_axis(out->ly, touchState.ly);
     out->rx = stronger_axis(out->rx, touchState.rx); out->ry = stronger_axis(out->ry, touchState.ry);
     out->rx = stronger_axis(out->rx, mouseRX); out->ry = stronger_axis(out->ry, mouseRY);
