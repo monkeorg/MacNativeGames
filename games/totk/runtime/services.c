@@ -2,6 +2,7 @@
 #include "runtime.h"
 #include <TargetConditionals.h>
 #include "ipc.h"
+#include "language.h"
 #include <mach/mach.h>
 #include "mach_vm_compat.h"
 #include <stdio.h>
@@ -281,30 +282,25 @@ static void performance_config(int mode,int cfg) {if(mode<0||mode>1)runtime_fail
    launcher sets to the app's first preferred language (BCP 47, e.g. "pt-BR"; it follows a per-app language), or else
    the Mac's current locale. Brazil maps to "pt-BR" only in the 1.4.3 build and in Breath of the Wild 1.9.0, whose RomFS have the official USpt text. */
 static uint64_t desired_language(void) {
- const char *explicit=getenv("TOTK_LANG");char code[8]={0};
- if(explicit){if(strlen(explicit)>7)runtime_fail("language code too long");memcpy(code,explicit,strlen(explicit));}
- else {
-  char language[16]={0},region[4]={0};const char *tag=getenv("TOTK_LOCALE");
-  if(tag&&*tag){
-   size_t n=strcspn(tag,"-_");if(n<sizeof(language))memcpy(language,tag,n);
-   for(const char *p=tag+n;*p;){p+=strspn(p,"-_");size_t k=strcspn(p,"-_");
-    if(k==2&&isalpha((unsigned char)p[0])&&isalpha((unsigned char)p[1])){region[0]=(char)toupper((unsigned char)p[0]);region[1]=(char)toupper((unsigned char)p[1]);}
-    p+=k;}
-  } else {
-   CFLocaleRef locale=CFLocaleCopyCurrent();
-   CFStringRef value=CFLocaleGetValue(locale,kCFLocaleLanguageCode);
-   if(value)CFStringGetCString(value,language,sizeof(language),kCFStringEncodingUTF8);
-   value=CFLocaleGetValue(locale,kCFLocaleCountryCode);
-   if(value)CFStringGetCString(value,region,sizeof(region),kCFStringEncodingUTF8);CFRelease(locale);
+ const char *explicit=getenv("TOTK_LANG"),*tag=getenv("TOTK_LOCALE");char code[8],locale_tag[128]={0};
+ if((!explicit||!*explicit)&&(!tag||!*tag)){
+  CFLocaleRef locale=CFLocaleCopyCurrent();
+  if(locale){
+   CFStringRef identifier=CFLocaleGetIdentifier(locale);
+   if(!identifier||!CFStringGetCString(identifier,locale_tag,sizeof(locale_tag),kCFStringEncodingUTF8))locale_tag[0]=0;
+   CFRelease(locale);
   }
-#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190)
-  const char *portuguese=!strcmp(region,"BR")?"pt-BR":"pt";
-#else
-  const char *portuguese="pt";
-#endif
-  const char *selected=!strcmp(language,"ja")?"ja":!strcmp(language,"de")?"de":!strcmp(language,"fr")?"fr":!strcmp(language,"es")?"es":!strcmp(language,"it")?"it":!strcmp(language,"nl")?"nl":!strcmp(language,"ru")?"ru":!strcmp(language,"ko")?"ko":!strcmp(language,"zh")?"zh-Hans":!strcmp(language,"pt")?portuguese:"en-US";
-  memcpy(code,selected,strlen(selected));
+  tag=locale_tag;
  }
+#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190)
+ const int brazil_supported=1;
+#else
+ const int brazil_supported=0;
+#endif
+ /* Empty explicit overrides are System. Script/region-aware Chinese fallback
+  * is also a locale correctness fix for Mac; nonempty explicit codes and all
+  * other existing locale canonicalizations remain unchanged. */
+ if(runtime_language_resolve(explicit,tag,brazil_supported,code))runtime_fail("language code too long");
  uint64_t result;memcpy(&result,code,8);
  fprintf(stderr,"[totk] language: %s (TOTK_LANG=%s TOTK_LOCALE=%s)\n",code,explicit?explicit:"-",getenv("TOTK_LOCALE")?getenv("TOTK_LOCALE"):"-");
  return result;

@@ -9,6 +9,7 @@
 #include <math.h>
 #include "runtime.h"
 #include "fs_host.h"
+#include "language.h"
 #include "dmsh_chain.h"
 #import "touch_pad.h"
 #import "launcher.h"
@@ -116,7 +117,7 @@ void runtime_shortcut_help_toggle(void) {}
         runtime_ios_set_taa_enabled(TOTKLauncherTAA(NSUserDefaults.standardUserDefaults));
         [NSUserDefaults.standardUserDefaults setBool:TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults) forKey:@"MetalHUDForceEnabled"];
         NSString *lang = TOTKLauncherLanguage(NSUserDefaults.standardUserDefaults);
-        if (!getenv("TOTK_LANG") && lang.length) setenv("TOTK_LANG",lang.UTF8String,0);
+        if (runtime_language_apply_preferred_choice(lang.UTF8String,1)) runtime_fail("configure game language");
         NSInteger hud = TOTKLauncherHUD(NSUserDefaults.standardUserDefaults);
         for (unsigned i=0;i<3 && fps_overlay_hud_mode()!=hud;i++) fps_overlay_toggle_hints();
         unsigned width, height; BOOL fullDisplay;
@@ -197,7 +198,7 @@ static void audio_observe(void) {
     audio_observe();
     /* The Mac launcher passes the preferred language as TOTK_LOCALE (PR #97); "zh-Hans-CN" maps to zh-Hans in services.c. */
     NSString *preferred = NSLocale.preferredLanguages.firstObject;
-    if (preferred.length) setenv("TOTK_LOCALE", preferred.UTF8String, 1);
+    if (runtime_language_bind_locale(preferred.UTF8String)) runtime_fail("configure preferred game locale");
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,NSUserDomainMask,YES).firstObject;
     NSString *res = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"GameData"];
