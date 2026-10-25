@@ -49,8 +49,10 @@ int probe_renameat(int from,const char *source,int to,const char *destination) {
         (!strcmp(destination,"current") && fault("hook_after_current")))) cancel_requested=1;
     return result;
 }
-static void before_exclusive(const char *source) {
+static int before_exclusive(const char *source) {
     if (!strcmp(source,".asset.tmp") && fault("before_asset_rename")) _exit(24);
+    if (strlen(source)==32 && fault("generation_rename")) { errno=EIO; return -1; }
+    return 0;
 }
 static void after_exclusive(const char *source,int result) {
     if (result) return;
@@ -65,13 +67,13 @@ long probe_syscall(long number,...) {
     int from=va_arg(args,int); const char *source=va_arg(args,const char *);
     int to=va_arg(args,int); const char *destination=va_arg(args,const char *);
     unsigned flags=va_arg(args,unsigned); va_end(args);
-    before_exclusive(source);
+    if (before_exclusive(source)) return -1;
     long result=syscall(number,from,source,to,destination,flags);
     after_exclusive(source,(int)result); return result;
 }
 #elif defined(__APPLE__)
 int probe_renameatx_np(int from,const char *source,int to,const char *destination,unsigned flags) {
-    before_exclusive(source);
+    if (before_exclusive(source)) return -1;
     int result=renameatx_np(from,source,to,destination,flags);
     after_exclusive(source,result); return result;
 }
@@ -127,8 +129,9 @@ int main(int argc,char **argv) {
     }
     if (!strcmp(argv[1],"commit") || !strcmp(argv[1],"cancel") || !strcmp(argv[1],"badcount") ||
         !strcmp(argv[1],"badbytes") || !strcmp(argv[1],"badflags") || !strcmp(argv[1],"inject") ||
-        !strncmp(argv[1],"reuse_",6)) {
-        if (argc!=6) return 2;
+        !strncmp(argv[1],"reuse_",6) || !strcmp(argv[1],"known") || !strcmp(argv[1],"known_cancel") ||
+        !strcmp(argv[1],"legacy_inferred") || !strncmp(argv[1],"invalid_identity_",17)) {
+        if (argc!=6 && argc!=7) return 2;
         result.title_id=strtoull(argv[4],NULL,16);
         if (fault("hook_resume")) cancel_target=store;
         status=mng_store_begin(store,argv[3]);
@@ -137,6 +140,22 @@ int main(int argc,char **argv) {
             struct mng_asset_sink sink=mng_store_sink(store);
             if (fill(&sink,argv[5],&result)) status=MNG_PREPARE_IO;
             else {
+                if (!strcmp(argv[1],"known") || !strcmp(argv[1],"known_cancel") || !strncmp(argv[1],"invalid_identity_",17)) {
+                    result.application_id=result.title_id; result.version_identified=1; result.content_role=0x80;
+                    unsigned long long version=argc==7 ? strtoull(argv[6],NULL,10):0;
+                    if (version>UINT32_MAX) return 2;
+                    result.title_version=(uint32_t)version;
+                }
+                if (!strcmp(argv[1],"legacy_inferred")) result.application_id=result.title_id;
+                if (!strncmp(argv[1],"invalid_identity_unknown_",25)) {
+                    result.version_identified=0; result.title_version=0; result.content_role=0;
+                }
+                if (!strcmp(argv[1],"invalid_identity_app") || !strcmp(argv[1],"invalid_identity_unknown_app")) result.application_id++;
+                if (!strcmp(argv[1],"invalid_identity_role")) result.content_role=0x81;
+                if (!strcmp(argv[1],"invalid_identity_flag")) result.version_identified=2;
+                if (!strcmp(argv[1],"invalid_identity_missing_app")) result.application_id=0;
+                if (!strcmp(argv[1],"invalid_identity_unknown_version")) result.title_version=1;
+                if (!strcmp(argv[1],"invalid_identity_unknown_role")) result.content_role=0x80;
                 if (!strcmp(argv[1],"inject")) {
                     char path[4096];
                     int length=snprintf(path,sizeof(path),"%s/jobs/%s/untracked",argv[2],argv[3]);
@@ -144,7 +163,7 @@ int main(int argc,char **argv) {
                     int extra=open(path,O_CREAT|O_EXCL|O_WRONLY,0600); if (extra<0) return 4;
                     close(extra);
                 }
-                if (!strcmp(argv[1],"cancel")) mng_store_cancel(store);
+                if (!strcmp(argv[1],"cancel") || !strcmp(argv[1],"known_cancel")) mng_store_cancel(store);
                 if (!strcmp(argv[1],"badcount")) result.asset_count++;
                 if (!strcmp(argv[1],"badbytes")) result.asset_bytes++;
                 if (!strcmp(argv[1],"badflags")) result.romfs_verified=0;
@@ -219,7 +238,9 @@ int main(int argc,char **argv) {
         if (argc!=4) return 2;
         status=mng_store_discard_job(store,argv[3]);
     } else { mng_store_close(store); return 2; }
-    printf("{\"status\":%u,\"generation\":\"%s\",\"assetCount\":%" PRIu64 ",\"assetBytes\":%" PRIu64 "}\n",
-        (unsigned)status,generation,result.asset_count,result.asset_bytes);
+    printf("{\"status\":%u,\"generation\":\"%s\",\"assetCount\":%" PRIu64 ",\"assetBytes\":%" PRIu64
+        ",\"applicationID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32 ",\"versionIdentified\":%s,\"contentRole\":%u}\n",
+        (unsigned)status,generation,result.asset_count,result.asset_bytes,result.application_id,result.title_version,
+        result.version_identified ? "true":"false",(unsigned)result.content_role);
     mng_store_close(store); return 0;
 }

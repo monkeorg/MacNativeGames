@@ -239,6 +239,9 @@ static NSError *CPError(enum mng_prepare_status status, BOOL published) {
             mng_keys_free(keys); mng_store_close(store);
             NSDictionary *result = operation == MNG_PREPARE_OK ? @{
                 @"titleID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.title_id],
+                @"applicationID":[NSString stringWithFormat:@"%016llx", (unsigned long long)prepared.application_id],
+                @"titleVersion":@(prepared.title_version), @"versionIdentified":@(prepared.version_identified != 0),
+                @"contentRole":@(prepared.content_role),
                 @"generationID":[NSString stringWithUTF8String:generation], @"jobID":job,
                 @"sourceSHA256":CPHex(prepared.source_sha256, 32), @"assetCount":@(prepared.asset_count), @"assetBytes":@(prepared.asset_bytes),
                 @"exefsVerified":@(prepared.exefs_verified != 0), @"romfsVerified":@(prepared.romfs_verified != 0),

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
@@ -74,6 +75,44 @@ class CanopyStoreTests(unittest.TestCase):
     def generation(self, generation, title=TITLE):
         return self.root / 'titles' / title / 'generations' / generation
 
+    def known(self, version, variant='A', job=None):
+        result = self.run_probe('known', job or self.job(), TITLE, variant, str(version))
+        self.assertEqual(result['status'], 0, result)
+        return result['generation']
+
+    def legacy_fixture(self):
+        """Pre-v2 on-disk encoding, independent of the current store writer."""
+        payloads = {'exefs/main': b'nonproprietary main fixture A',
+                    'exefs/main.npdm': b'nonproprietary metadata fixture',
+                    'romfs.bin': b'nonproprietary romfs fixture'}
+        header = bytearray(80)
+        header[:8] = b'CNPYST01'
+        struct.pack_into('<QQQQ', header, 8, int(TITLE, 16), 1000, 3, sum(map(len, payloads.values())))
+        header[40:72] = hashlib.sha256(b'A').digest()
+        header[72:74] = b'\x01\x01'
+        records, assets = bytearray(), []
+        for path, data in sorted(payloads.items()):
+            digest = hashlib.sha256(data)
+            records += path.encode().ljust(80, b'\0') + struct.pack('<Q', len(data)) + digest.digest()
+            assets.append({'path': path, 'size': len(data), 'sha256': digest.hexdigest()})
+        receipt = bytes(header + records)
+        generation = hashlib.sha256(b'canopy-assets-v1\0' + receipt).hexdigest()
+        manifest = {'schemaVersion': 1, 'titleID': TITLE, 'generationID': generation,
+                    'recipeID': 'canopy-assets-v1', 'sourceSHA256': hashlib.sha256(b'A').hexdigest(),
+                    'sourceSize': 1000, 'assets': assets,
+                    'integrity': {'exefsVerified': True, 'romfsVerified': True, 'signatureVerified': False},
+                    'executionVerified': False}
+        directory = self.generation(generation)
+        (directory / 'exefs').mkdir(parents=True, mode=0o700)
+        for path, data in payloads.items():
+            (directory / path).write_bytes(data)
+            (directory / path).chmod(0o400)
+        (directory / 'receipt.bin').write_bytes(receipt)
+        (directory / 'manifest.json').write_text(json.dumps(manifest, separators=(',', ':')) + '\n')
+        (directory / '.lease').touch(mode=0o400)
+        (self.root / 'titles' / TITLE / 'current').write_text(generation + '\n')
+        return generation
+
     def current(self, title=TITLE):
         return (self.root / 'titles' / title / 'current').read_text().strip()
 
@@ -95,6 +134,101 @@ class CanopyStoreTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(data).hexdigest(), asset['sha256'])
         self.assertEqual(self.current(), generation)
         self.assertEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+
+    def test_existing_v1_fixture_keeps_exact_fingerprint_and_unknown_version(self):
+        generation = self.legacy_fixture()
+        directory = self.generation(generation)
+        before = {name: (directory / name).read_bytes() for name in ('receipt.bin', 'manifest.json')}
+        inode = (directory / 'romfs.bin').stat().st_ino
+        result = self.run_probe('verify', TITLE, generation)
+        self.assertEqual(result['status'], 0)
+        self.assertEqual(result['applicationID'], TITLE)
+        self.assertFalse(result['versionIdentified'])
+        self.assertEqual((result['titleVersion'], result['contentRole']), (0, 0))
+        self.assertEqual(self.commit(), generation)  # Unknown application_id=0 accepted.
+        inferred = self.run_probe('legacy_inferred', self.job(), TITLE, 'A')
+        self.assertEqual(inferred['status'], 0)
+        self.assertEqual(inferred['generation'], generation)  # Inferred base id also accepted.
+        self.assertEqual((directory / 'romfs.bin').stat().st_ino, inode)
+        for name, data in before.items():
+            self.assertEqual((directory / name).read_bytes(), data)
+
+    def test_known_metadata_v2_roundtrip_including_version_zero_and_maximum(self):
+        for version in (0, 65536, 0xffffffff):
+            with self.subTest(version=version):
+                generation = self.known(version)
+                result = self.run_probe('verify', TITLE, generation)
+                self.assertEqual(result['status'], 0)
+                self.assertEqual(result['applicationID'], TITLE)
+                self.assertTrue(result['versionIdentified'])
+                self.assertEqual((result['titleVersion'], result['contentRole']), (version, 0x80))
+                directory = self.generation(generation)
+                receipt = (directory / 'receipt.bin').read_bytes()
+                self.assertEqual(receipt[:8], b'CNPYST02')
+                self.assertEqual(len(receipt), 104 + 3 * 120)
+                self.assertEqual(struct.unpack_from('<QIBB', receipt, 80), (int(TITLE, 16), version, 1, 0x80))
+                manifest = json.loads((directory / 'manifest.json').read_text())
+                self.assertEqual((manifest['schemaVersion'], manifest['recipeID']), (2, 'canopy-assets-v2'))
+                self.assertEqual(manifest['applicationID'], TITLE)
+                self.assertEqual(manifest['titleVersion'], version)
+                self.assertTrue(manifest['versionIdentified'])
+                self.assertEqual(manifest['contentRole'], 0x80)
+                self.assertFalse(manifest['executionVerified'])
+                self.assertFalse(manifest['integrity']['signatureVerified'])
+
+    def test_known_identity_is_committed_into_generation_and_reuses_only_exact_identity(self):
+        legacy = self.commit()
+        zero, one = self.known(0), self.known(1)
+        self.assertEqual(len({legacy, zero, one}), 3)
+        image = self.generation(one) / 'romfs.bin'
+        before = image.stat()
+        self.assertEqual(self.known(1), one)
+        self.assertEqual((image.stat().st_ino, image.stat().st_mtime_ns), (before.st_ino, before.st_mtime_ns))
+        self.assertEqual(self.run_probe('verify', TITLE, legacy)['status'], 0)
+
+    def test_illegal_identity_combinations_fail_without_changing_current(self):
+        original = self.commit()
+        for suffix in ('app', 'role', 'flag', 'missing_app', 'unknown_app', 'unknown_version', 'unknown_role'):
+            with self.subTest(suffix=suffix):
+                result = self.run_probe('invalid_identity_' + suffix, self.job(), TITLE, 'B')
+                self.assertEqual(result['status'], 1)
+                self.assertEqual(self.current(), original)
+
+    def test_v2_metadata_receipt_and_manifest_corruption_is_rejected(self):
+        generation = self.known(65536)
+        directory = self.generation(generation)
+        receipt = directory / 'receipt.bin'
+        original = receipt.read_bytes()
+        for offset, value in ((7, ord('3')), (74, 1), (80, 1), (88, 1), (92, 0), (92, 2), (93, 0), (94, 1)):
+            with self.subTest(offset=offset, value=value):
+                changed = bytearray(original)
+                changed[offset] = value
+                receipt.write_bytes(changed)
+                self.assertNotEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+        receipt.write_bytes(original[:-1])
+        self.assertNotEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+        receipt.write_bytes(original)
+        manifest = directory / 'manifest.json'
+        before = manifest.read_bytes()
+        manifest.write_bytes(before.replace(b'"titleVersion":65536', b'"titleVersion":65537'))
+        self.assertNotEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+        manifest.write_bytes(before)
+        self.assertEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+
+    def test_interrupted_v2_receipt_can_resume_with_exact_identity(self):
+        original = self.commit('Z')
+        job = self.job()
+        result = self.run_probe('known', job, TITLE, 'A', '65536', env={'CANOPY_TEST_FAULT': 'generation_rename'})
+        self.assertEqual(result['status'], 2)
+        staged = self.root / 'jobs' / job
+        self.assertEqual((staged / 'receipt.bin').read_bytes()[:8], b'CNPYST02')
+        before = (staged / 'exefs/main').stat().st_ino
+        self.assertEqual(self.current(), original)
+        generation = self.known(65536, job=job)
+        self.assertEqual((self.generation(generation) / 'exefs/main').stat().st_ino, before)
+        verified = self.run_probe('verify', TITLE, generation)
+        self.assertTrue(verified['versionIdentified'])
+        self.assertEqual(verified['titleVersion'], 65536)
 
     def test_same_input_reuses_immutable_generation(self):
         generation = self.commit()

@@ -24,6 +24,7 @@
 #define PATH_BYTES 80u
 #define RECORD_BYTES 120u
 #define HEADER_BYTES 80u
+#define HEADER_V2_BYTES 104u
 #define MANIFEST_BYTES 32768u
 struct asset { char path[PATH_BYTES]; uint64_t size; unsigned char sha[32]; };
 struct mng_store {
@@ -133,6 +134,16 @@ static int replace_file(int dir, const char *name, const char *temporary, const 
 }
 static void put64(unsigned char *p, uint64_t n) { for (unsigned i=0;i<8;i++) { p[i]=(unsigned char)n; n>>=8; } }
 static uint64_t get64(const unsigned char *p) { uint64_t n=0; for (unsigned i=0;i<8;i++) n|=(uint64_t)p[i]<<(8*i); return n; }
+static void put32(unsigned char *p, uint32_t n) { for (unsigned i=0;i<4;i++) { p[i]=(unsigned char)n; n>>=8; } }
+static uint32_t get32(const unsigned char *p) { uint32_t n=0; for (unsigned i=0;i<4;i++) n|=(uint32_t)p[i]<<(8*i); return n; }
+static int identity_valid(const struct mng_prepare_result *r) {
+    if (r->version_identified==1) return r->title_id && r->application_id==r->title_id && r->content_role==0x80;
+    return r->version_identified==0 && !r->title_version && !r->content_role &&
+        (!r->application_id || r->application_id==r->title_id);
+}
+static const char *recipe_for(const struct mng_prepare_result *r) {
+    return r->version_identified ? MNG_STORE_RECIPE_V2:MNG_STORE_RECIPE;
+}
 static int asset_parent(int root, const char *path, int create, const char **name) {
     if (!asset_path(path)) return -1;
     if (!strncmp(path,"exefs/",6)) { *name=path+6; return directory(root,"exefs",create); }
@@ -169,18 +180,23 @@ static int hash_asset(int root, const struct asset *asset, struct mng_store *can
     mng_sha256_free(hash_state); close(fd); return bad==2 ? -2:bad ? -1:0;
 }
 static unsigned char *receipt(const struct asset *assets, size_t count, const struct mng_prepare_result *r, size_t *length) {
-    *length=HEADER_BYTES+count*RECORD_BYTES;
+    int identified=r && r->version_identified;
+    size_t header=identified ? HEADER_V2_BYTES:HEADER_BYTES;
+    *length=header+count*RECORD_BYTES;
     unsigned char *data=calloc(1,*length); if (!data) return NULL;
-    memcpy(data,"CNPYST01",8); put64(data+24,count);
+    memcpy(data,identified ? "CNPYST02":"CNPYST01",8); put64(data+24,count);
     uint64_t total=0;
     for (size_t i=0;i<count;i++) {
-        unsigned char *record=data+HEADER_BYTES+i*RECORD_BYTES;
+        unsigned char *record=data+header+i*RECORD_BYTES;
         memcpy(record,assets[i].path,strlen(assets[i].path)); put64(record+80,assets[i].size);
         memcpy(record+88,assets[i].sha,32); total+=assets[i].size;
     }
     put64(data+32,total);
     if (r) { put64(data+8,r->title_id); put64(data+16,r->source_size); memcpy(data+40,r->source_sha256,32);
-        data[72]=(unsigned char)r->exefs_verified; data[73]=(unsigned char)r->romfs_verified; }
+        data[72]=(unsigned char)r->exefs_verified; data[73]=(unsigned char)r->romfs_verified;
+        if (identified) { put64(data+80,r->application_id); put32(data+88,r->title_version);
+            data[92]=1; data[93]=r->content_role; }
+    }
     return data;
 }
 static int save_receipt(int dir, const struct asset *assets, size_t count, const struct mng_prepare_result *r) {
@@ -190,16 +206,23 @@ static int save_receipt(int dir, const struct asset *assets, size_t count, const
 static int load_receipt(int dir, struct asset *assets, size_t *count, struct mng_prepare_result *r) {
     int fd=openat(dir,"receipt.bin",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
     if (fd<0) return -1;
-    struct stat st; unsigned char data[HEADER_BYTES+MNG_STORE_MAX_ASSETS*RECORD_BYTES];
+    struct stat st; unsigned char data[HEADER_V2_BYTES+MNG_STORE_MAX_ASSETS*RECORD_BYTES];
     int bad=regular(fd,sizeof(data),&st) || st.st_size<HEADER_BYTES;
     if (!bad) bad=read_all(fd,data,(size_t)st.st_size);
     close(fd);
-    if (bad || memcmp(data,"CNPYST01",8)) return -1;
+    if (bad) return -1;
+    int identified=!memcmp(data,"CNPYST02",8);
+    if (!identified && memcmp(data,"CNPYST01",8)) return -1;
+    size_t header=identified ? HEADER_V2_BYTES:HEADER_BYTES;
     uint64_t n=get64(data+24), total=0;
-    if (n>MNG_STORE_MAX_ASSETS || HEADER_BYTES+n*RECORD_BYTES!=(uint64_t)st.st_size || data[72]>1 || data[73]>1) return -1;
+    if (n>MNG_STORE_MAX_ASSETS || header+n*RECORD_BYTES!=(uint64_t)st.st_size || data[72]>1 || data[73]>1) return -1;
     for (size_t i=74;i<HEADER_BYTES;i++) if (data[i]) return -1;
+    if (identified) {
+        if (data[92]!=1) return -1;
+        for (size_t i=94;i<HEADER_V2_BYTES;i++) if (data[i]) return -1;
+    }
     for (size_t i=0;i<(size_t)n;i++) {
-        const unsigned char *record=data+HEADER_BYTES+i*RECORD_BYTES;
+        const unsigned char *record=data+header+i*RECORD_BYTES;
         if (!memchr(record,0,PATH_BYTES) || !asset_path((const char *)record)) return -1;
         size_t path_length=strlen((const char *)record);
         for (size_t j=path_length;j<PATH_BYTES;j++) if (record[j]) return -1;
@@ -211,7 +234,11 @@ static int load_receipt(int dir, struct asset *assets, size_t *count, struct mng
     if (total!=get64(data+32)) return -1;
     memset(r,0,sizeof(*r)); r->title_id=get64(data+8); r->source_size=get64(data+16);
     r->asset_count=n; r->asset_bytes=total; memcpy(r->source_sha256,data+40,32);
-    r->exefs_verified=data[72]; r->romfs_verified=data[73]; *count=(size_t)n;
+    r->exefs_verified=data[72]; r->romfs_verified=data[73];
+    r->application_id=identified ? get64(data+80):r->title_id;
+    if (identified) { r->title_version=get32(data+88); r->version_identified=1; r->content_role=data[93]; }
+    if (!identity_valid(r)) return -1;
+    *count=(size_t)n;
     return 0;
 }
 static int compare_assets(const void *left, const void *right) {
@@ -221,7 +248,8 @@ static int generation(const struct asset *assets, size_t count, const struct mng
     size_t length; unsigned char *data=receipt(assets,count,r,&length), digest[32];
     if (!data) return -1;
     struct mng_sha256 *hash_state=NULL;
-    int bad=mng_sha256_init(&hash_state) || mng_sha256_update(hash_state,MNG_STORE_RECIPE,sizeof(MNG_STORE_RECIPE)) ||
+    const char *recipe=recipe_for(r);
+    int bad=mng_sha256_init(&hash_state) || mng_sha256_update(hash_state,recipe,strlen(recipe)+1) ||
         mng_sha256_update(hash_state,data,length) || mng_sha256_final(hash_state,digest);
     mng_sha256_free(hash_state); free(data); if (bad) return -1;
     hex(digest,32,out); return 0;
@@ -229,10 +257,17 @@ static int generation(const struct asset *assets, size_t count, const struct mng
 static char *manifest(const struct asset *assets, size_t count, const struct mng_prepare_result *r, const char *gen) {
     char *json=calloc(1,MANIFEST_BYTES), sha[65]; if (!json) return NULL;
     hex(r->source_sha256,32,sha);
-    int n=snprintf(json,MANIFEST_BYTES,"{\"schemaVersion\":1,\"titleID\":\"%016" PRIx64 "\",\"generationID\":\"%s\",\"recipeID\":\"%s\",\"sourceSHA256\":\"%s\",\"sourceSize\":%" PRIu64 ",\"assets\":[",
-        r->title_id,gen,MNG_STORE_RECIPE,sha,r->source_size);
+    int n=snprintf(json,MANIFEST_BYTES,"{\"schemaVersion\":%u,\"titleID\":\"%016" PRIx64 "\",\"generationID\":\"%s\",\"recipeID\":\"%s\",\"sourceSHA256\":\"%s\",\"sourceSize\":%" PRIu64,
+        r->version_identified ? 2u:1u,r->title_id,gen,recipe_for(r),sha,r->source_size);
     if (n<0 || (size_t)n>=MANIFEST_BYTES) { free(json); return NULL; }
     size_t used=(size_t)n;
+    if (r->version_identified) {
+        n=snprintf(json+used,MANIFEST_BYTES-used,",\"applicationID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32 ",\"versionIdentified\":true,\"contentRole\":%u",
+            r->application_id,r->title_version,(unsigned)r->content_role);
+        if (n<0 || (size_t)n>=MANIFEST_BYTES-used) { free(json); return NULL; } used+=(size_t)n;
+    }
+    n=snprintf(json+used,MANIFEST_BYTES-used,",\"assets\":[");
+    if (n<0 || (size_t)n>=MANIFEST_BYTES-used) { free(json); return NULL; } used+=(size_t)n;
     for (size_t i=0;i<count;i++) {
         hex(assets[i].sha,32,sha);
         n=snprintf(json+used,MANIFEST_BYTES-used,"%s{\"path\":\"%s\",\"size\":%" PRIu64 ",\"sha256\":\"%s\"}",i ? ",":"",assets[i].path,assets[i].size,sha);
@@ -411,7 +446,7 @@ enum mng_prepare_status mng_store_current(struct mng_store *s, uint64_t title, c
     int bad=pointer_read(dir,"current",out); close(dir); return bad ? MNG_PREPARE_IO:MNG_PREPARE_OK;
 }
 static int complete(const struct asset *assets, size_t count, const struct mng_prepare_result *r) {
-    if (!r->title_id || !r->source_size || r->asset_count!=count || r->exefs_verified!=1 || r->romfs_verified!=1) return 0;
+    if (!r->title_id || !r->source_size || r->asset_count!=count || r->exefs_verified!=1 || r->romfs_verified!=1 || !identity_valid(r)) return 0;
     uint64_t total=0; int main_found=0, metadata=0, romfs=0;
     for (size_t i=0;i<count;i++) { total+=assets[i].size;
         if (!strcmp(assets[i].path,"exefs/main")) main_found=1;
