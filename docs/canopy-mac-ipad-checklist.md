@@ -21,13 +21,15 @@ split is clarity cleanup, not a reproduced compiler failure; #77 compiled the ol
 form successfully. No new tests/probes run under this `/goal`; the steps below
 are the later authorized local handoff. A locked-iPad run executed no new-build checks.
 
-**Current published source starting point:** the dependent chain through #155,
-`fix/canopy-backup-retirement-recovery` /
-`2f5d3baf459ffad9087cb4f7afa37eba174813b6`,
+**Current published source starting point:** the dependent chain through #159,
+`feat/canopy-exact-update-revision` /
+`96871151c4f690936088d44106acdab5cfdc5e7e`,
 includes the friendly library/session title fixes (#110/#119), storage UI intent
 correction (#120), save UI intent correction (#122) and compiler source through
 #150, plus preparation diagnostics (#152), per-title mouse policy (#153) and
-terminal audio output suspension (#154) and backup deletion recovery (#155).
+terminal audio output suspension (#154), backup deletion recovery (#155),
+durable add-on resume (#156), guarded private shader link (#157) and actual
+startup failure diagnostics (#158) and exact update selection (#159).
 Inspect the actual recovery cursor and
 status before checkout; full-roadmap source work continues. No later source
 inherits earlier green CI. The overall product acceptance remains open.
@@ -48,6 +50,25 @@ changed, linked, unknown and corrupt entries and confirm refusal preserves
 them. Then check the real backup catalog/export/restore with immediate private
 save/identity inventories retained locally. Mandatory backups and pre-Play
 seals must still hold. No such fault-injection or device run occurred here.
+
+For #156, navigate away/relaunch with a retained add-on job, resolve its exact
+base from Storage and reselect original inputs/keys. Exercise wrong/corrupt
+intent, missing exact base, pending-base GC protection, safe discard and
+publication uncertainty. For #157, keep seed-only as the first build; review
+actual private static NativeAOT/runtime products and notices before the explicit
+experimental opt-in. Verify actual target/link and managed/Cross/resource/parity
+gates, then Metal entry/layout/cancellation/cache behavior. No actual link or
+device result exists here. For #158, compare real preflight/seal/native startup
+errors against closed redacted Diagnostics; an idle backend must not erase the
+actual failed attempt. Private paths, logs and inputs stay local.
+
+For #159, exercise latest and literal exact revisions (including 0/MAX and
+missing versions) against actual multi-revision metadata, fresh/retained and
+selected-title flows. Check malformed decimal refusal, generation reuse and
+publication uncertainty; deactivate only the owning iPad scene while the app
+stays active, then return. No stale selection may resume. Cancel/foreign-modal/
+UIKit auto-dismiss must preserve exact ownership; app-background cancellation
+and native completion remain authoritative. These checks have not run here.
 
 | Order | Mac / iPad action | Evidence to retain locally |
 |---|---|---|

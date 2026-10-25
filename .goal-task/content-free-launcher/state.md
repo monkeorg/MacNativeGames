@@ -9,8 +9,30 @@ building on it. Preserve the draft dependency chain and existing app behavior.
 No tests, probes, builds, CI dispatches, new tests, private inputs, installs,
 merges or releases in this continuation. Source review is not runtime evidence.
 
-Latest published source: `2f5d3baf459ffad9087cb4f7afa37eba174813b6`, draft #155,
-`fix/canopy-backup-retirement-recovery`, depends on #154 → #153 → #152 → #151.
+Latest published source: `96871151c4f690936088d44106acdab5cfdc5e7e`, draft #159,
+`feat/canopy-exact-update-revision`, depends on #158 → #157 → #156 → #155 →
+#154 → #153 → #152 → #151. Current worktree has additional uncommitted source;
+inspect actual status and ownership before staging.
+#159 adds actual exact/latest uint32 update revision UI and Foundation/native
+dispatch, preserving default-latest API/helper behavior. Selection is bound to
+its exact key/foreground scene and owned UI through UIKit auto-dismiss; original
+app-background cancellation stays, scene-only invalidation affects UI only.
+Storage author, independent artifact/root source reviews; unbuilt/untested.
+#158 retains closed actual startup failure phase/error despite Runtime returning
+to idle. Product author, execution/root source reviews; unbuilt/untested.
+#157 / `c88bdc6ba40560884471e2679eadd4d1c3bca790` connects actual controlled
+NativeAOT renderer consumer, checked Metal acknowledgement, per-job epoch and
+terminal cancellation, recipe-only payload namespace and explicit private static
+archive/runtime dependency/license capture/link source. Native author, two
+independent critical source reviews (execution/root). Default remains seed-only;
+NativeAOT/Apple link, managed/Cross parity/resource/compiler-safety, Metal,
+external-code permission and physical gates remain OPEN. No compiler sandbox or
+execution evidence is claimed. Final object-autolink and NSData ownership deltas
+were reviewed separately. No publisher changes were needed.
+#156 / `7bdfb34fc6395054a6a8002e91943cd7eda0b4e7` connects durable exact-base
+add-on intent, native retention/refusal and actual Storage→Addons resume route;
+storage/product authors, artifact/root source reviews, unbuilt/unrun. Every
+intent retry confirms record/namespace durability before asset writes.
 #155 replaces direct backup deletion with fully preflighted, inode/hash-bound,
 recorded retirement and surviving-subset recovery. Retry durability, original
 path limits, mandatory backups, profile seals and transaction-first recovery
@@ -28,15 +50,15 @@ and root source reviews; unbuilt/untested. No performance/device acceptance.
 
 Active ownership (shared worktree; stage exact reviewed files only):
 
-- native_review: real linked shader-provider adapter, TOTK shader runtime/host,
-  private build linkage and related integration docs (D10).
+- native_review: independent D11 integration review after runtime author freeze.
+  Own D10 implementation is published, not self-approved.
 - runtime_impl: real additive MK compiled-host ABI/Registry/Runtime dispatch,
   original-source MK glue and private builder (D11); TOTK ABI3 untouched.
-- storage_audit: native durable add-on job intent plus Storage/Addons backend
-  adapters (D3/D4/D5).
-- product_audit: connected StorageController/Games exact-base add-on routing
-  (D3/D4/D5), API aligned and frozen for independent review.
-- artifact_audit: independent review of storage/product durable add-on slice;
+- storage_audit: exact revision slice published; no active write ownership.
+- product_audit: actual Addons preparation diagnostics in AddonsController,
+  Diagnostics and Games shared unit helper; default off, real opt-in/history/
+  manual snapshot/export caller (D13). Games player-capability gate queued next.
+- artifact_audit: available for independent source review;
   own SaveStore retirement implementation is published, not self-approved.
 - execution_audit/root: independent reviews; risky storage/translator
   slices need two independent reviewers. Authors cannot approve themselves.
@@ -51,6 +73,24 @@ multiplayer acceptance remain open. No metadata-only provider counts as runtime.
 
 Combined same-run import→library→settings/saves→session/update/recovery evidence
 remains validation debt, not a new test authorized by this continuation.
+
+D11 additional source is unreviewed/in flight: games/mk8dx/runtime original glue,
+CanopyRuntimeRegistry.h/.m, CanopyRuntime.h/.m, mng_apple_host.h and
+tools/launcher/build_private_mk8dx.py. Root added Registry.m to public SOURCES and
+Registry.h/mng_apple_host.h to HEADERS in build_canopy.py; include this actual
+build wiring in D11 review/commit. Original TOTK ABI3 must remain unchanged.
+Remaining connected D11 followups include Games' hard Player-1 gate (conditional
+on actual compiled maxPlayers), actual MK cache storage management and independent
+Session/input caller review. Metadata/null weak providers do not complete D11.
+Root requested central process release enforce actual nativeEntryInvoked==NO.
+That release check is now in the source. Current root/native reviews found and
+requested fixes for immutable async title/generation/language/path capture,
+UID exclusive creation/refusal/durable retries, seed nested-directory durability,
+duplicate MKSubmit locked return, own save/text modal capture and exact ownership.
+Runtime author also owns CanopyRomFS.h/.m for a bounded worker-callable lease
+bridge to its existing materializer: avoid whole RomFS extraction on every launch
+or app-only source change. Preserve the existing main async API and cancellation
+cutoff, use one core materializer and retain a real sidecar/folder lease.
 
 ## Live source cursor after the published #101 handoff
 

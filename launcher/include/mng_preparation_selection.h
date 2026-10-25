@@ -7,19 +7,23 @@
  * A requested job ID is a selection, never authority to resume different bytes.
  * The native preparation store verifies the selected inputs' fingerprint. */
 enum mng_selection_stage { MNG_SELECT_IDLE, MNG_SELECT_SOURCE, MNG_SELECT_KEYS,
-    MNG_SELECT_READY, MNG_SELECT_UPDATE, MNG_SELECT_MODE, MNG_SELECT_KEY_PROMPT };
+    MNG_SELECT_READY, MNG_SELECT_UPDATE, MNG_SELECT_MODE, MNG_SELECT_KEY_PROMPT, MNG_SELECT_REVISION };
 enum mng_selection_mode { MNG_SELECT_BASE=1, MNG_SELECT_PAIRED,
     MNG_SELECT_NCA_FOLDER, MNG_SELECT_ASSET_FOLDER };
 struct mng_preparation_selection {
     uint64_t epoch;
     uintptr_t picker;
     unsigned stage, mode;
+    int latest_update;
+    uint32_t target_version;
     char job[33];
     uintptr_t origin;
     char reuse_title[17],reuse_generation[65];
 };
 struct mng_preparation_request {
     unsigned mode;
+    int latest_update;
+    uint32_t target_version;
     char job[33],reuse_title[17],reuse_generation[65];
 };
 static inline int mng_selection_hex_valid(const char *value,unsigned length) {
@@ -35,11 +39,13 @@ static inline int mng_selection_job_valid(const char *job) {
 }
 static inline void mng_selection_cancel(struct mng_preparation_selection *s) {
     if (s->epoch!=UINT64_MAX) s->epoch++;
+    s->latest_update=1;s->target_version=0;
     s->picker=0;s->stage=MNG_SELECT_IDLE;s->mode=0;s->origin=0;memset(s->job,0,sizeof(s->job));
     memset(s->reuse_title,0,sizeof(s->reuse_title));memset(s->reuse_generation,0,sizeof(s->reuse_generation));
 }
 static inline int mng_selection_begin(struct mng_preparation_selection *s,const char *job) {
     if (s->stage!=MNG_SELECT_IDLE || s->epoch==UINT64_MAX || (job&&!mng_selection_job_valid(job))) return 0;
+    s->latest_update=1;s->target_version=0;
     s->epoch++;s->stage=MNG_SELECT_MODE;s->picker=0;s->mode=0;
     s->origin=0;memset(s->reuse_title,0,sizeof(s->reuse_title));memset(s->reuse_generation,0,sizeof(s->reuse_generation));
     memset(s->job,0,sizeof(s->job));if(job)memcpy(s->job,job,32);return 1;
@@ -63,6 +69,29 @@ static inline int mng_selection_choose(struct mng_preparation_selection *s,uint6
     if (!mng_selection_is(s,epoch,MNG_SELECT_MODE)||mode<MNG_SELECT_BASE||mode>MNG_SELECT_ASSET_FOLDER||
         (s->origin&&mode!=MNG_SELECT_PAIRED)) return 0;
     s->mode=mode;s->stage=MNG_SELECT_SOURCE;return 1;
+}
+/* Additive UI route; ordinary choose(PAIRED) keeps its default-latest contract. */
+static inline int mng_selection_choose_revision(struct mng_preparation_selection *s,uint64_t epoch) {
+    if(!mng_selection_choose(s,epoch,MNG_SELECT_PAIRED))return 0;
+    s->stage=MNG_SELECT_REVISION;return 1;
+}
+/* Decimal metadata revision, not a semantic game version or capability claim. */
+static inline int mng_selection_revision_decimal(const char *text,uint32_t *out) {
+    if(!text||!out)return 0;
+    uint32_t value=0;unsigned count=0;
+    while(*text) {
+        unsigned char ch=(unsigned char)*text++;
+        if(++count>10||ch<'0'||ch>'9')return 0;
+        uint32_t digit=(uint32_t)(ch-'0');
+        if(value>(UINT32_MAX-digit)/10)return 0;
+        value=value*10+digit;
+    }
+    if(!count)return 0;
+    *out=value;return 1;
+}
+static inline int mng_selection_revision(struct mng_preparation_selection *s,uint64_t epoch,int latest,uint32_t target) {
+    if(!mng_selection_is(s,epoch,MNG_SELECT_REVISION)||(latest!=0&&latest!=1)||(latest&&target))return 0;
+    s->latest_update=latest;s->target_version=target;s->stage=MNG_SELECT_SOURCE;return 1;
 }
 static inline int mng_selection_bind(struct mng_preparation_selection *s,uint64_t epoch,uintptr_t picker) {
     if (!epoch||s->epoch!=epoch||!picker||s->picker ||
@@ -92,7 +121,10 @@ static inline int mng_selection_take_request(struct mng_preparation_selection *s
     if(origin && (s->mode!=MNG_SELECT_PAIRED||!mng_selection_hex_valid(s->reuse_title,16)||
         !mng_selection_hex_valid(s->reuse_generation,64)))return 0;
     if(!origin && (s->reuse_title[0]||s->reuse_generation[0]))return 0;
+    if((s->latest_update!=0&&s->latest_update!=1)||(s->latest_update&&s->target_version)||
+        (s->mode!=MNG_SELECT_PAIRED&&(!s->latest_update||s->target_version)))return 0;
     struct mng_preparation_request request;memset(&request,0,sizeof(request));request.mode=s->mode;
+    request.latest_update=s->latest_update;request.target_version=s->target_version;
     memcpy(request.job,s->job,sizeof(request.job));memcpy(request.reuse_title,s->reuse_title,sizeof(request.reuse_title));
     memcpy(request.reuse_generation,s->reuse_generation,sizeof(request.reuse_generation));
     *out=request;mng_selection_cancel(s);return 1;

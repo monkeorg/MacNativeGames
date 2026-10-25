@@ -1,16 +1,21 @@
 # Canopy executable development backlog
 
-## Active continuation after #155
+## Active continuation after #159
 
 Full D0–D14 implementation continues; older handoff language below is historical.
 No tests/probes/builds/CI/new tests in this continuation. See state.md ownership.
 
 - [x] D13 slice: actual preparation I/O and native progress units connected to redacted
   diagnostics, source-reviewed, #152 / `796c089`; unbuilt/untested.
-- [ ] ACTIVE D10: real linked in-process shader consumer and private build linkage.
+- [x] D10 source slice: actual guarded renderer/NativeAOT/checked Metal/cache
+  consumer plus explicit private static archive/runtime/notice/link path,
+  #157 / `c88bdc6`, two independent critical source reviews. Default seed-only;
+  native/Apple/parity/resource/compiler-safety/Metal/device gates remain open.
 - [x] D8 slice: terminal worker failure silences actual audio outputs, connected
   cleanup, independent execution/root source reviews, #154 / `7d112a2`; unrun.
-- [ ] ACTIVE D3/D4/D5: durable exact-base add-on resume intent and connected UI.
+- [x] D3/D4/D5 source slice: durable exact-base add-on resume and connected UI,
+  #156 / `7bdfb34`, artifact/root reviews. Format/private-input/device and runtime
+  activation gates remain open; prepared data is not activation.
 - [x] D6/D9 slice: per-title mouse enable policy with real capture/input handling,
   independent execution/root source reviews, #153 / `ad8da58`; unbuilt/untested.
 - [x] D7 slice: interrupted backup deletion retirement/recovery, independent
@@ -18,6 +23,13 @@ No tests/probes/builds/CI/new tests in this continuation. See state.md ownership
   format/physical acceptance remains open.
 - [ ] ACTIVE D11: pinned original MK8DX native host integration, independent seats,
   controller-support semantics and real private-build/runtime caller.
+- [x] D4 slice: exact/latest revision through existing native API and actual
+  scene/owned-modal UI, #159 / `9687115`, artifact/root reviews; unbuilt/unrun.
+- [x] D13 startup-failure slice: actual closed failure error survives idle runtime,
+  #158 / `1842a79`, independent execution/root reviews; unbuilt/unrun.
+- [ ] ACTIVE D13: actual add-on preparation phase/I/O/publication diagnostics.
+- [ ] ACTIVE D11/D12: reuse existing RomFS materializer through worker-callable
+  lifetime lease bridge; actual Games player gate and MK cache management queued.
 - [ ] EXTERNAL VALIDATION: Apple/private-format/device and combined integration
   evidence; source completion does not close these gates.
 
@@ -28,7 +40,7 @@ wrappers +1 delegated=164. Retained original-file checks501=356+145; five
 additional ParsedIR checks are separate. This is not full compiler safety.
 Later cohorts include null-constant/copy/member allocation planning, local
 operand/index/arithmetic/recursion controls, source helper reuse and the finite
-array-length/specialization-composite fixes. No authored source slice remains
+array-length/specialization-composite fixes. No compiler-cohort source slice remains
 in flight. Broader ID/grammar/other-op/allocator and managed/static/parity gates
 remain required before translator enablement; runtime stays OFF.
 #110 / `73bb8db` corrects the settings-first friendly-title fallback without

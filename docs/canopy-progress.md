@@ -2,10 +2,11 @@
 
 **FOSS native launcher · cloud development active · local validation outstanding**
 
-Current published source: [#155 / `2f5d3ba`](https://github.com/monkeorg/MacNativeGames/pull/155),
-`fix/canopy-backup-retirement-recovery`,
-`2f5d3baf459ffad9087cb4f7afa37eba174813b6`.
-Newer source is reviewed but **unbuilt and untested**. This cloud pass ran no
+Current published source: [#159 / `9687115`](https://github.com/monkeorg/MacNativeGames/pull/159),
+`feat/canopy-exact-update-revision`,
+`96871151c4f690936088d44106acdab5cfdc5e7e`.
+Published source is source-reviewed but **unbuilt and untested**; additional
+in-flight implementation is not yet fully reviewed. This cloud pass ran no
 new tests, probes, compilers or builds and performed no installs, merges or releases.
 
 | Recent change | Published source | Acceptance |
@@ -14,6 +15,10 @@ new tests, probes, compilers or builds and performed no installs, merges or rele
 | Mouse switch | Existing per-title settings now control real mouse handlers, capture requests and event admission; default On (#153 / `ad8da58`) | Independently source-reviewed; physical lock transitions and UI unverified |
 | Terminal audio | Real main-worker cleanup stops tracked outputs and irreversibly prevents further audio output (#154 / `7d112a2`) | Independently source-reviewed; CoreAudio unbuilt/unrun; no teardown/relaunch claim |
 | Backup deletion | Verified retirement record and interrupted-cleanup recovery; unknown/corrupt data preserved (#155 / `2f5d3ba`) | Two independent source reviews; fault injection, Apple and physical saves unverified |
+| Add-on recovery | Persisted exact-base job routing, native base retention and real Storage→Addons resume (#156 / `7bdfb34`) | Two independent source reviews; inputs/keys reselected; no runtime activation claim |
+| Linked shaders | Real guarded NativeAOT→NVN Metal consumer and private static archive/runtime/notice/link source (#157 / `c88bdc6`) | Two independent critical source reviews; default seed-only; actual link/parity/Metal/device gates open |
+| Startup diagnostics | Actual closed startup error survives Runtime returning to idle (#158 / `1842a79`) | Independently source-reviewed; actual UI/export unbuilt/unrun |
+| Update selection | Latest or exact metadata revision through actual native API; scene/owned-dialog/picker lifetime gates (#159 / `9687115`) | Two source reviews; private revision inputs and physical UIKit unverified |
 | Friendly names | Library keeps its name after the first preference write (#110); session uses current custom/friendly name (#119) | Source-reviewed; check rename/reload/start locally |
 | Save dialogs | Scene/navigation-bound export, picker and confirmation intent; accepted Files export retains its data until its exact picker finishes (#122) | Two independent reviews; no new execution |
 | Storage dialogs | Stale confirmations/resume cannot revive after background or scene changes; accepted backend work still settles (#120) | Two independent reviews; no new execution |
@@ -35,9 +40,8 @@ acceptance remain explicit gates.
 The table below includes the app-source snapshot through #100 plus the later
 corrections above. None inherits old green CI as proof of current behavior.
 
-Active source work continues across the full roadmap: real linked shader
-consumer/build integration; durable exact-base add-on resume; original-source
-MK8DX host/runtime integration. These are
+Active source work continues across the full roadmap: add-on preparation diagnostics;
+original-source MK8DX host/runtime integration and its remaining callers. These are
 in-flight implementations, not completed features. Pinned public original MIT
 MK host/HLE source now provides a concrete reuse path; metadata is not execution
 authority, and private version pins, Apple builds and multiplayer acceptance
@@ -52,7 +56,7 @@ remain open. Nintendo-derived code/assets/shaders are never public inputs.
 | ⚙ Display & settings | Supported live controls, System language; immutable startup projection with presentation-only layout updates and incompatible-4:3 capture | New Apple results, physical visual/input checks and actual rendered-resolution evidence; experimental quality presets remain off |
 | ⚡ Storage & reuse | Existing copy-on-write reuse with earlier Mac growth/shrink evidence; inode/lease-bound retirement recovery; nonmutating preflight correction source-fixed in #99 | Later Source run is **red** on hardlink refusal preserving the canonical namespace; new-request full-tree preflight is source-fixed, **not rerun**. Logical counters are not physical space savings |
 | ◉ Lifecycle & restart · #55 | Native ownership observation retains protections; reviewed two-confirmation restart control protocol | **No actual TOTK restart mechanism or UIKit restart caller.** Protocol/fixture is not game reload; full teardown/relaunch remains separate |
-| ✦ Shaders | Private cache identity, cooperative compiler controls and upstream normalized keys/warm-up/memory controls; optional pinned original-iPad pack producer/reader | Interrupted shader-identity deletion recovery is **source-fixed in #100, unrun**. Pack/tuple/reuse and Apple/device acceptance remain open; translator stays **off** |
+| ✦ Shaders | Private cache identity, cooperative controls, existing pack route and real guarded renderer/private static-link source (#157) | Default stays **seed-only**. Optional linked path is source-reviewed, unbuilt/unrun; compiler safety, NativeAOT, parity/resource, Metal and device gates remain open |
 | 🌿 Packaging & profiles | Compiled trusted profiles and actual UI/validator callers; upstream safe packaging/transfer checkpoints and actual thermal-state reporting | New source is unbuilt; metadata is not a provider, thermal reporting is not an optimization, and warm-up controls establish no performance gain |
 | ⏸ Deferred | BOTW **#8** and mod manager **#35 parked** | Future extensible BOTW configuration is an architectural aim only, not current implementation or compatibility |
 
