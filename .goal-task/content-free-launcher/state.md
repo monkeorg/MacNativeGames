@@ -1,4 +1,43 @@
-# Canopy cloud source handoff — acceptance gates open
+# Canopy active cloud development — acceptance gates open
+
+## Active continuation after #151
+
+The full D0–D14 roadmap remains the goal. The finite compiler-source handoff
+below is historical, not an instruction to stop independent implementation.
+The user confirms that current working app code is on GitHub and authorizes
+building on it. Preserve the draft dependency chain and existing app behavior.
+No tests, probes, builds, CI dispatches, new tests, private inputs, installs,
+merges or releases in this continuation. Source review is not runtime evidence.
+
+Latest published source: `796c089e1eb0d80aa183cdd85bd484414d82fc97`, draft #152,
+`feat/canopy-preparation-io-diagnostics`, depends on #151. Actual native progress
+units and bounded logical I/O attempt counters reach opt-in diagnostics/export;
+publication and uncertainty are separate. Product author, independent execution
+and root source reviews; unbuilt/untested. No performance/device acceptance.
+
+Active ownership (shared worktree; stage exact reviewed files only):
+
+- native_review: real linked shader-provider adapter, TOTK shader runtime/host,
+  private build linkage and related integration docs (D10).
+- runtime_impl: CANOPY terminal audio-output suspension in audio_mixer.c and
+  runtime.h; native_review alone integrates the host cleanup call (D8).
+- storage_audit: native durable add-on job intent plus Storage/Addons backend
+  adapters; root owns StorageController/routing integration (D3/D4/D5).
+- product_audit: actual per-title mouse enable policy, settings, input/session
+  application and Games caller (D6/D9). Root queues Games routing until frozen.
+- execution_audit/artifact_audit: independent reviews; risky storage/translator
+  slices need two independent reviewers. Authors cannot approve themselves.
+
+Newly established source gaps also queued: interrupted save-backup deletion
+recovery (D7); real MK8DX integration from pinned original MIT host/HLE source
+(D11), including seat isolation and truthful controller-support handling.
+Public original upstream metadata/source exists; the earlier blanket claim that
+no MK source exists is superseded. Nintendo-derived code/assets/shaders remain
+forbidden to fetch or vendor. Exact private hashes, Apple compilation and actual
+multiplayer acceptance remain open. No metadata-only provider counts as runtime.
+
+Combined same-run import→library→settings/saves→session/update/recovery evidence
+remains validation debt, not a new test authorized by this continuation.
 
 ## Live source cursor after the published #101 handoff
 
