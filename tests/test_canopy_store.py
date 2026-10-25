@@ -86,6 +86,104 @@ class CanopyStoreTests(unittest.TestCase):
         self.assertEqual(result['status'], 0, result)
         return result['generation']
 
+    def folder(self, kind='assets', job=None):
+        report = self.run_probe('folder_'+kind, job or self.job(), TITLE, 'A')
+        self.assertEqual(report['status'], 0, report)
+        return report['generation']
+
+    def test_folder_receipt_binds_inventory_without_claiming_a_container_hash(self):
+        for kind, tag, chain, structure in (('assets', 2, False, True), ('nca', 1, True, False)):
+            with self.subTest(kind=kind):
+                generation = self.folder(kind)
+                root = self.generation(generation)
+                receipt = (root/'receipt.bin').read_bytes()
+                self.assertEqual((receipt[:8], len(receipt)), (b'CNPYST04', 216+4*120))
+                self.assertEqual(receipt[160:163], bytes((tag, 1, int(structure))))
+                self.assertEqual(receipt[163:168]+receipt[212:216], b'\0'*9)
+                self.assertEqual(receipt[40:72], b'\0'*32)
+                self.assertEqual(struct.unpack_from('<Q', receipt, 16)[0], 0)
+                self.assertEqual(hashlib.sha256(b'canopy-assets-v4\0'+receipt).hexdigest(), generation)
+                inventory = (root/'input-members.json').read_bytes()
+                manifest = json.loads((root/'manifest.json').read_text())
+                self.assertEqual((manifest['schemaVersion'], manifest['recipeID']), (4, 'canopy-assets-v4'))
+                self.assertEqual(manifest['sourceKind'], 'asset-folder' if tag == 2 else 'nca-folder')
+                self.assertNotIn('sourceSHA256', manifest)
+                self.assertNotIn('sourceSize', manifest)
+                self.assertEqual(manifest['memberInventorySHA256'], hashlib.sha256(inventory).hexdigest())
+                self.assertEqual((manifest['sourceMemberCount'], manifest['sourceMemberBytes']), (1, 1))
+                self.assertIs(manifest['integrity']['exefsVerified'], chain)
+                self.assertIs(manifest['integrity']['romfsVerified'], chain)
+                self.assertIs(manifest['integrity']['romfsStructureVerified'], structure)
+                self.assertIs(manifest['integrity']['assetHashesVerified'], True)
+                self.assertIs(manifest['executionVerified'], False)
+                verified = self.run_probe('verify', TITLE, generation)
+                self.assertEqual(verified['status'], 0)
+                self.assertEqual(verified['sourceKind'], tag)
+                self.assertEqual(verified['sourceSHA256'], '0'*64)
+                self.assertEqual(verified['memberInventorySHA256'], manifest['memberInventorySHA256'])
+                self.assertEqual(verified['sourceMemberCount'], 1)
+
+    def test_folder_reuse_keeps_every_immutable_asset_inode(self):
+        generation = self.folder()
+        root = self.generation(generation)
+        paths = [root/'exefs/main', root/'romfs.bin', root/'input-members.json', root/'receipt.bin']
+        before = [(path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes()) for path in paths]
+        self.assertEqual(self.folder(), generation)
+        self.assertEqual(before, [(path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes()) for path in paths])
+
+    def test_folder_proof_or_identity_mismatch_never_replaces_current(self):
+        self.commit()
+        current = self.root/'titles'/TITLE/'current'
+        before = current.read_bytes()
+        for failure in ('missing_inventory', 'digest', 'file_size', 'file_sha', 'count_zero', 'count_limit',
+                        'bytes_zero', 'bytes_limit', 'asset_flag', 'structure', 'forged_chain',
+                        'nca_missing_chain', 'kind', 'update', 'plain_version', 'legacy'):
+            with self.subTest(failure=failure):
+                result = self.run_probe('invalid_folder_'+failure, self.job(), TITLE, 'A')
+                self.assertNotEqual(result['status'], 0)
+                self.assertEqual(current.read_bytes(), before)
+
+    def test_folder_receipt_truncation_reserved_bytes_and_proof_tampering_are_refused(self):
+        generation = self.folder()
+        receipt = self.generation(generation)/'receipt.bin'
+        original = receipt.read_bytes()
+        mutations = [original[:length] for length in (80, 104, 160, 215)]
+        for offset in (92, 104, 124, 160, 161, 162, 163, 167, 168, 200, 208, 212, 215):
+            changed = bytearray(original)
+            changed[offset] ^= 0x80
+            mutations.append(bytes(changed))
+        for changed in mutations:
+            with self.subTest(length=len(changed)):
+                receipt.write_bytes(changed)
+                self.assertNotEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+        receipt.write_bytes(original)
+        self.assertEqual(self.run_probe('verify', TITLE, generation)['status'], 0)
+
+    def test_old_generations_do_not_acquire_folder_identity_or_change_bytes(self):
+        for generation in (self.commit(), self.known(7), self.updated()):
+            with self.subTest(generation=generation):
+                root = self.generation(generation)
+                before = (root/'receipt.bin').read_bytes(), (root/'manifest.json').read_bytes()
+                report = self.run_probe('verify', TITLE, generation)
+                self.assertEqual(report['status'], 0)
+                self.assertEqual((report['sourceKind'], report['sourceMemberBytes'], report['sourceMemberCount']), (0, 0, 0))
+                self.assertEqual(report['memberInventorySHA256'], '0'*64)
+                self.assertIs(report['assetHashesVerified'], False)
+                self.assertEqual(before, ((root/'receipt.bin').read_bytes(), (root/'manifest.json').read_bytes()))
+
+    def test_cancelled_folder_job_replays_inventory_and_preserves_current(self):
+        self.commit()
+        current = self.root/'titles'/TITLE/'current'
+        before = current.read_bytes()
+        job = self.job()
+        result = self.run_probe('folder_cancel', job, TITLE, 'A')
+        self.assertEqual(result['status'], 6)
+        self.assertEqual(current.read_bytes(), before)
+        retained = self.root/'jobs'/job/'input-members.json'
+        inode = retained.stat().st_ino
+        generation = self.folder(job=job)
+        self.assertEqual((self.generation(generation)/'input-members.json').stat().st_ino, inode)
+
     def legacy_fixture(self, version=None):
         """Pre-v2 on-disk encoding, independent of the current store writer."""
         payloads = {'exefs/main': b'nonproprietary main fixture A',

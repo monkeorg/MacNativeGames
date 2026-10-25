@@ -134,7 +134,8 @@ int main(int argc,char **argv) {
         !strcmp(argv[1],"badbytes") || !strcmp(argv[1],"badflags") || !strcmp(argv[1],"inject") ||
         !strncmp(argv[1],"reuse_",6) || !strcmp(argv[1],"known") || !strcmp(argv[1],"known_cancel") ||
         !strcmp(argv[1],"legacy_inferred") || !strncmp(argv[1],"invalid_identity_",17) ||
-        !strcmp(argv[1],"updated") || !strncmp(argv[1],"invalid_update_",15)) {
+        !strcmp(argv[1],"updated") || !strncmp(argv[1],"invalid_update_",15) ||
+        !strncmp(argv[1],"folder_",7) || !strncmp(argv[1],"invalid_folder_",15)) {
         if (argc!=6 && argc!=7) return 2;
         result.title_id=strtoull(argv[4],NULL,16);
         if (fault("hook_resume")) cancel_target=store;
@@ -144,6 +145,38 @@ int main(int argc,char **argv) {
             struct mng_asset_sink sink=mng_store_sink(store);
             if (fill(&sink,argv[5],&result)) status=MNG_PREPARE_IO;
             else {
+                if (!strncmp(argv[1],"folder_",7) || !strncmp(argv[1],"invalid_folder_",15)) {
+                    /* Store-only fixture: the real folder producer separately
+                     * verifies formats. This tests receipt/provenance binding. */
+                    int nca=strstr(argv[1],"nca")!=NULL;
+                    const char *inventory=nca ? "{\"schemaVersion\":1,\"sourceKind\":\"nca-folder\",\"members\":[{\"path\":\"invented.nca\",\"size\":1,\"sha256\":\"559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd\"}]}\n":
+                        "{\"schemaVersion\":1,\"sourceKind\":\"asset-folder\",\"members\":[{\"path\":\"invented.asset\",\"size\":1,\"sha256\":\"559aead08264d5795d3909718cdd05abd49572e84fe55590eef31a88a08fdffd\"}]}\n";
+                    result.source_kind=nca ? MNG_PREPARE_NCA_FOLDER:MNG_PREPARE_ASSET_FOLDER;
+                    result.application_id=result.title_id; result.source_size=0; memset(result.source_sha256,0,32);
+                    result.source_member_bytes=1; result.source_member_count=1; result.asset_hashes_verified=1;
+                    result.romfs_structure_verified=nca ? 0:1; result.exefs_verified=nca; result.romfs_verified=nca;
+                    if(nca) { result.version_identified=1;result.title_version=7;result.content_role=0x80; }
+                    if (digest(inventory,strlen(inventory),result.member_inventory_sha256)) return 4;
+                    if (strcmp(argv[1],"invalid_folder_missing_inventory")) {
+                        if (asset(&sink,"input-members.json",inventory)) return 4;
+                        result.asset_count++;result.asset_bytes+=strlen(inventory);
+                    }
+                    if (!strcmp(argv[1],"invalid_folder_digest")) result.member_inventory_sha256[0]^=1;
+                    if (!strcmp(argv[1],"invalid_folder_file_size")) result.source_size=1;
+                    if (!strcmp(argv[1],"invalid_folder_file_sha")) result.source_sha256[0]=1;
+                    if (!strcmp(argv[1],"invalid_folder_count_zero")) result.source_member_count=0;
+                    if (!strcmp(argv[1],"invalid_folder_count_limit")) result.source_member_count=513;
+                    if (!strcmp(argv[1],"invalid_folder_bytes_zero")) result.source_member_bytes=0;
+                    if (!strcmp(argv[1],"invalid_folder_bytes_limit")) result.source_member_bytes=(UINT64_C(128)<<30)+1;
+                    if (!strcmp(argv[1],"invalid_folder_asset_flag")) result.asset_hashes_verified=0;
+                    if (!strcmp(argv[1],"invalid_folder_structure")) result.romfs_structure_verified=0;
+                    if (!strcmp(argv[1],"invalid_folder_forged_chain")) result.exefs_verified=result.romfs_verified=1;
+                    if (!strcmp(argv[1],"invalid_folder_nca_missing_chain")) result.exefs_verified=result.romfs_verified=0;
+                    if (!strcmp(argv[1],"invalid_folder_kind")) result.source_kind=3;
+                    if (!strcmp(argv[1],"invalid_folder_update")) result.update_applied=1;
+                    if (!strcmp(argv[1],"invalid_folder_plain_version")) {result.version_identified=1;result.title_version=1;result.content_role=0x80;}
+                    if (!strcmp(argv[1],"invalid_folder_legacy")) result.source_kind=0;
+                }
                 if (!strcmp(argv[1],"known") || !strcmp(argv[1],"known_cancel") || !strncmp(argv[1],"invalid_identity_",17)) {
                     result.application_id=result.title_id; result.version_identified=1; result.content_role=0x80;
                     unsigned long long version=argc==7 ? strtoull(argv[6],NULL,10):0;
@@ -199,7 +232,7 @@ int main(int argc,char **argv) {
                     int extra=open(path,O_CREAT|O_EXCL|O_WRONLY,0600); if (extra<0) return 4;
                     close(extra);
                 }
-                if (!strcmp(argv[1],"cancel") || !strcmp(argv[1],"known_cancel")) mng_store_cancel(store);
+                if (!strcmp(argv[1],"cancel") || !strcmp(argv[1],"known_cancel") || !strcmp(argv[1],"folder_cancel")) mng_store_cancel(store);
                 if (!strcmp(argv[1],"badcount")) result.asset_count++;
                 if (!strcmp(argv[1],"badbytes")) result.asset_bytes++;
                 if (!strcmp(argv[1],"badflags")) result.romfs_verified=0;
@@ -274,13 +307,18 @@ int main(int argc,char **argv) {
         if (argc!=4) return 2;
         status=mng_store_discard_job(store,argv[3]);
     } else { mng_store_close(store); return 2; }
-    char base_sha[65],update_sha[65]; hex_digest(result.source_sha256,base_sha); hex_digest(result.update_source_sha256,update_sha);
+    char base_sha[65],update_sha[65],inventory_sha[65]; hex_digest(result.source_sha256,base_sha); hex_digest(result.update_source_sha256,update_sha);
+    hex_digest(result.member_inventory_sha256,inventory_sha);
     printf("{\"status\":%u,\"generation\":\"%s\",\"assetCount\":%" PRIu64 ",\"assetBytes\":%" PRIu64
         ",\"applicationID\":\"%016" PRIx64 "\",\"titleVersion\":%" PRIu32 ",\"versionIdentified\":%s,\"contentRole\":%u"
         ",\"sourceSize\":%" PRIu64 ",\"sourceSHA256\":\"%s\",\"updateApplied\":%s,\"updateSourceSize\":%" PRIu64
-        ",\"updateSourceSHA256\":\"%s\",\"patchTitleID\":\"%016" PRIx64 "\",\"baseTitleVersion\":%" PRIu32 "}\n",
+        ",\"updateSourceSHA256\":\"%s\",\"patchTitleID\":\"%016" PRIx64 "\",\"baseTitleVersion\":%" PRIu32
+        ",\"sourceKind\":%u,\"memberInventorySHA256\":\"%s\",\"sourceMemberBytes\":%" PRIu64 ",\"sourceMemberCount\":%" PRIu32
+        ",\"assetHashesVerified\":%s,\"romfsStructureVerified\":%s}\n",
         (unsigned)status,generation,result.asset_count,result.asset_bytes,result.application_id,result.title_version,
         result.version_identified ? "true":"false",(unsigned)result.content_role,result.source_size,base_sha,
-        result.update_applied ? "true":"false",result.update_source_size,update_sha,result.patch_title_id,result.base_title_version);
+        result.update_applied ? "true":"false",result.update_source_size,update_sha,result.patch_title_id,result.base_title_version,
+        (unsigned)result.source_kind,inventory_sha,result.source_member_bytes,result.source_member_count,
+        result.asset_hashes_verified ? "true":"false",result.romfs_structure_verified ? "true":"false");
     mng_store_close(store); return 0;
 }

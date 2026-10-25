@@ -597,6 +597,25 @@ class CanopyPrepareTests(unittest.TestCase):
             self.assertTrue(report['descriptor_preserved'])
             self.assertEqual(list((output/'exefs').iterdir()),[])
 
+    def test_folder_result_fields_must_be_empty_for_all_physical_entrypoints(self):
+        f=self.fixture;base_files,patch_files,_,_=self.update_pair()
+        for entrypoint in ('base','exact','latest'):
+            for field in ('kind','hash','bytes','count','assets','structure'):
+                with self.subTest(entrypoint=entrypoint,field=field):
+                    self.index+=1
+                    base=self.root/f'base-{self.index}';base.write_bytes(f.partition(base_files))
+                    patch=self.root/f'patch-{self.index}';patch.write_bytes(f.partition(patch_files))
+                    output=self.root/f'output-{self.index}';output.mkdir()
+                    args=[str(self.probe),str(base),str(output),'dirty-folder-'+field]
+                    if entrypoint!='base': args += [str(patch),'latest' if entrypoint=='latest' else '12']
+                    run=subprocess.run(args,capture_output=True,text=True,timeout=10)
+                    self.assertEqual(run.returncode,0,run.stderr)
+                    report=json.loads(run.stdout)
+                    self.assertEqual(report['status'],'invalid')
+                    self.assertFalse(report['result_empty'])
+                    self.assertTrue(report['descriptor_preserved'])
+                    self.assertEqual(list((output/'exefs').iterdir()),[])
+
     def test_explicit_latest_selects_highest_while_exact_can_select_lower(self):
         f=self.fixture
         base,lower,_,_=self.update_pair(patch_version=12,patch_main=b'lower version code')

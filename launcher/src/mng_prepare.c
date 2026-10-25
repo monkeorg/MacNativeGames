@@ -8,6 +8,7 @@
 #include "mng_crypto.h"
 #include "mng_content.h"
 #include "mng_bktr.h"
+#include "mng_prepare_internal.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +32,7 @@ struct prep {
     const struct mng_key_provider *keys;
     const struct mng_asset_sink *sink;
     const char *hash_phase;
+    const struct mng_prepare_reader *reader;
     enum mng_prepare_status failure;
     unsigned char header_key[32], key[16], header[0xc00];
     struct mng_prepare_result result;
@@ -61,7 +63,14 @@ static int source_read(void *context,uint64_t at,void *out,size_t length) {
     unsigned char *cursor=out;
     while (length) {
         size_t request=length>CHUNK ? CHUNK:length;
-        ssize_t n=pread(p->fd,cursor,request,(off_t)at);
+        ssize_t n;
+        if (p->reader) {
+            if (p->reader->read_at(p->reader->context,at,cursor,request)) {
+                if (cancelled(p)) return -1;
+                return fail(p,MNG_PREPARE_IO);
+            }
+            n=(ssize_t)request;
+        } else n=pread(p->fd,cursor,request,(off_t)at);
         if (n<0 && errno==EINTR) continue;
         if (n<=0) return fail(p,MNG_PREPARE_IO);
         cursor+=(size_t)n; at+=(uint64_t)n; length-=(size_t)n;
@@ -586,18 +595,41 @@ static int stable(const struct stat *a,const struct stat *b) {
         a->st_size==b->st_size && am.tv_sec==bm.tv_sec && am.tv_nsec==bm.tv_nsec &&
         ac.tv_sec==bc.tv_sec && ac.tv_nsec==bc.tv_nsec;
 }
-static int arguments_valid(const struct mng_key_provider *keys,const struct mng_asset_sink *sink,
-    const struct mng_prepare_result *result) {
-    if (!result || !keys || !keys->lookup || !sink || !sink->begin || !sink->write || !sink->end)
-        return 0;
+int mng_prepare_result_empty(const struct mng_prepare_result *result) {
+    if (!result) return 0;
     unsigned char zero[32]={0};
     if (result->title_id || result->source_size || result->asset_count || result->asset_bytes ||
         result->exefs_verified || result->romfs_verified || result->application_id || result->title_version ||
         result->version_identified || result->content_role || result->update_applied || result->update_source_size ||
         result->patch_title_id || result->base_title_version || memcmp(result->source_sha256,zero,32) ||
-        memcmp(result->update_source_sha256,zero,32))
+        memcmp(result->update_source_sha256,zero,32) || result->source_kind || result->source_member_bytes ||
+        result->source_member_count || result->asset_hashes_verified || result->romfs_structure_verified ||
+        memcmp(result->member_inventory_sha256,zero,32))
         return 0;
     return 1;
+}
+static int arguments_valid(const struct mng_key_provider *keys,const struct mng_asset_sink *sink,
+    const struct mng_prepare_result *result) {
+    return keys && keys->lookup && sink && sink->begin && sink->write && sink->end && mng_prepare_result_empty(result);
+}
+static void prepare_single(struct prep *p,int physical) {
+    struct mng_inventory inventory={0};
+    struct ticket tickets[MAX_TICKETS];size_t count=0;
+    if (cancelled(p)) goto done;
+    if (container_status(p,mng_container_inspect(source_read,p,p->size,&inventory))) goto done;
+    if (key_lookup(p,"header_key",p->header_key,32) || tickets_read(p,&inventory,tickets,&count) ||
+        choose_program(p,&inventory,tickets,count) || content_key(p,tickets,count) || sections(p)) goto done;
+    if (physical) {
+        progress(p,"hash-source",0,p->size);
+        if (hash_range(p,source_read,p,0,p->size,p->size,p->result.source_sha256)) goto done;
+        progress(p,"hash-source",p->size,p->size);p->result.source_size=p->size;
+    } else {
+        p->result.source_kind=MNG_PREPARE_NCA_FOLDER;
+        p->result.asset_hashes_verified=1;
+    }
+    (void)cancelled(p);
+done:
+    mng_inventory_free(&inventory);mng_secure_clear(tickets,sizeof(tickets));
 }
 enum mng_prepare_status mng_prepare_fd(int fd,const struct mng_key_provider *keys,
     const struct mng_asset_sink *sink,struct mng_prepare_result *result) {
@@ -607,24 +639,25 @@ enum mng_prepare_status mng_prepare_fd(int fd,const struct mng_key_provider *key
     if (!S_ISREG(before.st_mode) || before.st_size<0) return MNG_PREPARE_INVALID;
     if ((uint64_t)before.st_size>MAX_SOURCE) return MNG_PREPARE_LIMIT;
     struct prep p={0}; p.fd=fd; p.size=(uint64_t)before.st_size; p.keys=keys; p.sink=sink;
-    struct mng_inventory inventory={0};
-    struct ticket tickets[MAX_TICKETS]; size_t count=0;
-    if (cancelled(&p)) goto done;
-    if (container_status(&p,mng_container_inspect(source_read,&p,p.size,&inventory))) goto done;
-    if (key_lookup(&p,"header_key",p.header_key,32) || tickets_read(&p,&inventory,tickets,&count) ||
-        choose_program(&p,&inventory,tickets,count) || content_key(&p,tickets,count) || sections(&p)) goto done;
-    progress(&p,"hash-source",0,p.size);
-    if (hash_range(&p,source_read,&p,0,p.size,p.size,p.result.source_sha256)) goto done;
-    progress(&p,"hash-source",p.size,p.size);
-    if (cancelled(&p)) goto done;
-    p.result.source_size=p.size;
-done:
+    prepare_single(&p,1);
     if (fstat(fd,&after) || !stable(&before,&after)) p.failure=MNG_PREPARE_IO;
     enum mng_prepare_status status=p.failure;
     if (status==MNG_PREPARE_OK) *result=p.result;
-    mng_inventory_free(&inventory);
-    mng_secure_clear(tickets,sizeof(tickets)); mng_secure_clear(&p,sizeof(p));
+    mng_secure_clear(&p,sizeof(p));
     return status;
+}
+enum mng_prepare_status mng_prepare_nca_folder_reader(const struct mng_prepare_reader *reader,
+    const struct mng_key_provider *keys,const struct mng_asset_sink *sink,struct mng_prepare_result *result) {
+    if (!arguments_valid(keys,sink,result) || !reader || !reader->read_at || !reader->check_sources)
+        return MNG_PREPARE_INVALID;
+    if (reader->size>MAX_SOURCE+2u*1024u*1024u) return MNG_PREPARE_LIMIT;
+    if (reader->check_sources(reader->context)) return MNG_PREPARE_IO;
+    struct prep p={0};p.fd=-1;p.reader=reader;p.size=reader->size;p.keys=keys;p.sink=sink;
+    prepare_single(&p,0);
+    if (reader->check_sources(reader->context)) p.failure=MNG_PREPARE_IO;
+    enum mng_prepare_status status=p.failure;
+    if (status==MNG_PREPARE_OK) *result=p.result;
+    mng_secure_clear(&p,sizeof(p));return status;
 }
 struct paired_sources {
     struct prep *base,*update;

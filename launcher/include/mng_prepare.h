@@ -24,6 +24,11 @@ struct mng_asset_sink {
     int (*cancelled)(void *context);
     void (*progress)(void *context, const char *phase, uint64_t done, uint64_t total);
 };
+enum mng_prepare_source_kind {
+    MNG_PREPARE_CONTAINER = 0,
+    MNG_PREPARE_NCA_FOLDER = 1,
+    MNG_PREPARE_ASSET_FOLDER = 2
+};
 struct mng_prepare_result {
     uint64_t title_id, source_size, asset_count, asset_bytes;
     unsigned char source_sha256[32];
@@ -42,6 +47,13 @@ struct mng_prepare_result {
     uint64_t update_source_size, patch_title_id;
     uint32_t base_title_version;
     unsigned char update_source_sha256[32];
+    /* Folders use a canonical consumed-member inventory, never a physical-file
+     * SHA claim. Physical v1/v2/v3 recipes keep every field below zero. */
+    unsigned char source_kind;
+    unsigned char member_inventory_sha256[32];
+    uint64_t source_member_bytes;
+    uint32_t source_member_count;
+    int asset_hashes_verified, romfs_structure_verified;
 };
 /* Native NCA3/key-area or common-ticket AES-CTR, checked ExeFS and IVFC.
  * No game compatibility/execution is inferred. Caller passes empty result. */

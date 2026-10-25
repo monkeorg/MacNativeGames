@@ -124,6 +124,12 @@ int main(int argc,char **argv) {
     struct mng_asset_sink sink={NULL,begin,write_asset,end,is_cancelled,progress};
     struct mng_prepare_result result={0};
     if (!strcmp(mode,"dirty-updatefield")) result.update_source_size=1;
+    if (!strcmp(mode,"dirty-folder-kind")) result.source_kind=1;
+    if (!strcmp(mode,"dirty-folder-hash")) result.member_inventory_sha256[0]=1;
+    if (!strcmp(mode,"dirty-folder-bytes")) result.source_member_bytes=1;
+    if (!strcmp(mode,"dirty-folder-count")) result.source_member_count=1;
+    if (!strcmp(mode,"dirty-folder-assets")) result.asset_hashes_verified=1;
+    if (!strcmp(mode,"dirty-folder-structure")) result.romfs_structure_verified=1;
     enum mng_prepare_status status;
     if (argc==6) {
         update_descriptor=open(!strcmp(mode,"same-source") ? argv[1]:argv[4],O_RDWR);
