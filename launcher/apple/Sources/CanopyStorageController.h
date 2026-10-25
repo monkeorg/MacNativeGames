@@ -7,6 +7,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Reject while preparation/catalog reload/native session owns the library.
 /// It supplements native locks/leases and never releases a session/save seal.
 @property(nonatomic, copy, nullable) BOOL (^mutationAllowed)(void);
+/// Re-select inputs for this exact unfinished job; native fingerprint checks
+/// remain authoritative. Contains no URLs, keys or inferred source identity.
+@property(nonatomic, copy, nullable) void (^resumePreparation)(NSString *jobIdentifier);
 /// Latest actual backend observation; no filesystem work is performed here.
 @property(nonatomic, readonly) NSDictionary<NSString *,id> *diagnosticSnapshot;
 @end

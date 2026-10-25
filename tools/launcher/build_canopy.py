@@ -78,6 +78,7 @@ HEADERS = ('launcher/apple/Sources/CanopyLibrary.h',
            'launcher/include/mng_romfs.h', 'launcher/include/mng_romfs_runtime.h',
            'launcher/include/mng_players.h', 'launcher/include/mng_session.h', 'launcher/include/mng_display.h')
 HEADERS += ('launcher/include/mng_addon.h', 'launcher/include/mng_install.h', 'launcher/include/mng_multiplayer.h',
+            'launcher/include/mng_preparation_selection.h',
             'launcher/include/mng_input.h', 'launcher/include/mng_keyboard.h',
             'launcher/include/mng_pointer.h', 'launcher/include/mng_touch.h',
             'launcher/apple/Sources/CanopyInputController.h',

@@ -1,4 +1,5 @@
 #import "CanopyStorageController.h"
+#include "mng_preparation_selection.h"
 
 static NSString *STBytes(id value) {
     return [value isKindOfClass:NSNumber.class]?[NSByteCountFormatter stringFromByteCount:[value longLongValue] countStyle:NSByteCountFormatterCountStyleFile]:@"not checked";
@@ -63,7 +64,7 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if(section==0)return [NSString stringWithFormat:@"%@\nSelect data to verify its logical size or change the current selection. Verification checks assets, not gameplay compatibility. Current, previous and active versions are protected.",_status];
-    if(section==1)return @"Only unpublished preparation jobs can be discarded. Finish or cancel an active preparation first. Source files, profiles, account identities and saves are outside these operations.";
+    if(section==1)return @"Resume by reselecting the original preparation mode, source and local keys. Native verification must match the retained job; a listed ID does not identify its input kind. Add-ons resume through their exact base's Add-ons screen. Only unpublished jobs can be discarded. Saves and supplied source files are preserved.";
     NSArray *issues=_storage.snapshot[@"issues"];
     NSString *details=issues.count?[[issues componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"]:@"";
     return [details stringByAppendingString:@"Sizes are logical file lengths, not disk allocation or promised free space. Clear keeps the seed; remove targets one identity. In-use caches cannot be cleared or removed. Unknown or corrupt entries are preserved."];
@@ -136,6 +137,16 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
             [sheet addAction:[UIAlertAction actionWithTitle:@"Remove unused prepared data" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *button){(void)button;
                 [self confirm:CanopyStorageRemoveGeneration row:row title:@"Remove this prepared data?" message:@"Only this unused prepared data is removed. Current, rollback and active versions are checked again and protected. Saves and supplied source files are preserved."];}]];
     } else if(path.section==1) {
+        if(self.resumePreparation) [sheet addAction:[UIAlertAction actionWithTitle:@"Resume with reselected inputs" style:UIAlertActionStyleDefault handler:^(UIAlertAction *button){
+            (void)button;NSString *job=row[@"identifier"];
+            if(self->_storage.busy||!mng_selection_job_valid(job.UTF8String)||
+                UIApplication.sharedApplication.applicationState!=UIApplicationStateActive||
+                (self.mutationAllowed&&!self.mutationAllowed()))return;
+            void (^resume)(NSString *)=[self.resumePreparation copy];
+            [self dismissViewControllerAnimated:YES completion:^{if(resume&&!self->_storage.busy&&
+                UIApplication.sharedApplication.applicationState==UIApplicationStateActive&&
+                (!self.mutationAllowed||self.mutationAllowed()))resume(job);}];
+        }]];
         [sheet addAction:[UIAlertAction actionWithTitle:@"Discard unfinished preparation" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *button){(void)button;
             [self confirm:CanopyStorageDiscardJob row:row title:@"Discard this preparation?" message:@"Only this unpublished job is discarded. Finish or cancel an active preparation first. Prepared versions, saves and source files are preserved."];}]];
     } else if([row[@"usageState"] isEqual:@"available"]) {
