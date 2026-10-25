@@ -20,13 +20,15 @@ class IOSSaveStoreTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.root = Path(cls.temporary.name).resolve()
         cls.probe = cls.root / 'probe'
-        # Redirect only the production directory read for a deterministic mutation
-        # after its initial fstat. The probe wrapper otherwise calls real readdir.
-        # Include dirent first to preserve Darwin's readdir symbol aliases.
+        # Redirect only production reads for deterministic mutations after the
+        # initial metadata checks. Probe wrappers otherwise call the real APIs.
+        # Include system headers first to preserve Darwin's symbol aliases.
         hook = cls.root / 'directory_hook.h'
-        hook.write_text('#include <dirent.h>\n'
+        hook.write_text('#include <dirent.h>\n#include <unistd.h>\n'
                         'struct dirent *TOTKProbeReadDirectory(DIR *);\n'
-                        '#define readdir TOTKProbeReadDirectory\n')
+                        'ssize_t TOTKProbeRead(int, void *, size_t);\n'
+                        '#define readdir TOTKProbeReadDirectory\n'
+                        '#define read TOTKProbeRead\n')
         save_object = cls.root / 'save_store.o'
         build_save = subprocess.run([
             'xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
@@ -73,6 +75,12 @@ class IOSSaveStoreTests(unittest.TestCase):
 
     def test_directory_change_refuses_incomplete_transfer(self):
         self.run_probe('directory_changed')
+
+    def test_file_change_with_restored_mtime_preserves_active_save(self):
+        self.run_probe('file_changed_mtime_restored')
+
+    def test_file_link_added_during_copy_preserves_active_save(self):
+        self.run_probe('file_hardlinked_during_copy')
 
     def test_provider_read_failure_preserves_active_save(self):
         self.run_probe('provider_read_refused')

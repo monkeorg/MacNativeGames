@@ -88,8 +88,12 @@ static BOOL copyDirectory(int source, int dest, unsigned depth, CopyBudget *budg
                 }
             }
             if (output >= 0) { if (fsync(output)) ok = NO; close(output); }
+            /* Recheck link policy and ctime too: a writer can restore mtime after
+             * a same-size edit, and links outside this tree do not change its directories. */
             if (copied != (uint64_t)st.st_size || fstat(input,&opened) || opened.st_size != st.st_size ||
-                opened.st_mtimespec.tv_sec != st.st_mtimespec.tv_sec || opened.st_mtimespec.tv_nsec != st.st_mtimespec.tv_nsec) ok = NO;
+                opened.st_nlink != st.st_nlink ||
+                opened.st_mtimespec.tv_sec != st.st_mtimespec.tv_sec || opened.st_mtimespec.tv_nsec != st.st_mtimespec.tv_nsec ||
+                opened.st_ctimespec.tv_sec != st.st_ctimespec.tv_sec || opened.st_ctimespec.tv_nsec != st.st_ctimespec.tv_nsec) ok = NO;
         }
         close(input);
         if (!ok) { if (!error || !*error) failure(error, @"The save could not be copied completely."); break; }

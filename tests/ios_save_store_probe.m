@@ -29,6 +29,43 @@ struct dirent *TOTKProbeReadDirectory(DIR *directory) {
     return readdir(directory);
 }
 
+/* The production read is redirected only in the probe build. Mutate an
+ * optional file after its first chunk has been read, without changing its size
+ * or mtime, or add a link outside the selected tree. Neither changes the
+ * selected directory's membership, so directory checks cannot catch this. */
+static unsigned changeFileMode;
+static BOOL changedFile;
+static int changingFileDescriptor = -1;
+static struct stat changingFileStat;
+static NSURL *changingFileURL, *newFileLinkURL;
+ssize_t TOTKProbeRead(int input, void *buffer, size_t length) {
+    ssize_t count = read(input,buffer,length);
+    int savedErrno = errno;
+    struct stat st;
+    if (changeFileMode && count > 0 && !fstat(input,&st) &&
+        st.st_dev == changingFileStat.st_dev && st.st_ino == changingFileStat.st_ino) {
+        unsigned mode = changeFileMode;
+        changeFileMode = 0;
+        if (mode == 1) {
+            struct timespec times[2] = {changingFileStat.st_atimespec, changingFileStat.st_mtimespec};
+            changedFile = pwrite(changingFileDescriptor,"X",1,0) == 1 &&
+                pwrite(changingFileDescriptor,"Y",1,65536) == 1 &&
+                futimens(changingFileDescriptor,times) == 0 &&
+                fstat(changingFileDescriptor,&st) == 0 &&
+                st.st_size == changingFileStat.st_size &&
+                st.st_mtimespec.tv_sec == changingFileStat.st_mtimespec.tv_sec &&
+                st.st_mtimespec.tv_nsec == changingFileStat.st_mtimespec.tv_nsec &&
+                (st.st_ctimespec.tv_sec != changingFileStat.st_ctimespec.tv_sec ||
+                 st.st_ctimespec.tv_nsec != changingFileStat.st_ctimespec.tv_nsec);
+        } else {
+            changedFile = link(changingFileURL.fileSystemRepresentation,newFileLinkURL.fileSystemRepresentation) == 0 &&
+                fstat(changingFileDescriptor,&st) == 0 && st.st_nlink == 2;
+        }
+    }
+    errno = savedErrno;
+    return count;
+}
+
 #define CHECK(condition) do { if (!(condition)) { fprintf(stderr,"%s:%d: %s\n",__FILE__,__LINE__,#condition); return 1; } } while (0)
 
 static NSURL *child(NSURL *root, NSString *name) {
@@ -322,6 +359,14 @@ static int probe(NSString *scenario, NSURL *root) {
             changingDevice = st.st_dev;
             changingInode = st.st_ino;
             changeDirectory = YES;
+        } else if ([scenario isEqual:@"file_changed_mtime_restored"] || [scenario isEqual:@"file_hardlinked_during_copy"]) {
+            changingFileURL = child(source,@"mutable.bin");
+            newFileLinkURL = child(root,@"linked-during-copy.bin");
+            CHECK([[NSMutableData dataWithLength:131072] writeToURL:changingFileURL options:0 error:NULL]);
+            changingFileDescriptor = open(changingFileURL.fileSystemRepresentation,O_RDWR);
+            CHECK(changingFileDescriptor >= 0);
+            CHECK(fstat(changingFileDescriptor,&changingFileStat) == 0);
+            changeFileMode = [scenario isEqual:@"file_changed_mtime_restored"] ? 1 : 2;
         } else if ([scenario isEqual:@"empty"]) {
             CHECK([fm removeItemAtURL:source error:NULL]);
             CHECK([fm createDirectoryAtURL:source withIntermediateDirectories:NO attributes:nil error:NULL]);
@@ -360,6 +405,12 @@ static int probe(NSString *scenario, NSURL *root) {
         CHECK(![store importDirectory:source error:&error]);
         CHECK(error);
         if ([scenario isEqual:@"directory_changed"]) CHECK(changedDirectory);
+        if ([scenario isEqual:@"file_changed_mtime_restored"] || [scenario isEqual:@"file_hardlinked_during_copy"]) {
+            CHECK(changedFile && changeFileMode == 0);
+            CHECK([error.localizedDescription isEqual:@"The save could not be copied completely."]);
+            CHECK(close(changingFileDescriptor) == 0);
+            changingFileDescriptor = -1;
+        }
         if ([scenario isEqual:@"ancestor_source"]) {
             CHECK([error.localizedDescription isEqual:@"Select the console save folder, not a folder containing this app's save storage."]);
         }
