@@ -102,6 +102,18 @@
       },
       "patch": "0008-statement-emission-loop-checkpoints.patch",
       "sha256": "d767f1fb23616fccff5c55947abca88ce708f1767b96479b2915a02f4a4e8594"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "677ea6e728b334a2e7438dab676624a552c3cb76a76d7a90f425cdd964bad5c3",
+        "spirv_parser.cpp": "9f5664fbd0c76fe87fbef9cf2a1591a4ed79bd8665b81d4e517ac6023b10bda3"
+      },
+      "before": {
+        "spirv_cross.cpp": "3984c941cf4dad17e4fe62237d0db2812fc6358342b68ecd7e5b3776f86bb119",
+        "spirv_parser.cpp": "ebe00e20a46c8db5ea209578ce48fa1d21e59b58d05d962dc1bf4b5ae65e33f4"
+      },
+      "patch": "0009-type-alias-query-depth.patch",
+      "sha256": "23316dde943fe77b22263193429c72d844e6af90120ae9d50339196789e7e461"
     }
   ],
   "schemaVersion": 1
