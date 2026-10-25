@@ -12,9 +12,23 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPAT = ROOT/'games/totk/third_party/d2r_gfx/gfx/nvn/include'
+RUNTIME = ROOT/'games/totk/runtime'
+HERE = Path(__file__).resolve().parent
+
+
+def production_inputs():
+    return (Path(__file__), HERE/'apple_probe.m', HERE/'fixture_runner.c', HERE/'fixture_runner.h',
+            RUNTIME/'loader_module_core.h', RUNTIME/'runtime.h', RUNTIME/'gate.S',
+            COMPAT/'mach_vm_compat.h')
+
+
+def input_hashes():
+    return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in production_inputs()}
 
 
 def validate_bundle_id(bundle_id):
@@ -39,6 +53,8 @@ def verify_fixture(fixture):
     assembly = fixture/'generated/embed.S'
     if 'generated/embed.S' not in record['files']:
         raise ValueError('manifest must cover generated/embed.S; regenerate the fixture')
+    if 'generated/fixture_module.h' not in record['files']:
+        raise ValueError('manifest must cover generated/fixture_module.h; regenerate the fixture')
     includes = 0
     for line in assembly.read_text().splitlines():
         if not line.lstrip().startswith('.incbin'):
@@ -71,21 +87,34 @@ def verify_fixture(fixture):
 def build(fixture, output, bundle_id='org.macnativegames.executionfixture'):
     fixture, output = Path(fixture).resolve(), Path(output).resolve()
     validate_bundle_id(bundle_id)
-    verify_fixture(fixture)
+    fixture_record = verify_fixture(fixture)
+    source_hashes = input_hashes()
     if sys.platform != 'darwin':
         raise RuntimeError('requires a Mac with Xcode and the iPhoneOS SDK; no build was attempted')
     if output.suffix != '.app':
         raise ValueError('output must be a new .app directory')
     sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip()
     output.mkdir(parents=True, exist_ok=False)
-    command = ['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64-apple-ios16.0',
-        '-isysroot', sdk, '-fobjc-arc', '-O2', '-Wall', '-Wextra', '-Wl,-no_adhoc_codesign',
+    common = ['xcrun', '--sdk', 'iphoneos', 'clang', '-target', 'arm64-apple-ios16.0',
+        '-isysroot', sdk, '-O2', '-Wall', '-Wextra',
         '-Wno-deprecated-declarations', '-I'+str(COMPAT), '-I'+str(fixture/'generated'),
-        str(Path(__file__).with_name('apple_probe.m')), str(fixture/'generated/embed.S'),
-        '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'CoreGraphics',
-        *shlex.split((fixture/'generated/linker-flags.txt').read_text()),
-        '-o', str(output/'ExecutionFixture')]
-    subprocess.run(command, check=True)
+        '-I'+str(RUNTIME), '-I'+str(HERE)]
+    commands = []
+    with tempfile.TemporaryDirectory(prefix='canopy-loader-objects-') as temporary:
+        objects = []
+        for index, source in enumerate((HERE/'apple_probe.m', HERE/'fixture_runner.c',
+                                        RUNTIME/'gate.S', fixture/'generated/embed.S')):
+            obj = Path(temporary)/(str(index)+'.o')
+            language = ['-fobjc-arc'] if source.suffix == '.m' else ['-std=gnu11'] if source.suffix == '.c' else []
+            command = [*common, *language, '-c', str(source), '-o', str(obj)]
+            commands.append(command);subprocess.run(command, check=True);objects.append(str(obj))
+        command = [*common, '-Wl,-no_adhoc_codesign', *objects,
+                   '-framework', 'UIKit', '-framework', 'Foundation', '-framework', 'CoreGraphics',
+                   *shlex.split((fixture/'generated/linker-flags.txt').read_text()),
+                   '-o', str(output/'ExecutionFixture')]
+        commands.append(command);subprocess.run(command, check=True)
+    if input_hashes() != source_hashes or verify_fixture(fixture) != fixture_record:
+        raise ValueError('production sources or fixture inputs changed during compilation')
     info = {'CFBundleIdentifier': bundle_id, 'CFBundleExecutable': 'ExecutionFixture',
         'CFBundleName': 'Execution Fixture', 'CFBundleDisplayName': 'Execution Fixture',
         'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0',
@@ -95,7 +124,9 @@ def build(fixture, output, bundle_id='org.macnativegames.executionfixture'):
         'UILaunchScreen': {}, 'UIRequiredDeviceCapabilities': ['arm64']}
     (output/'Info.plist').write_bytes(plistlib.dumps(info))
     evidence = {'status': 'built_unsigned', 'native_execution': 'not_run',
-        'apple_signing': 'not_run', 'command': command,
+        'apple_signing': 'not_run', 'command': command, 'commands': commands,
+        'scope': 'shared production-loader original fixture; external iPad code loading not tested',
+        'production_inputs': source_hashes,
         'fixture_manifest_sha256': hashlib.sha256((fixture/'manifest.json').read_bytes()).hexdigest(),
         'probe_source_sha256': hashlib.sha256(Path(__file__).with_name('apple_probe.m').read_bytes()).hexdigest(),
         'compat_header_sha256': hashlib.sha256((COMPAT/'mach_vm_compat.h').read_bytes()).hexdigest(),

@@ -1,8 +1,10 @@
 # Original-source ARM64 rewrite fixture
 
-This directory exercises the real TOTK NSO rewriter and iOS embed generator with
-an original, small ARM64 program and generated module metadata. It consumes no
-game files. It is an artifact proof, **not native execution or gameplay**.
+This directory exercises the real NSO rewriter, embed generator and shared
+production loader mechanics with an original small ARM64 program. It consumes no
+game files. Portable artifact generation does not execute code. The Apple native
+runner tests real execution only when actually run; it never establishes gameplay
+or permission to execute externally imported code on iPad.
 
 `build_fixture.py` contains the canonical instruction source as address, word,
 assembly triples. Tests decode each word independently with Capstone. The module
@@ -38,17 +40,24 @@ call, a non-replayable call prefix, an invalid MOD0 pointer and truncated export
 text. Positive tests independently check actual branch rewriting, emitted system
 gates, section content hashes, padding, protections and provenance records.
 
-No fixture code is executed by the portable tool or its tests. Relative
-relocation is recorded but not applied by a production native loader. The service
-gate is emitted but no host service is invoked.
+No fixture code is executed by the portable tool/artifact tests. Generated
+`fixture_module.h` contains bounded original Module/Symbol/Reloc/Gate records
+derived from the actual rewrite output and original NSO. The separate native
+runner applies relocation and invokes the service gate through shared production
+code; its service handler is an authored fixture callback, not a Horizon service.
 
-## Apple platform permission probe (unbuilt in cloud)
+## Shared production-loader Apple probe
 
-`apple_probe.m` is an isolated UIKit app which uses `getsectiondata` and the
-same Apple remapping APIs, through the existing `mach_vm_compat.h`. It shares
-that compatibility header and generated artifacts with production, not the
-production loader. Its purpose is to test platform permissions. It must not be
-reported as production runtime integration.
+`apple_probe.m` is an isolated UIKit display/result wrapper. `fixture_runner.c`
+and production `runtime/loader.c` include the same internal
+`runtime/loader_module_core.h`: the symbol helpers, both platform mappers,
+relocation, sealing, permission checks and gate dispatch have one implementation.
+The probe links production `runtime/gate.S` unchanged. It does not invoke game
+boot, title patches, an SDK or the full service runtime.
+
+The former duplicated platform probe compiled in public Apple CI. This new shared
+core integration requires its own Apple build result; prior compilation is not
+evidence for this revision. Signing and physical execution remain open.
 
 On a Mac with Xcode, after generating the fixture above:
 
@@ -82,18 +91,28 @@ Those environment values require local provisioning; the entitlements must match
 the dedicated profile. No JIT or increased-memory entitlement is requested. Record
 the actual distribution/provisioning mode and signed artifact hash before use.
 
-The app verifies signed section hashes, remaps executable pages shared and data
-copy-on-write, applies its one known data-pointer relocation, initializes real
-Darwin TLS, checks protections and invokes the rewritten indirect call, TLS read
-and relocated leaf. It checks original return address, arguments, computed results
-and copy-on-write isolation. It does not invoke the service gate. Success appears
+The app calls the shared production mapper for signed section hashes, executable
+shared remaps and writable copy-on-write data, then the actual relocation, sealing
+and permission checks. It initializes real Darwin TLS and invokes the rewritten
+indirect call, TLS read, relocated leaf and SVC gate. The unchanged assembly gate
+switches to a fixture-owned host stack and the shared dispatcher calls the
+original bounded fixture handler. This is not a full HLE thunk/service proof.
+It checks return address, arguments, results, host-stack slot restoration and
+copy-on-write isolation. Success appears
 on screen, in `FIXTURE_RESULT` logging and `Documents/fixture-result.json`. Preserve
 this result with device/OS/signing details. Missing output or a crash is not a pass.
 Run once without debugger; a debugger-assisted pass alone cannot establish the
-normal execution path. A reviewed shared production loader interface is still
-needed for runtime integration acceptance.
+normal execution path. Failure remains fatal like the production checks; missing
+result output, a crash or a negative-test failure is never a pass.
 
-Remaining gates: iPhoneOS compilation, signing, physical-device execution of
+`tests/test_launcher_loader_core.py` builds the actual shared Mac core and
+executes the original code on Apple silicon, with fresh-process digest/layout/
+relocation/gate refusal cases. It also links the unsigned iPhoneOS app. These
+cases explicitly skip where Apple tools are absent; no emulator/simulator is
+substituted. The fixture is single-use and owns its one mapping/TLS/host stack;
+its cleanup is not a commercial-runtime teardown contract.
+
+Remaining gates: this revision's iPhoneOS compilation, signing, physical-device execution of
 the embedded fixture with observed permissions/results, then independently
 demonstrated execution of a private external fixture absent from the public
 executable. The last gate is still an unresolved Apple loading/signing dependency.
