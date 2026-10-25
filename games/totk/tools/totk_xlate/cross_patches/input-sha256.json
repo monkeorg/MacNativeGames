@@ -204,6 +204,18 @@
       },
       "patch": "0017-composite-interface-depth.patch",
       "sha256": "ae554a3362ce8aaa01312f22d68b05092b76392f4d6df8fbebfd71dd58228457"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "7f5902ad0d5176f8a9ef6fbb434bcc30670e028f19bd0d51c2cc6b44231a404c",
+        "spirv_msl.cpp": "8024d3b5ffc1e61653646314eb631b1b7668371c8a8bea13f44cf323c129f611"
+      },
+      "before": {
+        "spirv_cross.cpp": "447f5479fef73e964e11216206cbd9ca0a1973dcf51d011a102b7ee9fe2eb274",
+        "spirv_msl.cpp": "a4c2fb9edcc8e9376151a5c21c629acf6c3ff44173044837943e10a79796480a"
+      },
+      "patch": "0018-ir-collection-loop-checkpoints.patch",
+      "sha256": "0b663446e8554318130253fd972ed060b99e421b4fe0c1e2be18d7edbfadc751"
     }
   ],
   "schemaVersion": 1

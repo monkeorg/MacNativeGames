@@ -424,6 +424,46 @@
       "file": "spirv_glsl.cpp",
       "originalInventoryAnchor": "spirv_glsl.cpp:1414",
       "originalSourceLine": 1415
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:2027",
+      "originalSourceLine": 2027
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:2860",
+      "originalSourceLine": 2860
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:4036",
+      "originalSourceLine": 4036
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:4674",
+      "originalSourceLine": 4674
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:4686",
+      "originalSourceLine": 4686
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:4818",
+      "originalSourceLine": 4820
+    },
+    {
+      "file": "spirv_cross.cpp",
+      "originalInventoryAnchor": "spirv_cross.cpp:5505",
+      "originalSourceLine": 5505
+    },
+    {
+      "file": "spirv_msl.cpp",
+      "originalInventoryAnchor": "spirv_msl.cpp:2027",
+      "originalSourceLine": 2027
     }
   ],
   "explicitArithmetic": [
@@ -452,8 +492,8 @@
     "StringStream append/allocation/final copy"
   ],
   "instrumentedBracedLoops": 357,
-  "instrumentedLoopCheckpoints": 440,
-  "instrumentedOriginallyUnbracedLoops": 83,
+  "instrumentedLoopCheckpoints": 448,
+  "instrumentedOriginallyUnbracedLoops": 91,
   "note": "Cooperative work/tracked-growth limits only; this inventory is a runtime-enablement gate, not a hard heap or compiler-completeness proof.",
   "schemaVersion": 1,
   "staticallyBoundedUnbracedSites": [
@@ -502,24 +542,17 @@
       "reason": "Zero iterations: outer if (is_builtin && is_active) dominates the inner is_block branch; is_active remains true before for (...; !is_active && i < mbr_cnt; ...). No intervening assignment or reference-taking call can change it. Original upstream logic retained, with no checkpoint added."
     }
   ],
-  "unbracedLoopsInputDependentOrUnprovenCount": 68,
+  "unbracedLoopsInputDependentOrUnprovenCount": 60,
   "unbracedLoopsNotInstrumented": [
-    "spirv_cross.cpp:2027",
     "spirv_cross.cpp:2746",
-    "spirv_cross.cpp:2860",
     "spirv_cross.cpp:3505",
     "spirv_cross.cpp:3676",
     "spirv_cross.cpp:3794",
     "spirv_cross.cpp:3842",
     "spirv_cross.cpp:3848",
     "spirv_cross.cpp:3904",
-    "spirv_cross.cpp:4036",
     "spirv_cross.cpp:4493",
-    "spirv_cross.cpp:4674",
-    "spirv_cross.cpp:4686",
-    "spirv_cross.cpp:4818",
     "spirv_cross.cpp:5103",
-    "spirv_cross.cpp:5505",
     "spirv_parser.cpp:1411",
     "spirv_glsl.cpp:743",
     "spirv_glsl.cpp:792",
@@ -561,7 +594,6 @@
     "spirv_glsl.cpp:21251",
     "spirv_msl.cpp:1728",
     "spirv_msl.cpp:1856",
-    "spirv_msl.cpp:2027",
     "spirv_msl.cpp:4143",
     "spirv_msl.cpp:4150",
     "spirv_msl.cpp:4265",
@@ -584,7 +616,7 @@
     "spirv_msl.cpp:19930",
     "spirv_msl.cpp:20378"
   ],
-  "unbracedLoopsNotInstrumentedCount": 79,
+  "unbracedLoopsNotInstrumentedCount": 71,
   "uncovered": [
     "SmallVector growth through noexcept constructors",
     "STL string/map/set allocation and algorithms",
