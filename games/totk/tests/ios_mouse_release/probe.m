@@ -1,7 +1,10 @@
 /* Unrun iPhoneOS regression fixture. Build only in an isolated Apple test host
    with no physical controllers, excluding its separate gamepad.m translation
    unit: this fixture includes the production source to inspect queued state.
-   No platform macros or SDK classes are replaced. */
+   No platform macros or SDK classes are replaced. Object-only coverage is
+   included in ios/tools/build_sources.py for both public v143 profiles. Its
+   report never claims these assertions ran; isolated physical-host execution
+   remains a separate gate (no simulator or Canopy flag substitution). */
 #import <TargetConditionals.h>
 #if !TARGET_OS_IPHONE
 #error This fixture requires the actual iPhoneOS gamepad implementation.

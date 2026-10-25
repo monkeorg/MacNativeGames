@@ -4,7 +4,9 @@
 This is an object build only: it does not link an app, sign, install, run code,
 run tests, or use a simulator. Both TOTK 1.4.3 display configurations compile
 against the installed Apple SDK and checked-in production headers, without
-stubs. Outputs and exact toolchain/command metadata go to --output.
+stubs. The isolated mouse-release regression fixture also compiles to an object;
+its assertions are not run and still require a separate isolated physical host.
+Outputs and exact toolchain/command metadata go to --output.
 """
 
 import argparse
@@ -24,7 +26,12 @@ TOTK = ROOT / "games/totk"
 SOURCES = tuple(sorted((TOTK / "ios/Sources").glob("*.m"))) + (
     TOTK / "runtime/frontend_ios.m",
     TOTK / "runtime/gamepad.m",
+    TOTK / "runtime/fs_host.c",
+    TOTK / "runtime/threads.c",
+    TOTK / "runtime/input.c",
+    TOTK / "tests/ios_mouse_release/probe.m",
 )
+ISOLATED_FIXTURES = frozenset({TOTK / "tests/ios_mouse_release/probe.m"})
 PROFILES = {
     "v143-default": ["-DTOTK_GAME_V143=1"],
     "v143-display-settings": ["-DTOTK_GAME_V143=1", "-DTOTK_IOS_DISPLAY_SETTINGS=1", "-DTOTK_IOS_ASPECT_VERT=1"],
@@ -159,16 +166,17 @@ def project_dependencies(depfile):
     return sorted(str(path.relative_to(ROOT)) for path in paths if path.is_relative_to(ROOT))
 
 
-def compile_one(profile, defines, source, output, toolchain, snapshot):
-    relative = source.relative_to(ROOT)
-    object_file = output / profile / relative.with_suffix(".o")
-    object_file.parent.mkdir(parents=True, exist_ok=True)
-    log_file = object_file.with_suffix(".log")
-    depfile = object_file.with_suffix(".d")
-    command = [
+def compile_command(defines, source, output, toolchain, object_file, depfile):
+    if source.suffix == ".m":
+        language = ["-std=gnu11", "-fobjc-arc", "-fblocks", "-fmodules",
+                    f"-fmodules-cache-path={output / 'module-cache'}"]
+    elif source.suffix == ".c":
+        language = ["-std=gnu11", "-D_DARWIN_C_SOURCE"]
+    else:
+        raise RuntimeError(f"Unsupported public object source language: {source.suffix}")
+    return [
         toolchain["clang"], "-target", "arm64-apple-ios26.0", "-isysroot", toolchain["sdk"],
-        "-std=gnu11", "-fobjc-arc", "-fblocks", "-fmodules",
-        f"-fmodules-cache-path={output / 'module-cache'}", "-O0", "-mcpu=apple-a15",
+        *language, "-O0", "-mcpu=apple-a15",
         "-Wall", "-Wextra", "-Werror=implicit-function-declaration",
         "-I", str(TOTK / "runtime"),
         "-I", str(TOTK / "third_party/d2r_gfx/gfx/nvn"),
@@ -177,6 +185,15 @@ def compile_one(profile, defines, source, output, toolchain, snapshot):
         *defines, "-MMD", "-MF", str(depfile), "-MT", "unit",
         "-c", str(source), "-o", str(object_file),
     ]
+
+
+def compile_one(profile, defines, source, output, toolchain, snapshot):
+    relative = source.relative_to(ROOT)
+    object_file = output / profile / relative.with_suffix(".o")
+    object_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file = object_file.with_suffix(".log")
+    depfile = object_file.with_suffix(".d")
+    command = compile_command(defines, source, output, toolchain, object_file, depfile)
     env = dict(os.environ, DEVELOPER_DIR=toolchain["developer_dir"])
     started = time.monotonic()
     status = None
@@ -191,6 +208,8 @@ def compile_one(profile, defines, source, output, toolchain, snapshot):
             log.write(f"\nCannot invoke compiler: {error}\n")
     record = {
         "profile": profile, "source": str(relative), "source_sha256": snapshot.get(str(relative)),
+        "source_kind": "isolated-regression-fixture" if source in ISOLATED_FIXTURES else "production",
+        "executed": False, "assertions_run": False,
         "command": command, "returncode": status, "seconds": round(time.monotonic() - started, 3),
         "log": str(log_file.relative_to(output)), "success": status == 0,
     }
@@ -239,7 +258,10 @@ def main():
               "target": "arm64-apple-ios26.0", "jobs": args.jobs, "results": [],
               "success": False, "compiled_object_count": 0,
               "phase": "preflight",
-              "expected_object_count": len(PROFILES) * len(SOURCES)}
+              "expected_object_count": len(PROFILES) * len(SOURCES),
+              "expected_production_object_count": len(PROFILES) * (len(SOURCES) - len(ISOLATED_FIXTURES)),
+              "expected_fixture_object_count": len(PROFILES) * len(ISOLATED_FIXTURES),
+              "fixture_execution_gate": "Not run: requires an isolated physical iPhoneOS host without physical controllers."}
     report_path = output / "report.json"
     save_report(report_path, report)
     try:
