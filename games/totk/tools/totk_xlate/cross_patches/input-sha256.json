@@ -444,6 +444,16 @@
       },
       "patch": "0039-zero-initialization-query-depth-work.patch",
       "sha256": "2805b5923c0df3b1987d1059fb4c889d1a9af42eccfec0317577a674b9cc5ee2"
+    },
+    {
+      "after": {
+        "spirv_cross.cpp": "a4d5a6800f181730c03bde6ee8f8d619e82af35c8fb15ffe0f5e784995712749"
+      },
+      "before": {
+        "spirv_cross.cpp": "af77d05b7582cc8229bfccb8f8b0fb1816e0fa4fd403913c534da475fa0073d4"
+      },
+      "patch": "0040-null-constant-helper-delegation.patch",
+      "sha256": "067865a1d9ec0a98a85827b89d526e8ebf1adfb73ce79b4348c1b1fed0b0b3f2"
     }
   ],
   "schemaVersion": 1
