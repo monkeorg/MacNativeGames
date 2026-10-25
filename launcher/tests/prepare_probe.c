@@ -119,10 +119,13 @@ int main(int argc,char **argv) {
     mng_sha256_free(asset_hash);
     printf("{\"status\":\"%s\",\"result_empty\":%s,\"descriptor_preserved\":%s,"
            "\"title_id\":\"%016llx\",\"asset_count\":%llu,\"asset_bytes\":%llu,"
+           "\"application_id\":\"%016llx\",\"title_version\":%u,\"version_identified\":%s,\"content_role\":%u,"
            "\"source_size\":%llu,\"exefs_verified\":%d,\"romfs_verified\":%d,\"source_sha256\":\"",
            mng_prepare_status_name(status),memcmp(&result,zero,sizeof(result)) ? "false":"true",
            preserved ? "true":"false",(unsigned long long)result.title_id,
            (unsigned long long)result.asset_count,(unsigned long long)result.asset_bytes,
+           (unsigned long long)result.application_id,result.title_version,result.version_identified ? "true":"false",
+           (unsigned)result.content_role,
            (unsigned long long)result.source_size,result.exefs_verified,result.romfs_verified);
     hex(result.source_sha256,32); printf("\",\"progress_calls\":%u}\n",progress_calls);
     return 0;

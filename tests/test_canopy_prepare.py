@@ -25,9 +25,11 @@ class CanopyPrepareTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import test_game_containers as fixture
+        import test_canopy_content as content_fixture
         from cryptography.hazmat.primitives.ciphers import modes
         from extract_exefs import decrypt
         cls.fixture = fixture
+        cls.content_fixture = content_fixture
         cls.modes = modes
         cls.decrypt = staticmethod(decrypt)
         cls.build_temp = tempfile.TemporaryDirectory()
@@ -56,6 +58,7 @@ class CanopyPrepareTests(unittest.TestCase):
         libraries = [] if sys.platform == 'darwin' else ['-lcrypto']
         result = subprocess.run([*common, str(ROOT / 'launcher/tests/prepare_probe.c'),
             str(ROOT / 'launcher/src/mng_container.c'), str(ROOT / 'launcher/src/mng_crypto.c'),
+            str(ROOT / 'launcher/src/mng_content.c'),
             str(prepare_object), *libraries, '-o', str(cls.probe)],
             capture_output=True, text=True, timeout=60)
         if result.returncode:
@@ -139,6 +142,52 @@ class CanopyPrepareTests(unittest.TestCase):
         return b''.join(f.encrypt(f.HEADER, self.modes.XTS(i.to_bytes(16,'big')),
                                  header[i*512:(i+1)*512]) for i in range(6)) + body
 
+    @staticmethod
+    def observed_record(nca, role=1):
+        digest = hashlib.sha256(nca).digest()
+        return {'sha': digest, 'id': digest[:16], 'size': len(nca), 'role': role, 'offset': 0}
+
+    def metadata_nca(self, records=None, *, kind=0x80, title=None, version=7,
+                     application=None, payload=None, member=None):
+        cf = self.content_fixture
+        title = title if title is not None else cf.APP
+        application = application if application is not None else cf.APP
+        if payload is None:
+            payload, name, _ = cf.cnmt(title=title, application=application, kind=kind,
+                                       version=version, contents=records)
+            member = member or name
+        else:
+            member = member or f'Application_{title:016x}.cnmt'
+        nca = self.custom_nca([(member, payload)], title=title)
+        header = bytearray(b''.join(self.decrypt(self.fixture.HEADER,
+            self.modes.XTS(i.to_bytes(16,'big')), nca[i*512:(i+1)*512]) for i in range(6)))
+        end = struct.unpack_from('<I', header, 0x244)[0]*512
+        header[0x205] = 1
+        header[0x250:0x280] = bytes(48)
+        header[0x2a0:0x300] = bytes(96)
+        header[0x600:0xc00] = bytes(1536)
+        struct.pack_into('<Q', header, 0x208, end)
+        return b''.join(self.fixture.encrypt(self.fixture.HEADER,
+            self.modes.XTS(i.to_bytes(16,'big')), header[i*512:(i+1)*512]) for i in range(6))+nca[0xc00:end]
+
+    def identified_package(self, with_patch=False, with_dlc=False):
+        f, cf = self.fixture, self.content_fixture
+        program = self.custom_nca()
+        control = f.nca(title=cf.APP, content=2)
+        metadata = self.metadata_nca([self.observed_record(program), self.observed_record(control,3)])
+        files = [('renamed-program.nca', program), ('control.nca', control), ('base-meta.nca', metadata)]
+        if with_patch:
+            patch = f.bktr(self.custom_nca([('main',b'patch must not be emitted'),('main.npdm',b'metadata')]))
+            patch_meta = self.metadata_nca([self.observed_record(patch)], kind=0x81,
+                                           title=cf.PATCH, version=12)
+            files += [('update-program.nca',patch), ('patch-meta.nca',patch_meta)]
+        if with_dlc:
+            data = f.nca(title=cf.DLC, content=4)
+            dlc_meta = self.metadata_nca([self.observed_record(data,2)], kind=0x82,
+                                         title=cf.DLC, version=3)
+            files += [('addon-data.nca',data), ('addon-meta.nca',dlc_meta)]
+        return files
+
     def test_exact_plaintext_key_area_common_ticket_and_xci(self):
         f = self.fixture
         for kind, managed in (('nsp', False), ('nsp', True), ('xci', False), ('xci', True)):
@@ -148,6 +197,10 @@ class CanopyPrepareTests(unittest.TestCase):
                 self.assertEqual((output/'exefs/main.npdm').read_bytes(), b'synthetic metadata')
                 self.assertEqual((output/'romfs.bin').read_bytes(), f.romfs())
                 self.assertEqual(report['title_id'], f'{f.TITLE:016x}')
+                self.assertEqual(report['application_id'], f'{f.TITLE:016x}')
+                self.assertFalse(report['version_identified'])
+                self.assertEqual(report['title_version'], 0)
+                self.assertEqual(report['content_role'], 0)
                 self.assertEqual(report['asset_count'], 3)
                 self.assertEqual(report['asset_bytes'], len(b'synthetic main')+len(b'synthetic metadata')+len(f.romfs()))
 
@@ -263,6 +316,114 @@ class CanopyPrepareTests(unittest.TestCase):
         self.assertEqual(report['status'], 'limit')
         self.assertTrue(report['result_empty'])
         self.assertEqual(report['progress_calls'], 0)
+
+    def test_verified_metadata_identifies_base_and_binds_renamed_nca_bytes(self):
+        files = self.identified_package()
+        output, report = self.inspect(self.fixture.partition(files))
+        self.assertEqual(report['application_id'], f'{self.content_fixture.APP:016x}')
+        self.assertTrue(report['version_identified'])
+        self.assertEqual(report['title_version'], 7)
+        self.assertEqual(report['content_role'], 0x80)
+        self.assertEqual((output/'exefs/main').read_bytes(), b'invented executable bytes')
+        self.assertEqual({p.relative_to(output).as_posix() for p in output.rglob('*') if p.is_file()},
+                         {'exefs/main','exefs/main.npdm','romfs.bin'})
+
+    def test_base_cartridge_with_bundled_update_and_dlc_stays_base_only(self):
+        files = self.identified_package(with_patch=True, with_dlc=True)
+        for ordered in (files, list(reversed(files))):
+            output, report = self.inspect(self.fixture.card_with_update(ordered))
+            self.assertEqual(report['title_version'], 7)
+            self.assertEqual(report['content_role'], 0x80)
+            self.assertEqual((output/'exefs/main').read_bytes(), b'invented executable bytes')
+            self.assertEqual(report['asset_count'], 3)
+
+    def test_corrupt_present_metadata_never_falls_back_to_unidentified(self):
+        f, cf = self.fixture, self.content_fixture
+        program = self.custom_nca()
+        record = self.observed_record(program)
+        cnmt, member, _ = cf.cnmt(version=7, contents=[record])
+        corrupt_digest = bytearray(cnmt)
+        corrupt_digest[-1] ^= 1
+        bad_pfs = bytearray(self.metadata_nca([record]))
+        bad_pfs[0xc00+512] ^= 1
+        for metadata, status in ((self.metadata_nca(payload=bytes(corrupt_digest)), 'integrity'),
+                                 (bytes(bad_pfs), 'integrity'),
+                                 (self.metadata_nca([record], member=f'Application_{cf.APP+1:016x}.cnmt'),'invalid'),
+                                 (self.metadata_nca([record], payload=b'x'*(1024*1024+1)), 'limit')):
+            with self.subTest(status=status):
+                output, _ = self.inspect(f.partition([('p.nca',program),('meta.nca',metadata)]), expected=status)
+                self.assertEqual(list((output/'exefs').iterdir()), [])
+
+    def test_exact_cnmt_hash_size_and_raw_role_bindings_are_required(self):
+        f = self.fixture
+        program = self.custom_nca()
+        for alteration in ('hash','size','role'):
+            record = self.observed_record(program)
+            if alteration == 'hash':
+                record['sha'] = hashlib.sha256(b'other encrypted bytes').digest()
+                record['id'] = record['sha'][:16]
+            elif alteration == 'size':
+                record['size'] += 512
+            else:
+                record['role'] = 2
+            with self.subTest(alteration=alteration):
+                metadata = self.metadata_nca([record])
+                self.inspect(f.partition([('p.nca',program),('meta.nca',metadata)]), expected='integrity')
+
+    def test_unapplied_bundled_update_is_still_bound_and_mixed_apps_refused(self):
+        f, cf = self.fixture, self.content_fixture
+        files = self.identified_package(with_patch=True)
+        changed = bytearray(files[3][1])
+        changed[-1] ^= 1
+        files[3] = ('update-program.nca',bytes(changed))
+        self.inspect(f.partition(files), expected='integrity')
+        files = self.identified_package()
+        unrelated = self.custom_nca(title=cf.APP+0x10000)
+        unrelated_meta = self.metadata_nca([self.observed_record(unrelated)],
+                                           title=cf.APP+0x10000, application=cf.APP+0x10000)
+        self.inspect(f.partition(files+[('other.nca',unrelated),('other-meta.nca',unrelated_meta)]), expected='integrity')
+
+    def test_standalone_patch_and_undeclared_content_do_not_prepare(self):
+        f, cf = self.fixture, self.content_fixture
+        update = f.bktr(self.custom_nca())
+        metadata = self.metadata_nca([self.observed_record(update)], kind=0x81, title=cf.PATCH, version=12)
+        self.inspect(f.partition([('u.nca',update),('m.nca',metadata)]), expected='unsupported')
+        files = self.identified_package()
+        extra = f.nca(content=4, title=cf.APP)
+        self.inspect(f.partition(files+[('undeclared.nca',extra)]), expected='integrity')
+
+    def test_every_declared_control_patch_and_addon_header_title_is_bound(self):
+        f, cf = self.fixture, self.content_fixture
+        base = self.custom_nca()
+        foreign_control = f.nca(title=cf.APP+0x10000, content=2)
+        metadata = self.metadata_nca([self.observed_record(base), self.observed_record(foreign_control,3)])
+        self.inspect(f.partition([('p.nca',base),('foreign.nca',foreign_control),('m.nca',metadata)]),
+                     expected='integrity')
+        for role in (1,3):
+            with self.subTest(patch_role=role):
+                foreign = f.bktr(self.custom_nca(title=cf.APP+0x10000)) if role==1 else foreign_control
+                patch_meta = self.metadata_nca([self.observed_record(foreign,role)], kind=0x81,
+                                               title=cf.PATCH, version=12)
+                self.inspect(f.partition(self.identified_package()+[('u.nca',foreign),('um.nca',patch_meta)]),
+                             expected='integrity')
+        foreign_data = f.nca(title=cf.APP, content=4)
+        addon_meta = self.metadata_nca([self.observed_record(foreign_data,2)], kind=0x82,
+                                       title=cf.DLC, version=3)
+        self.inspect(f.partition(self.identified_package()+[('d.nca',foreign_data),('dm.nca',addon_meta)]),
+                     expected='integrity')
+
+    def test_unimplemented_content_index_and_addon_role_are_explicit(self):
+        f, cf = self.fixture, self.content_fixture
+        base = self.custom_nca()
+        record = self.observed_record(base)
+        record['offset'] = 1
+        metadata = self.metadata_nca([record])
+        self.inspect(f.partition([('p.nca',base),('m.nca',metadata)]), expected='unsupported')
+        addon_program = self.custom_nca(title=cf.DLC)
+        metadata = self.metadata_nca([self.observed_record(addon_program)], kind=0x82,
+                                     title=cf.DLC, version=3)
+        self.inspect(f.partition(self.identified_package()+[('d.nca',addon_program),('dm.nca',metadata)]),
+                     expected='unsupported')
 
 
 if __name__ == '__main__':

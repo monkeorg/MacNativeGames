@@ -6,6 +6,7 @@
 #include "mng_prepare.h"
 #include "mng_container.h"
 #include "mng_crypto.h"
+#include "mng_content.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,7 @@ struct prep {
 };
 struct section { struct prep *p; uint64_t start, size; const unsigned char *fs; };
 struct level { uint64_t offset, size; unsigned power; };
+static int nca_read(void *,uint64_t,void *,size_t);
 static uint32_t u32(const unsigned char *p) {
     return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;
 }
@@ -101,6 +103,7 @@ static int hash_range(struct prep *p,mng_read_at read,void *reader,uint64_t at,
         if (mng_sha256_update(state,bytes,n)) { fail(p,MNG_PREPARE_INTEGRITY); goto end; }
         done+=n;
         if (read==source_read) progress(p,"hash-source",done,size);
+        else if (read==nca_read) progress(p,"hash-content-nca",done,size);
     }
     memset(bytes,0,sizeof(bytes));
     while (done<padded) {
@@ -197,7 +200,7 @@ static int header_read(struct prep *p,const struct mng_entry *entry,unsigned cha
     }
     return 0;
 }
-static int choose_program(struct prep *p,const struct mng_inventory *inventory) {
+static int choose_legacy_program(struct prep *p,const struct mng_inventory *inventory) {
     unsigned char header[0xc00]; uint64_t common_title=0; unsigned programs=0, ncas=0;
     for (size_t i=0;i<inventory->count;i++) {
         const struct mng_entry *entry=inventory->entries+i;
@@ -213,6 +216,7 @@ static int choose_program(struct prep *p,const struct mng_inventory *inventory) 
             return fail(p,MNG_PREPARE_UNSUPPORTED); /* BKTR has a distinct merge contract. */
         memcpy(p->header,header,sizeof(header));
         p->nca_offset=entry->offset; p->nca_size=entry->size; p->result.title_id=title;
+        p->result.application_id=title; /* No CNMT: version remains unidentified. */
     }
     mng_secure_clear(header,sizeof(header));
     return programs==1 ? 0:fail(p,MNG_PREPARE_UNSUPPORTED);
@@ -264,7 +268,7 @@ static int emit(struct section *s,uint64_t offset,uint64_t size,const char *path
 done:
     mng_secure_clear(bytes,sizeof(bytes)); mng_sha256_free(hash); return result;
 }
-static int exefs(struct section *s) {
+static int verified_pfs(struct section *s,struct mng_inventory *inventory,const char *phase) {
     struct prep *p=s->p; const unsigned char *fs=s->fs;
     uint32_t block=u32(fs+0x28), levels=u32(fs+0x2c);
     uint64_t hashes=u64(fs+0x30), hash_size=u64(fs+0x38), data=u64(fs+0x40), size=u64(fs+0x48);
@@ -282,10 +286,14 @@ static int exefs(struct section *s) {
         if (section_read(s,hashes+i*32,expected,32) ||
             hash_range(p,section_read,s,data+i*block,n,n,digest)) return -1;
         if (memcmp(digest,expected,32)) return fail(p,MNG_PREPARE_INTEGRITY);
-        progress(p,"verify-exefs",i+1,blocks);
+        progress(p,phase,i+1,blocks);
     }
+    return container_status(p,mng_partition_inspect(section_read,s,s->size,data,size,MNG_PFS0,inventory));
+}
+static int exefs(struct section *s) {
+    struct prep *p=s->p;
     struct mng_inventory inventory={0};
-    if (container_status(p,mng_partition_inspect(section_read,s,s->size,data,size,MNG_PFS0,&inventory))) return -1;
+    if (verified_pfs(s,&inventory,"verify-exefs")) return -1;
     int found=0, main_found=0, result=-1;
     if (inventory.count>127) { fail(p,MNG_PREPARE_LIMIT); goto done; }
     for (size_t i=0;i<inventory.count;i++) {
@@ -322,6 +330,157 @@ static int exefs(struct section *s) {
     p->result.exefs_verified=1; result=0;
 done:
     mng_inventory_free(&inventory); return result;
+}
+struct observed_nca {
+    const struct mng_entry *entry;
+    struct mng_content_candidate candidate;
+    uint64_t title_id;
+};
+static int content_status(struct prep *p,enum mng_content_status status) {
+    if (status==MNG_CONTENT_OK) return 0;
+    switch (status) {
+        case MNG_CONTENT_LIMIT:return fail(p,MNG_PREPARE_LIMIT);
+        case MNG_CONTENT_NOMEM:return fail(p,MNG_PREPARE_NOMEM);
+        case MNG_CONTENT_INTEGRITY:case MNG_CONTENT_MISSING:case MNG_CONTENT_MISMATCH:
+            return fail(p,MNG_PREPARE_INTEGRITY);
+        case MNG_CONTENT_UNSUPPORTED:case MNG_CONTENT_DEPENDENCY:
+            return fail(p,MNG_PREPARE_UNSUPPORTED);
+        default:return fail(p,MNG_PREPARE_INVALID);
+    }
+}
+static int nca_read(void *context,uint64_t at,void *out,size_t size) {
+    return source_read(context,at,out,size);
+}
+static int read_metadata(struct prep *p,const struct ticket *tickets,size_t ticket_count,
+    struct mng_content **out,size_t *metadata_bytes) {
+    if (content_key(p,tickets,ticket_count)) return -1;
+    struct section section={0};
+    for (unsigned i=0;i<4;i++) {
+        uint64_t start=(uint64_t)u32(p->header+0x240+i*16)*512;
+        if (!start) continue;
+        const unsigned char *fs=p->header+0x400+i*512;
+        if (section.p || fs[2]!=1 || fs[3]!=2 || fs[4]!=3) return fail(p,MNG_PREPARE_UNSUPPORTED);
+        if (u64(fs+0x48)>16u*1024u*1024u) return fail(p,MNG_PREPARE_LIMIT);
+        section=(struct section){p,start,(uint64_t)u32(p->header+0x244+i*16)*512-start,fs};
+    }
+    if (!section.p) return fail(p,MNG_PREPARE_UNSUPPORTED);
+    struct mng_inventory inventory={0}; unsigned char *bytes=NULL; int result=-1;
+    if (verified_pfs(&section,&inventory,"verify-metadata")) return -1;
+    if (inventory.count!=1 || !suffix(inventory.entries[0].name,".cnmt")) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    const struct mng_entry *e=inventory.entries;
+    if (e->size>1024u*1024u || e->size>16u*1024u*1024u-*metadata_bytes) { fail(p,MNG_PREPARE_LIMIT);goto done; }
+    bytes=malloc(e->size ? (size_t)e->size:1);
+    if (!bytes) { fail(p,MNG_PREPARE_NOMEM);goto done; }
+    if (section_read(&section,e->offset,bytes,(size_t)e->size) ||
+        content_status(p,mng_content_parse(e->name,bytes,(size_t)e->size,out))) goto done;
+    if ((*out)->title_id!=u64(p->header+0x210)) {
+        mng_content_free(*out);*out=NULL;fail(p,MNG_PREPARE_INTEGRITY);goto done;
+    }
+    *metadata_bytes+=(size_t)e->size;result=0;
+done:
+    if (bytes) { mng_secure_clear(bytes,inventory.entries[0].size);free(bytes); }
+    mng_inventory_free(&inventory);return result;
+}
+static int choose_program(struct prep *p,const struct mng_inventory *inventory,
+    const struct ticket *tickets,size_t ticket_count) {
+    struct observed_nca *observed=calloc(256,sizeof(*observed));
+    struct mng_content_candidate *candidates=calloc(256,sizeof(*candidates));
+    struct mng_content *metadata[64]={0};
+    size_t nca_count=0,meta_count=0,metadata_bytes=0;int result=-1,has_meta=0;
+    if (!observed || !candidates) { fail(p,MNG_PREPARE_NOMEM);goto done; }
+    /* Inventory all headers first. A present Meta NCA always enters verified
+     * metadata handling; malformed metadata can never trigger legacy fallback. */
+    for (size_t i=0;i<inventory->count;i++) {
+        const struct mng_entry *e=inventory->entries+i;
+        if (!suffix(e->name,".nca")) continue;
+        if (nca_count==256) { fail(p,MNG_PREPARE_LIMIT);goto done; }
+        if (header_read(p,e,p->header)) goto done;
+        observed[nca_count].entry=e;
+        observed[nca_count].candidate.nca_type=p->header[0x205];
+        observed[nca_count].title_id=u64(p->header+0x210);
+        if (p->header[0x205]==1) has_meta=1;
+        nca_count++;
+    }
+    if (!has_meta) { result=choose_legacy_program(p,inventory);goto done; }
+    for (size_t i=0;i<nca_count;i++) {
+        const struct mng_entry *e=observed[i].entry;
+        struct mng_content_candidate *candidate=&observed[i].candidate;
+        candidate->size=e->size;
+        progress(p,"hash-content-nca",0,e->size);
+        if (hash_range(p,nca_read,p,e->offset,e->size,e->size,candidate->sha256)) goto done;
+        progress(p,"hash-content-nca",e->size,e->size);
+        memcpy(candidate->id,candidate->sha256,16);candidates[i]=*candidate;
+        if (candidate->nca_type!=1) continue;
+        if (meta_count==64) { fail(p,MNG_PREPARE_LIMIT);goto done; }
+        if (header_read(p,e,p->header)) goto done;
+        p->nca_offset=e->offset;p->nca_size=e->size;
+        if (read_metadata(p,tickets,ticket_count,metadata+meta_count,&metadata_bytes)) goto done;
+        meta_count++;
+    }
+    uint64_t application=0;
+    for (size_t i=0;i<meta_count;i++) if (metadata[i]->type==MNG_CONTENT_APPLICATION) {
+        application=metadata[i]->application_id;break;
+    }
+    if (!application) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    for (size_t i=0;i<meta_count;i++) {
+        const struct mng_content *owner=metadata[i];
+        if (content_status(p,mng_content_bind(owner,candidates,nca_count))) goto done;
+        for (size_t j=0;j<owner->content_count;j++) {
+            const struct mng_content_record *record=owner->contents+j;
+            /* Bounded single-program mapping: indexed subprograms and nested
+             * Meta-content relationships need distinct grounded policies.
+             * Base and patch Program/Control keep the application ID (see
+             * extract_exefs.py and extract_app_icon.py); AddOn Data uses its
+             * declared add-on title. Never infer this identity from a name. */
+            if (record->id_offset || record->role==0 ||
+                (owner->type==MNG_CONTENT_ADDON && record->role!=2)) {
+                fail(p,MNG_PREPARE_UNSUPPORTED);goto done;
+            }
+            uint64_t expected=owner->type==MNG_CONTENT_ADDON ? owner->title_id:owner->application_id;
+            size_t k=0;
+            while (k<nca_count && memcmp(record->id,observed[k].candidate.id,16)) k++;
+            if (k==nca_count || observed[k].title_id!=expected) {
+                fail(p,MNG_PREPARE_INTEGRITY);goto done;
+            }
+        }
+    }
+    struct mng_content_plan plan={0};
+    if (content_status(p,mng_content_plan((const struct mng_content *const *)metadata,meta_count,
+                                        candidates,nca_count,application,UINT32_MAX,&plan))) goto done;
+    const struct mng_content *base=metadata[plan.base_index];
+    if (base->required_application_version>base->version) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    /* Every non-Meta NCA must be declared by one of the verified CNMTs, including
+     * bundled updates/DLC. Their metadata is checked; their payload is not
+     * silently composed or represented as prepared by this base-only result. */
+    for (size_t i=0;i<nca_count;i++) {
+        if (candidates[i].nca_type==1) continue;
+        int found=0;
+        for (size_t j=0;j<meta_count;j++) for (size_t k=0;k<metadata[j]->content_count;k++)
+            if (!memcmp(candidates[i].id,metadata[j]->contents[k].id,16)) found=1;
+        if (!found) { fail(p,MNG_PREPARE_INTEGRITY);goto done; }
+    }
+    const struct mng_content_record *program=NULL;
+    for (size_t i=0;i<base->content_count;i++) if (base->contents[i].role==1) {
+        if (program || base->contents[i].id_offset) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+        program=base->contents+i;
+    }
+    if (!program) { fail(p,MNG_PREPARE_UNSUPPORTED);goto done; }
+    size_t selected=0;
+    while (selected<nca_count && memcmp(program->id,candidates[selected].id,16)) selected++;
+    if (selected==nca_count) { fail(p,MNG_PREPARE_INTEGRITY);goto done; }
+    const struct mng_entry *entry=observed[selected].entry;
+    if (header_read(p,entry,p->header)) goto done;
+    if (u64(p->header+0x210)!=base->title_id) { fail(p,MNG_PREPARE_INTEGRITY);goto done; }
+    for (unsigned i=0;i<4;i++) if (u32(p->header+0x240+i*16) && p->header[0x404+i*512]==4) {
+        fail(p,MNG_PREPARE_UNSUPPORTED);goto done;
+    }
+    p->nca_offset=entry->offset;p->nca_size=entry->size;
+    p->result.title_id=base->title_id;p->result.application_id=application;
+    p->result.title_version=base->version;p->result.version_identified=1;p->result.content_role=base->type;
+    result=0;
+done:
+    for (size_t i=0;i<meta_count;i++) mng_content_free(metadata[i]);
+    free(observed);free(candidates);return result;
 }
 static int romfs(struct section *s) {
     struct prep *p=s->p; const unsigned char *fs=s->fs;
@@ -389,7 +548,8 @@ enum mng_prepare_status mng_prepare_fd(int fd,const struct mng_key_provider *key
         return MNG_PREPARE_INVALID;
     unsigned char zero[32]={0};
     if (result->title_id || result->source_size || result->asset_count || result->asset_bytes ||
-        result->exefs_verified || result->romfs_verified || memcmp(result->source_sha256,zero,32))
+        result->exefs_verified || result->romfs_verified || result->application_id || result->title_version ||
+        result->version_identified || result->content_role || memcmp(result->source_sha256,zero,32))
         return MNG_PREPARE_INVALID;
     struct stat before, after;
     if (fstat(fd,&before)) return MNG_PREPARE_IO;
@@ -401,7 +561,7 @@ enum mng_prepare_status mng_prepare_fd(int fd,const struct mng_key_provider *key
     if (cancelled(&p)) goto done;
     if (container_status(&p,mng_container_inspect(source_read,&p,p.size,&inventory))) goto done;
     if (key_lookup(&p,"header_key",p.header_key,32) || tickets_read(&p,&inventory,tickets,&count) ||
-        choose_program(&p,&inventory) || content_key(&p,tickets,count) || sections(&p)) goto done;
+        choose_program(&p,&inventory,tickets,count) || content_key(&p,tickets,count) || sections(&p)) goto done;
     progress(&p,"hash-source",0,p.size);
     if (hash_range(&p,source_read,&p,0,p.size,p.size,p.result.source_sha256)) goto done;
     progress(&p,"hash-source",p.size,p.size);

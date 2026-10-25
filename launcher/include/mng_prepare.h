@@ -29,6 +29,12 @@ struct mng_prepare_result {
     unsigned char source_sha256[32];
     /* Signature authenticity is separate from section/hash-chain integrity. */
     int exefs_verified, romfs_verified;
+    /* Verified CNMT identity when present; unknown is explicit, never a
+     * filename-derived compatibility claim. Base preparation keeps base version. */
+    uint64_t application_id;
+    uint32_t title_version;
+    int version_identified;
+    unsigned char content_role; /* CNMT0x80 application;0 legacy-unidentified */
 };
 /* Native NCA3/key-area or common-ticket AES-CTR, checked ExeFS and IVFC.
  * No game compatibility/execution is inferred. Caller passes empty result. */
