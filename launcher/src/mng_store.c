@@ -861,6 +861,36 @@ enum mng_prepare_status mng_store_set_reuse_generation(struct mng_store *s,uint6
     if(verified_source)*verified_source=verified.preparation;
     return MNG_PREPARE_OK;
 }
+/* Inspect the entire candidate before a NEW retirement writes any intent or
+ * moves its canonical name. Mirror remove_tree's bounded shape and safe_unlink's
+ * regular/single-link rule without unlinking, parsing receipts or hashing data.
+ * A retained exclusive lease/store lock excludes cooperating mutations; metadata
+ * snapshots also reject detectable directory changes during this read-only pass. */
+static int removal_preflight(int dir, unsigned depth) {
+    struct stat before={0},after={0};
+    if (depth>1 || fstat(dir,&before) || !S_ISDIR(before.st_mode) || before.st_uid!=geteuid()) return -1;
+    int iterator=directory_iterator(dir); if (iterator<0) return -1;
+    DIR *entries=fdopendir(iterator); if (!entries) { close(iterator); return -1; }
+    size_t count=0; int bad=0; struct dirent *entry; errno=0;
+    while ((entry=readdir(entries))) {
+        const char *name=entry->d_name;
+        if (!strcmp(name,".") || !strcmp(name,"..")) { errno=0; continue; }
+        struct stat st;
+        if (++count>MNG_STORE_MAX_ASSETS+8 || fstatat(dir,name,&st,AT_SYMLINK_NOFOLLOW) || st.st_uid!=geteuid()) { bad=1; break; }
+        if (S_ISDIR(st.st_mode)) {
+            if (depth || strcmp(name,"exefs")) { bad=1; break; }
+            int child=openat(dir,name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+            struct stat opened={0};
+            bad=child<0 || fstat(child,&opened) || !same_snapshot(&st,&opened) || removal_preflight(child,depth+1);
+            if (child>=0) close(child);
+        } else if (!S_ISREG(st.st_mode) || st.st_nlink!=1) bad=1;
+        if (bad) break;
+        errno=0;
+    }
+    if (!entry && errno) bad=1;
+    if (!bad && (fstat(dir,&after) || !same_snapshot(&before,&after))) bad=1;
+    closedir(entries); return bad ? -1:0;
+}
 static int remove_tree(int parent, const char *name, unsigned depth) {
     if (depth>2) return -1;
     int dir=directory(parent,name,0); if (dir<0) return -1;
@@ -1068,6 +1098,12 @@ enum mng_prepare_status mng_store_remove_generation(struct mng_store *s, uint64_
     int lease=target<0?-1:openat(target,".lease",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
     int bad=target<0||fstat(target,&target_stat)||target_stat.st_uid!=geteuid()||(target_stat.st_mode&077)||
         lease<0||regular(lease,0,&lease_stat)||lease_stat.st_uid!=geteuid()||(lease_stat.st_mode&077)||flock(lease,LOCK_EX|LOCK_NB);
+    if(!bad) {
+        struct stat checked={0},named={0};
+        bad=removal_preflight(target,0) || fstat(target,&checked) || !same_snapshot(&target_stat,&checked) ||
+            fstatat(generations,gen,&named,AT_SYMLINK_NOFOLLOW) || !same_snapshot(&checked,&named) ||
+            fstatat(target,".lease",&named,AT_SYMLINK_NOFOLLOW) || !same_snapshot(&lease_stat,&named);
+    }
     int retired=-1;
     if(!bad) {retired=retirement_dir(s,1);bad=retired<0||retirement_intent(retired,title,gen,&target_stat,&lease_stat);}
     if(retired>=0)close(retired);
