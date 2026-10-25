@@ -40,3 +40,11 @@ The [top-level license](https://github.com/OJZen/totk-mobile/blob/6d4c1d36c67c71
 Independent workers reviewed the save/editor boundary, display/graphics gates and BOTW scope while the Controls worker completed source delivery. The parent reviewed integration and an independent worker reviewed the Controls diff. No speculative stubs, unknown save layouts or new unchecked game patches were used to stand in for missing evidence.
 
 Next dependency-changing work requires the existing private local setup, authorized Apple validation, real captures/measurements or the documented 1.4.3 save-format contract. Follow the [local checklist](ipados-acceptance.md) in order; it is future guidance, not an instruction to run tests during this no-tests goal. Keep new behavior explicitly unverified and all blocked hardware acceptance open.
+
+## Follow-ups while the Mac is unavailable
+
+Further source review found and addressed two concrete gaps: `8537674` checks file change-time/link count after copying, and `693d7b8` clears iOS mouse Tap/Toggle latches and queued mouse edges on capture loss while retaining controller/touch input. Mac release and edge behavior remain on the original path. The accompanying regression fixtures are unrun.
+
+`a8e8957` strengthens the object-build report with compiler-discovered tracked project dependencies, before/after input hashes, completion checks and progressive failure reporting. The Apple build and its workflow still have not run. The previous local attempt at `39da158` stopped at its Linux preflight; it was not an Apple compiler result.
+
+Public research now supplies a pinned 1.4.x-family wallet layout reference. `01090f7` adds a read-only candidate inspector, and `d669498` records the [source evidence and unresolved integrity/version boundaries](ipados-save-format-research.md). No save writing, in-app editor or new default is enabled. All follow-ups received manual source review; no tests, compiler invocations, probes, simulator runs or private-save inspections ran in this phase.
