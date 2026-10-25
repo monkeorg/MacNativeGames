@@ -2,6 +2,20 @@
 
 Issue: [#34](https://github.com/monkeorg/MacNativeGames/issues/34).
 
+## Latest direction — complete cloud development
+
+The user explicitly accepts reviewed, unverified Apple source for later Mac/iPad
+fixes and requests all implementable development to be finished. Follow the
+[complete cloud development roadmap](canopy-development-roadmap.md) and updated
+[goal prompt](content-free-launcher-goal.txt). Missing devices or unresolved
+native-code permission gate actual execution/release acceptance, not independent
+preparation, storage, library, settings, saves, input or runtime-adapter coding.
+The inspection app is not the product finish line. Public macOS/iPhoneOS CI is
+now available; use its real build/test evidence. Do not start this new goal merely
+because its prompt has been prepared.
+
+Historical baseline and product acceptance requirements follow.
+
 ## Two tracks
 
 **Track A — existing TOTK app:** continue local integration, telescope correction, visual checks and performance work. Preserve the working installed app, saves, signing identity and private caches. Draft PR #33 remains separate from the redesign. No merges or releases.

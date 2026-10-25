@@ -1,6 +1,11 @@
 # Content-free Switch launcher: architecture and release gates
 
-Status: proposed architecture, execution gate blocked; no public launcher release is ready.
+Status: native gameplay acceptance remains blocked; independent source development continues.
+
+**Current execution authority:** [complete cloud development roadmap](canopy-development-roadmap.md),
+revised by the user on 2026-10-25. It supersedes earlier sequencing that postponed
+library/settings/saves/preparation code until native device execution. Product
+acceptance gates below remain mandatory for actual gameplay/release claims.
 Parent: [#34](https://github.com/monkeorg/MacNativeGames/issues/34).
 Source baseline: `c4552cd593bc42e5f9d3d5e38d6dc3465e433763`.
 Work belongs to `feat/content-free-launcher`, separately from the local TOTK app.
@@ -39,7 +44,7 @@ that is a product decision blocker, not permission to silently change architectu
 
 | Component | Contract | Reuse / gate |
 |---|---|---|
-| Library | Local stable title/version identity; preparation state distinct from compatibility and Play eligibility | New host UI only after execution contract; no fabricated supported titles |
+| Library | Local stable title/version identity; preparation state distinct from compatibility and Play eligibility | Library/UI source proceeds independently; Play eligibility requires execution proof; no fabricated supported titles |
 | Import | Bounded container reads, validated filenames/ranges; user-selected security-scoped access | Reuse parser semantics in `extract_exefs.py`; Python is a reference, not an iOS shipping dependency |
 | Preparation | Immutable versioned generations; atomic publication, cancellation and resumable/retryable failures | Current verified input hashes and existing build fingerprints; preserve previous generation |
 | Runtime | Checked AOT modules, services and Metal backend for an exact supported profile | Gate: import-to-execution proof; current loader embeds game bytes |
@@ -53,25 +58,26 @@ that is a product decision blocker, not permission to silently change architectu
 
 ```mermaid
 flowchart TD
- A[Architecture and requirement issues] --> B[Native execution and signing proof]
- A --> C[Bounded native container parser]
- A --> D[Artifact provenance and private storage contracts]
- B --> E[Exact title import to real gameplay]
- C --> K[Initial private shader and resource preparation]
- D --> K
- K --> E
- D --> E
- E --> F[Library, per-game settings, saves and recovery]
- E --> G[Cache reuse and efficient updates]
- F --> H[Controller assignment and supported multiplayer]
- G --> I[Physical Apple acceptance]
- H --> I
- I --> J[Current Switch release acceptance]
+ A[Contracts and complete roadmap] --> C[Native container import and crypto]
+ A --> D[Private generations and recovery]
+ C --> P[ExeFS/RomFS assets and update composition]
+ D --> P
+ D --> F[Multi-game library, settings, saves]
+ A --> R[Native runtime and input adapters]
+ P --> R
+ P --> K[Private shader preparation and caches]
+ F --> M[Overlay, players and multiplayer integration]
+ R --> M
+ A --> B[Parallel execution and signing investigation]
+ B --> I[Physical gameplay and release acceptance]
+ R --> I
+ K --> I
+ M --> I
 ```
 
 Independent parser/provenance checks may proceed while B is blocked. Product UI
-and game preparation must not present an imported container as playable without B
-and E. No speculative second engine, game profile, compatibility list, updater or
+and game preparation must not present an imported container as playable without verified native execution
+and exact-title gameplay evidence. No speculative second engine, game profile, compatibility list, updater or
 save editor is introduced to fill a roadmap box.
 
 ## Current release requirement matrix
@@ -93,7 +99,7 @@ TOTK app results do not validate this separate launcher.
 | Shaders/graphics | User-derived private preparation, no bundled translated game shaders, correct real scenes | Native iOS translator and execution proof |
 | Multiplayer | Mario Kart exact-version profile plus actual local multi-player session, controller disconnect/reassign | No Mario Kart runtime integration or supported version yet |
 | Diagnostics/performance | Native-frame attribution, memory/thermal/storage evidence, bounded private logs | Physical hardware; stable 60 FPS is not claimed |
-| Apple acceptance | Full build/sign/install, artifact check, gameplay, lifecycle, recovery and update matrix | Xcode, signing, private inputs and devices unavailable in cloud |
+| Apple acceptance | Full build/sign/install, artifact check, gameplay, lifecycle, recovery and update matrix | Public macOS/iPhoneOS CI available; private signing/inputs and physical devices remain local |
 
 The mod manager (#35), Wii U and future console backends are excluded from every
 release dependency and finish gate. Their existing backlog is not an implementation
