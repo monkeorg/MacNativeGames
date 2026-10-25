@@ -19,6 +19,20 @@ NS_ASSUME_NONNULL_BEGIN
               keysURL:(NSURL *)keys jobIdentifier:(nullable NSString *)identifier
            completion:(void (^)(NSDictionary<NSString *, id> * _Nullable result,
                                 NSError * _Nullable error))completion;
+/// Optional exact verified-generation reuse. Both IDs must be absent or valid
+/// together (nonzero lowercase16hex title and lowercase64hex generation).
+/// The source is fully verified/leased before staging; commit still enforces
+/// the resulting title/application owner. Existing invalid candidates abort.
+/// Result and error.userInfo include ioMetrics for observed logical payload I/O;
+/// these counters do not measure physical disk allocation or saved space.
+- (BOOL)startSourceURL:(NSURL *)source keysURL:(NSURL *)keys
+    reuseTitleID:(nullable NSString *)title reuseGenerationID:(nullable NSString *)generation
+    jobIdentifier:(nullable NSString *)identifier
+    completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion;
+- (BOOL)startSourceURL:(NSURL *)source updateURL:(nullable NSURL *)update keysURL:(NSURL *)keys
+    reuseTitleID:(nullable NSString *)title reuseGenerationID:(nullable NSString *)generation
+    jobIdentifier:(nullable NSString *)identifier
+    completion:(void (^)(NSDictionary<NSString *,id> * _Nullable,NSError * _Nullable))completion;
 /// Supported NCA folder (keys required) or exefs/ + romfs/romfs.bin layout
 /// (no keys). Identity is a canonical consumed-member inventory, not a file SHA.
 - (BOOL)startFolderURL:(NSURL *)folder keysURL:(nullable NSURL *)keys

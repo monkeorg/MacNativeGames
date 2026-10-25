@@ -66,13 +66,14 @@ class CanopyPreparationJobTests(unittest.TestCase):
                                    ('titlekek_00', f.TITLEKEK)])
         self.keys.write_text(self.key_text)
 
-    def job(self, mode='success', job=None, update=None, folder=False, keys=True):
+    def job(self, mode='success', job=None, update=None, folder=False, keys=True, reuse=None):
         inputs = (self.source, self.keys) + ((update,) if update is not None else ())
         originals = {p: p.read_bytes() for p in inputs if p.is_file() and not p.is_symlink()}
         if folder and self.source.is_dir():
             originals.update({p:p.read_bytes() for p in self.source.rglob('*') if p.is_file() and not p.is_symlink()})
-        run = subprocess.run([str(self.probe), ('folder-' if folder else '')+mode, str(self.source), str(self.keys) if keys else '-',
-                              str(self.store), job or '-', *([str(update)] if update is not None else [])],
+        run = subprocess.run([str(self.probe), ('reuse-' if reuse is not None else '')+('folder-' if folder else '')+mode, str(self.source), str(self.keys) if keys else '-',
+                              str(self.store), job or '-', *([value or '-' for value in reuse] if reuse is not None else []),
+                              *([str(update)] if update is not None else [])],
                              capture_output=True, text=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
         for p, data in originals.items():
@@ -125,6 +126,47 @@ class CanopyPreparationJobTests(unittest.TestCase):
         self.assertGreater(report['progress_calls'], 0)
         self.assertIsInstance(report['result'], dict)
         self.assertTrue(report['result'])
+        self.assertEqual(report['result']['ioMetrics']['scope'],'logicalPayloadIO')
+
+    def test_selected_generation_reuse_real_update_preserves_original_generation(self):
+        from test_canopy_pipeline import CanopyPipelineTests
+        base,patch,_,updated=CanopyPipelineTests.update_fixture(self)
+        self.source.write_bytes(self.fixture.partition(base));first=self.job()['result']
+        old=self.store/'titles'/first['titleID']/'generations'/first['generationID']
+        before={str(p.relative_to(old)):(p.stat().st_ino,p.read_bytes()) for p in old.rglob('*') if p.is_file()}
+        update=self.directory/'reuse-update.nsp';update.write_bytes(self.fixture.partition(patch))
+        result=self.job(update=update,reuse=(first['titleID'],first['generationID']))['result']
+        self.assertEqual(result['titleVersion'],12);self.assertTrue(result['updateApplied'])
+        self.assertEqual((self.store/'titles'/result['titleID']/'generations'/result['generationID']/'romfs.bin').read_bytes(),updated)
+        metrics=result['ioMetrics'];self.assertEqual(metrics['streamedBytes'],metrics['writtenBytes']+metrics['comparedEqualBytes']+metrics['resumedBytes'])
+        self.assertEqual(before,{str(p.relative_to(old)):(p.stat().st_ino,p.read_bytes()) for p in old.rglob('*') if p.is_file()})
+
+    def test_reuse_identifiers_are_strict_atomic_and_optional_as_pair(self):
+        for title,generation in ((None,'a'*64),('0100123456780000',None),('0'*16,'a'*64),('../bad','a'*64),('0100123456780000','A'*64)):
+            self.assertTrue(self.job('invalid',reuse=(title,generation))['rejected'])
+        self.assertFalse(self.store.exists())
+
+    def test_missing_corrupt_and_other_title_reuse_never_replace_current(self):
+        first=self.job()['result'];current=self.current();before=current.read_bytes()
+        missing=self.job('failure',reuse=(first['titleID'],'a'*64));self.assertIn('ioMetrics',missing['error'])
+        self.assertEqual(current.read_bytes(),before)
+        other=int(first['titleID'],16)+1
+        self.source.write_bytes(self.fixture.partition([('program.nca',self.fixture.nca(title=other))]))
+        mismatch=self.job('failure',reuse=(first['titleID'],first['generationID']))
+        self.assertEqual(mismatch['error']['code'],1);self.assertEqual(current.read_bytes(),before)
+        self.assertFalse(self.current(other).exists())
+        target=self.store/'titles'/first['titleID']/'generations'/first['generationID']/'romfs.bin'
+        target.chmod(0o600);target.write_bytes(b'corrupt')
+        failed=self.job('failure',reuse=(first['titleID'],first['generationID']))
+        self.assertEqual(failed['error']['code'],5);self.assertEqual(failed['error']['ioMetrics']['streamedBytes'],0)
+        self.assertEqual(current.read_bytes(),before)
+
+    def test_reuse_cancel_reports_actual_zero_or_completed_payload_metrics(self):
+        first=self.job()['result'];current=self.current().read_bytes()
+        report=self.job('cancel-immediate',reuse=(first['titleID'],first['generationID']))
+        self.assertEqual(report['error']['code'],6)
+        self.assertEqual(report['error']['ioMetrics']['scope'],'logicalPayloadIO')
+        self.assertEqual(self.current().read_bytes(),current)
 
     def test_two_coordinated_inputs_publish_actual_updated_assets_and_provenance(self):
         from test_canopy_pipeline import CanopyPipelineTests

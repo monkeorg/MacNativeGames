@@ -167,7 +167,9 @@ enum mng_prepare_status pipeline_commit(struct mng_store *store,const struct mng
             self.assertEqual(report['source_sha256'], hashlib.sha256(self.source.read_bytes()).hexdigest())
             return report
         self.assertEqual(run.stdout, '')
-        return json.loads(run.stderr)
+        report=json.loads(run.stderr)
+        self.assertEqual(report['io_metrics']['scope'],'logicalPayloadIO')
+        return report
 
     def generation(self, report):
         return self.store / 'titles' / report['title_id'] / 'generations' / report['generation']
@@ -222,6 +224,39 @@ enum mng_prepare_status pipeline_commit(struct mng_store *store,const struct mng
         self.assertEqual(manifest['sources'][1]['sourceSHA256'], report['update_source_sha256'])
         repeated = self.prepare(('--update', str(update)))
         self.assertEqual(repeated['generation'], report['generation'])
+
+    def test_explicit_reuse_pair_prepares_real_update_and_reports_logical_io(self):
+        base,patch,_,updated=self.update_fixture()
+        self.source.write_bytes(self.fixture.partition(base));first=self.prepare();old=self.generation(first)
+        before={str(p.relative_to(old)):(p.stat().st_ino,p.read_bytes()) for p in old.rglob('*') if p.is_file()}
+        update=self.directory/'selected-update.nsp';update.write_bytes(self.fixture.partition(patch))
+        result=self.prepare(('--update',str(update),'--reuse-title',first['title_id'],'--reuse-generation',first['generation'],
+                             '--version','latest','--job','d'*32))
+        self.assertEqual(result['title_version'],12);self.assertEqual((self.generation(result)/'romfs.bin').read_bytes(),updated)
+        metrics=result['io_metrics'];self.assertEqual(metrics['scope'],'logicalPayloadIO')
+        self.assertEqual(metrics['streamed_bytes'],metrics['written_bytes']+metrics['compared_equal_bytes']+metrics['resumed_bytes'])
+        self.assertEqual(before,{str(p.relative_to(old)):(p.stat().st_ino,p.read_bytes()) for p in old.rglob('*') if p.is_file()})
+
+    def test_reuse_pair_validation_refuses_before_creating_store(self):
+        for extra in (('--reuse-title','0100123456780000'),('--reuse-generation','a'*64),
+                      ('--reuse-title','0'*16,'--reuse-generation','a'*64),
+                      ('--reuse-title','0100123456780000','--reuse-generation','A'*64),
+                      ('--reuse-title','../bad','--reuse-generation','a'*64),
+                      ('--reuse-title','0100123456780000','--reuse-generation','a'*64,'--reuse-generation','b'*64)):
+            with self.subTest(extra=extra):self.assertEqual(self.prepare(extra,success=False)['error'],'usage')
+        self.assertFalse(self.store.exists())
+
+    def test_selected_missing_corrupt_and_wrong_title_candidates_fail_without_publish(self):
+        first=self.prepare();current=self.store/'titles'/first['title_id']/'current';before=current.read_bytes()
+        missing=self.prepare(('--reuse-title',first['title_id'],'--reuse-generation','a'*64),success=False)
+        self.assertEqual(missing['io_metrics']['streamed_bytes'],0);self.assertEqual(current.read_bytes(),before)
+        self.source.write_bytes(self.fixture.partition([('program.nca',self.fixture.nca(title=0x0100123456780001))]))
+        mismatch=self.prepare(('--reuse-title',first['title_id'],'--reuse-generation',first['generation']),success=False)
+        self.assertEqual(mismatch['error'],'invalid');self.assertEqual(current.read_bytes(),before)
+        self.assertFalse((self.store/'titles'/'0100123456780001'/'current').exists())
+        target=self.generation(first)/'romfs.bin';target.chmod(0o600);target.write_bytes(b'corrupt candidate')
+        corrupt=self.prepare(('--reuse-title',first['title_id'],'--reuse-generation',first['generation']),success=False)
+        self.assertEqual(corrupt['error'],'integrity');self.assertEqual(corrupt['io_metrics']['streamed_bytes'],0)
 
     def test_explicit_update_revision_differs_from_latest_and_bad_input_preserves_current(self):
         base, lower, _, _ = self.update_fixture(patch_version=12, patch_main=b'lower')

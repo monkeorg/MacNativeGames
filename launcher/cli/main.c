@@ -140,43 +140,59 @@ static void digest_hex(const unsigned char *bytes,size_t size,char *out) {
     static const char digits[]="0123456789abcdef";
     for(size_t i=0;i<size;i++){out[2*i]=digits[bytes[i]>>4];out[2*i+1]=digits[bytes[i]&15];}out[size*2]=0;
 }
+static int fixed_hex(const char *,size_t);
+static int parse_title_id(const char *,uint64_t *);
+static void io_metrics_json(FILE *out,const struct mng_store_io_metrics *metrics) {
+    static const struct mng_store_io_metrics zero={0};if(!metrics)metrics=&zero;
+    fprintf(out,"\"io_metrics\":{\"scope\":\"logicalPayloadIO\",\"streamed_bytes\":%" PRIu64 ",\"written_bytes\":%" PRIu64
+        ",\"cloned_logical_bytes\":%" PRIu64 ",\"compared_equal_bytes\":%" PRIu64 ",\"resumed_bytes\":%" PRIu64
+        ",\"cloned_assets\":%" PRIu64 ",\"clone_fallback_assets\":%" PRIu64 "}",metrics->streamed_bytes,metrics->written_bytes,
+        metrics->cloned_logical_bytes,metrics->compared_equal_bytes,metrics->resumed_bytes,metrics->cloned_assets,metrics->clone_fallback_assets);
+}
+static int prepare_error(const char *code,int exit_code,const struct mng_store_io_metrics *metrics) {
+    fprintf(stderr,"{\"error\":\"%s\",\"execution_verified\":false,",code);io_metrics_json(stderr,metrics);fputs("}\n",stderr);return exit_code;
+}
 static int prepare_command(int argc,char **argv) {
-    const char *key_path=NULL,*store_path=NULL,*job=NULL,*update_path=NULL,*version=NULL;
+    const char *key_path=NULL,*store_path=NULL,*job=NULL,*update_path=NULL,*version=NULL,*reuse_title=NULL,*reuse_generation=NULL;
     struct mng_keys *keys=NULL;struct mng_store *store=NULL;
     struct mng_prepare_result prepared={0};
+    struct mng_store_io_metrics metrics={0};uint64_t reuse_id=0;
     int input=-1,update=-1,root=-1,result=4,publication_attempted=0,cancelled_result=0;const char *failure="prepare_failed";
     enum mng_prepare_status status;
     enum mng_folder_kind folder_kind=0;
     char generated_job[33],generation[65],source_hash[65];
-    if(argc<5 || argc>13 || !(argc&1))return error("usage",2);
+    if(argc<5 || argc>17 || !(argc&1))return prepare_error("usage",2,NULL);
     for(int i=3;i<argc;i+=2) {
         if(!strcmp(argv[i],"--keys") && !key_path)key_path=argv[i+1];
         else if(!strcmp(argv[i],"--store") && !store_path)store_path=argv[i+1];
         else if(!strcmp(argv[i],"--job") && !job)job=argv[i+1];
         else if(!strcmp(argv[i],"--update") && !update_path)update_path=argv[i+1];
         else if(!strcmp(argv[i],"--version") && !version)version=argv[i+1];
-        else return error("usage",2);
+        else if(!strcmp(argv[i],"--reuse-title") && !reuse_title)reuse_title=argv[i+1];
+        else if(!strcmp(argv[i],"--reuse-generation") && !reuse_generation)reuse_generation=argv[i+1];
+        else return prepare_error("usage",2,NULL);
     }
-    if(!store_path || (job && !job_valid(job)) || (version && !update_path))return error("usage",2);
+    if(!store_path || (job && !job_valid(job)) || (version && !update_path) || (!!reuse_title!=!!reuse_generation) ||
+        (reuse_title && (parse_title_id(reuse_title,&reuse_id)||!fixed_hex(reuse_generation,64))))return prepare_error("usage",2,NULL);
     uint32_t target_version=0;
     int exact_version=version && strcmp(version,"latest");
     if(exact_version) {
         uint64_t parsed=0;size_t length=strlen(version);
-        if(!length || length>10)return error("usage",2);
+        if(!length || length>10)return prepare_error("usage",2,NULL);
         for(size_t i=0;i<length;i++) {
-            if(version[i]<'0' || version[i]>'9')return error("usage",2);
+            if(version[i]<'0' || version[i]>'9')return prepare_error("usage",2,NULL);
             parsed=parsed*10+(unsigned)(version[i]-'0');
-            if(parsed>UINT32_MAX)return error("usage",2);
+            if(parsed>UINT32_MAX)return prepare_error("usage",2,NULL);
         }
         target_version=(uint32_t)parsed;
     }
     if(!job) {
         unsigned char random[16];
-        if(getentropy(random,sizeof(random)))return error("random_failed",4);
+        if(getentropy(random,sizeof(random)))return prepare_error("random_failed",4,NULL);
         digest_hex(random,sizeof(random),generated_job);job=generated_job;
     }
     struct sigaction action={0};action.sa_handler=interrupt_handler;sigemptyset(&action.sa_mask);
-    if(sigaction(SIGINT,&action,NULL))return error("signal_failed",4);
+    if(sigaction(SIGINT,&action,NULL))return prepare_error("signal_failed",4,NULL);
     input=open(argv[2],O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
     if(input<0){failure="open_failed";goto done;}
     struct stat info;
@@ -202,6 +218,8 @@ static int prepare_command(int argc,char **argv) {
     status=mng_store_open(root,&store);
     if(status!=MNG_PREPARE_OK){failure=mng_prepare_status_name(status);goto done;}
     mng_store_set_cancel_check(store,interrupt_requested,NULL);
+    if(reuse_generation){status=mng_store_set_reuse_generation(store,reuse_id,reuse_generation,NULL);
+        if(status!=MNG_PREPARE_OK){cancelled_result=status==MNG_PREPARE_CANCELLED;failure=mng_prepare_status_name(status);goto done;}}
     status=mng_store_begin(store,job);
     if(status!=MNG_PREPARE_OK){failure=mng_prepare_status_name(status);goto done;}
     struct cancel_sink wrapped={mng_store_sink(store),store};
@@ -245,15 +263,16 @@ static int prepare_command(int argc,char **argv) {
                "\"update_source_sha256\":\"%s\",\"update_source_size\":%" PRIu64,
                prepared.base_title_version,prepared.patch_title_id,update_hash,prepared.update_source_size);
     }
-    puts("}");
+    mng_store_get_io_metrics(store,&metrics);putchar(',');io_metrics_json(stdout,&metrics);puts("}");
     result=ferror(stdout)?5:0;
  done:
+    mng_store_get_io_metrics(store,&metrics);
     mng_keys_free(keys);mng_store_close(store);
     if(input>=0)close(input);
     if(update>=0)close(update);
     if(root>=0)close(root);
-    if(cancelled_result || (!publication_attempted && interrupted))return error("cancelled",130);
-    return result ? error(failure,result):0;
+    if(cancelled_result || (!publication_attempted && interrupted))return prepare_error("cancelled",130,&metrics);
+    return result ? prepare_error(failure,result,&metrics):0;
 }
 static int fixed_hex(const char *value,size_t length) {
     if(!value || strlen(value)!=length)return 0;
@@ -291,6 +310,7 @@ static void install_report(enum mng_prepare_status status,const struct mng_insta
         printf(",\"index\":{\"file_count\":%" PRIu64 ",\"size\":%" PRIu64 ",\"sha256\":\"%s\"}",
             report->index.file_count,report->index.index_size,index);
     } else fputs(",\"index\":null",stdout);
+    putchar(',');io_metrics_json(stdout,&report->io_metrics);
     puts(",\"execution_verified\":false,\"signature_verified\":false,\"activation_verified\":false}");
 }
 static int install_addon_command(int argc,char **argv) {
