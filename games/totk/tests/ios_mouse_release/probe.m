@@ -10,6 +10,8 @@
 
 _Noreturn void runtime_fail(const char *message) { fprintf(stderr, "FAIL: %s\n", message); exit(1); }
 uint64_t runtime_now_ns(void) { return 1000000000ULL; }
+static int appFocused = 1;
+int runtime_front_focus(void) { return appFocused; }
 void runtime_feedback_attach(GCController *controller) { (void)controller; }
 void runtime_feedback_detach(GCController *controller) { (void)controller; }
 void runtime_feedback_quiet(void) {}
@@ -27,6 +29,7 @@ static RuntimeGamepadState read_state(void) {
     return state;
 }
 static void reset_state(void) {
+    appFocused = 1;
     runtime_gamepad_clear();
     RuntimeGamepadState touch = {0}; runtime_touch_pad_set(&touch);
     // The production iOS HID placeholder supplies synthetic controller input
@@ -100,6 +103,27 @@ int main(void) { @autoreleasepool {
     runtime_mouse_button(1, 1); runtime_mouse_button(0, 1);
     runtime_mouse_release();
     check(read_state().buttons == 0, "default aim/fire release leaves no queued mouse action");
+    reset_state();
+    hidPad.buttons = 1ULL << 1; hidPad.lx = 16000; refresh_gamepads();
+    touch = (RuntimeGamepadState){.connected = 1, .buttons = Y, .ry = 20000};
+    runtime_touch_pad_set(&touch);
+    appFocused = 0; // frontend drops its atomic flag before clearing input
+    RuntimeGamepadState inactive = read_state();
+    check(inactive.connected && !inactive.buttons && !inactive.lx && !inactive.ly && !inactive.rx && !inactive.ry,
+          "focus loss suppresses sampled controls before clear while retaining connection");
+    runtime_gamepad_clear();
+    runtime_mouse_release(); // later observer must not repopulate held controller input
+    refresh_gamepads(); // nor may a late background controller callback
+    check(gamepadState.buttons == 0 && gamepadState.lx == 0, "background callbacks leave cleared controller state empty");
+    runtime_touch_pad_set(&touch); // cancellation may still be pending
+    inactive = read_state();
+    check(inactive.connected && !inactive.buttons && !inactive.ry, "pending touch controls cannot leak while inactive");
+    touch.buttons = 0; touch.ry = 0; runtime_touch_pad_set(&touch);
+    appFocused = 1; refresh_gamepads();
+    RuntimeGamepadState active = read_state();
+    check(active.connected && active.buttons == A && active.lx == 16000,
+          "controller callbacks resume once foreground focus returns");
+
     printf("{\"status\":\"%s\",\"probe\":\"ios-mouse-release\",\"failures\":%d}\n", failures ? "fail" : "pass", failures);
     return failures != 0;
 }}
