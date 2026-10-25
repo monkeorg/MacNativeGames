@@ -109,6 +109,17 @@ static NSDictionary *CDMetrics(id supplied) {
     for(NSString *key in @[@"storageVerifiedAssetBytes",@"storageAvailableSeedBytes",@"storageAvailableRuntimeBytes"])
         if(CDInteger(metrics[key],UINT64_C(1)<<44))safe[key]=metrics[key];
     if(CDBoolean(metrics[@"storageListingComplete"]))safe[@"storageListingComplete"]=metrics[@"storageListingComplete"];
+    id io=metrics[@"preparationIO"];
+    if([io isKindOfClass:NSDictionary.class] && [io[@"scope"] isEqual:@"logicalPayloadIO"]) {
+        NSMutableDictionary *observed=[NSMutableDictionary dictionaryWithObject:@"logicalPayloadIO" forKey:@"scope"];
+        for(NSString *key in @[@"streamedBytes",@"writtenBytes",@"clonedLogicalBytes",@"comparedEqualBytes",@"resumedBytes"])
+            if(CDInteger(io[key],UINT64_C(1)<<40))observed[key]=io[key];
+        for(NSString *key in @[@"clonedAssets",@"cloneFallbackAssets"])
+            if(CDInteger(io[key],128))observed[key]=io[key];
+        if(observed.count>1)safe[@"preparationIO"]=[observed copy];
+    }
+    for(NSString *key in @[@"preparationPublished",@"preparationPublicationMayHaveCompleted"])
+        if(CDBoolean(metrics[key]))safe[key]=metrics[key];
     // Native preparation reports bytes for hashing/writing, blocks for IVFC
     // and records for BKTR. Never relabel all progress counts as bytes.
     if(CDInteger(metrics[@"phaseDone"],INT64_MAX) && CDInteger(metrics[@"phaseTotal"],INT64_MAX) &&
