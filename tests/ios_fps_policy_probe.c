@@ -4,8 +4,9 @@
 #include <stdio.h>
 
 int main(void) {
-    for (unsigned fps=30;fps<=60;fps+=10) {
-        if(fps==50)continue;
+    const unsigned rates[]={20,24,30,40,60};
+    for (unsigned i=0;i<sizeof(rates)/sizeof(*rates);i++) {
+        unsigned fps=rates[i];
         assert(ios_fps_supported(fps,120,1,0));
         assert(!ios_fps_supported(fps,120,0,0));
         assert(!ios_fps_supported(fps,120,1,1));
@@ -21,6 +22,9 @@ int main(void) {
         }
         now+=period*3;assert(!nvn_pace(&pacer,now,period));assert(pacer.target==now);
     }
+    assert(ios_fps_supported(20,60,1,0));assert(!ios_fps_supported(24,60,1,0));
+    assert(ios_fps_effective(24,120)==24);assert(ios_fps_effective(24,60)==60);
+    assert(ios_fps_effective(20,60)==20);assert(ios_fps_effective(30,0)==60);
     assert(ios_fps_supported(30,60,1,0));assert(ios_fps_supported(60,60,1,0));
     assert(!ios_fps_supported(40,60,1,0));assert(!ios_fps_supported(40,0,1,0));
     assert(!ios_fps_supported(50,120,1,0));assert(!ios_fps_supported(0,120,1,0));

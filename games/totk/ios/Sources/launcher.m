@@ -4,6 +4,7 @@
 #import "menu_style.h"
 #import "settings_choices.h"
 #import "save_editor.h"
+#import "save_editor_validation.h"
 #import "keyboard_input.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <GameController/GameController.h>
@@ -23,7 +24,7 @@ static NSString *control_button_title(NSString *button) {
 static NSDictionary *startup_preferences(NSUserDefaults *defaults) {
     NSMutableDictionary *bindings = [NSMutableDictionary dictionary];
     for (NSString *button in TOTKLauncherControlButtons()) bindings[button] = TOTKLauncherControlBinding(defaults,button);
-    return @{@"graphics":TOTKLauncherGraphicsPreferences(defaults),
+    return @{@"graphics":TOTKLauncherGraphicsPreferences(defaults), @"drawableCount":@(TOTKLauncherDrawableCount(defaults)),
         @"controller":TOTKLauncherControllerType(defaults),
         @"sensitivity":@(TOTKLauncherMouseSensitivity(defaults)), @"invert":@(TOTKLauncherMouseInvertY(defaults)),
         @"bindings":[bindings copy], @"language":TOTKLauncherLanguage(defaults)};
@@ -217,7 +218,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView { (void)tableView; return 5; }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    (void)tableView; return (NSInteger[]){1,6,6,5,1}[section];
+    (void)tableView; return (NSInteger[]){1,7,6,5,1}[section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
     (void)tableView; return @[@"",@"Graphics",@"Controls",@"Saves",@"Language"][section];
@@ -233,7 +234,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
     if (section == 0) return _inGame ? @"Adjust graphics and controls. The game stays active while this menu is open." : (_unavailable ?: @"Choose settings and manage saves before Play. Use the game menu to return to settings during play.");
-    if (section == 1) return _inGame ? @"Frame rate, anti-aliasing and HUDs apply live. Resolution changes apply after restart." : @"Choose your picture size, performance target and overlays.";
+    if (section == 1) return _inGame ? @"Frame rate, anti-aliasing and HUDs apply live. Resolution and drawable buffers apply after restart." : @"Choose your picture size, performance target and overlays.";
     if (_inGame && section == 2) return @"Touch visibility and keyboard mappings apply live. Other control changes apply after an app restart.";
     if (_inGame && section == 3) return @"Save transfers, backups and restores are available before Play only. Reopen the app to manage saves safely.";
     if (_inGame && section == 4) return @"Language changes require an app restart.";
@@ -246,10 +247,10 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
     cell.backgroundColor = [UIColor.secondarySystemGroupedBackgroundColor colorWithAlphaComponent:0.65];
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    NSArray *titles = @[@[@"Play"],@[@"Resolution & scaling",@"Performance overlay",@"Apple Metal HUD",@"Target frame rate",@"Anti-aliasing (TAA)",@"Shader compilation indicator"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
+    NSArray *titles = @[@[@"Play"],@[@"Resolution & scaling",@"Performance overlay",@"Apple Metal HUD",@"Target frame rate",@"Anti-aliasing (TAA)",@"Shader compilation indicator",@"Drawable buffers"],@[@"Touch controls",@"Controller type",@"Mouse sensitivity",@"Invert mouse Y",@"Button mappings",@"Keyboard mappings"],
         @[@"Import save folder",@"Export save folder",@"Back up save",@"Restore backup",@"Edit this save"],@[@"Game language"]];
     cell.textLabel.text = _inGame && path.section == 0 ? @"Resume game" : titles[path.section][path.row];
-    NSArray *symbols = @[@[@"play.fill"],@[@"arrow.up.left.and.arrow.down.right",@"gauge.with.dots.needle.50percent",@"chart.xyaxis.line",@"speedometer",@"sparkles",@"cpu"],
+    NSArray *symbols = @[@[@"play.fill"],@[@"arrow.up.left.and.arrow.down.right",@"gauge.with.dots.needle.50percent",@"chart.xyaxis.line",@"speedometer",@"sparkles",@"cpu",@"square.3.layers.3d"],
         @[@"hand.tap",@"gamecontroller",@"computermouse",@"arrow.up.arrow.down",@"button.programmable",@"keyboard"],
         @[@"square.and.arrow.down",@"square.and.arrow.up",@"externaldrive.badge.plus",@"clock.arrow.circlepath",@"pencil"],@[@"globe"]];
     TOTKStyleSettingsCell(cell,symbols[path.section][path.row]);
@@ -267,13 +268,16 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
             unsigned rate = _inGame ? runtime_ios_fps_limit() : (unsigned)TOTKLauncherFPSLimit(d);
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%u FPS%@",rate,runtime_ios_fps_limit_supported(rate) ? @"" : @" · unavailable"];
         } else if (path.row == 4) cell.detailTextLabel.text = runtime_ios_taa_supported() ? ((_inGame ? runtime_ios_taa_enabled() : TOTKLauncherTAA(d)) ? @"On" : @"Off") : @"Unavailable";
-        else {
+        else if (path.row == 5) {
             UISwitch *toggle = [UISwitch new];
             toggle.on = [d boolForKey:@"TOTK_LAUNCHER_SHADER_HUD"];
             toggle.accessibilityLabel = @"Shader compilation indicator";
             [toggle addTarget:self action:@selector(shaderIndicatorChanged:) forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = toggle;
             cell.selectionStyle = UITableViewCellSelectionStyleNone;
+        } else {
+            cell.detailTextLabel.text = TOTKLauncherDrawableCount(d) == 2 ? @"Double (2)" : @"Triple (3)";
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
         }
     }
     BOOL controlsOverride = NO;
@@ -299,7 +303,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     if (_inGame && (path.section == 1 || path.section == 2 || path.section == 4)) {
         NSString *key = [self startupKeyForPath:path];
         BOOL pending = key && ![startup_preferences(d)[key] isEqual:_runningPreferences[key]];
-        setting_timing_hint(cell,(path.section == 1 && path.row > 0) || (path.section == 2 && (path.row == 0 || path.row == 5)),pending);
+        setting_timing_hint(cell,(path.section == 1 && path.row > 0 && path.row < 6) || (path.section == 2 && (path.row == 0 || path.row == 5)),pending);
     } else if (path.section == 1 || path.section == 2 || path.section == 4) cell.accessibilityHint = @"Applies when you press Play.";
     else if (_inGame && path.section == 3) cell.accessibilityHint = @"Available before Play. Save your progress, close the app, and reopen it.";
     else if (path.section == 0) cell.accessibilityHint = _inGame ? @"Close settings and return to the active game." : @"Start the game with these settings.";
@@ -365,6 +369,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
 }
 - (NSString *)startupKeyForPath:(NSIndexPath *)path {
     if (path.section == 1 && path.row == 0) return @"graphics";
+    if (path.section == 1 && path.row == 6) return @"drawableCount";
     if (path.section == 2 && path.row > 0 && path.row < 5) return @[@"controller",@"sensitivity",@"invert",@"bindings"][path.row-1];
     return path.section == 4 ? @"language" : nil;
 }
@@ -428,7 +433,7 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
     } else if (path.section == 1 && path.row == 3) {
         NSMutableArray<NSNumber *> *rates = [NSMutableArray array];
         NSMutableArray<NSString *> *titles = [NSMutableArray array];
-        for (NSNumber *rate in @[@30,@40,@60]) if (runtime_ios_fps_limit_supported(rate.unsignedIntValue)) {
+        for (NSNumber *rate in TOTKLauncherFPSLimits()) if (runtime_ios_fps_limit_supported(rate.unsignedIntValue)) {
             [rates addObject:rate]; [titles addObject:[NSString stringWithFormat:@"%@ FPS",rate]];
         }
         if (!rates.count) return;
@@ -441,6 +446,10 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
         [self choose:@[@"Off",@"On"] path:path selected:^(NSUInteger i) {
             [d setBool:i == 1 forKey:@"TOTK_LAUNCHER_TAA"];
             if (self->_HUDChanged) self->_HUDChanged();
+        }];
+    } else if (path.section == 1 && path.row == 6) {
+        [self choose:@[@"Double (2)",@"Triple (3)"] path:path selected:^(NSUInteger i) {
+            [d setInteger:i == 0 ? 2 : 3 forKey:@"TOTK_LAUNCHER_DRAWABLE_COUNT"];
         }];
     } else if (path.section == 2) {
         if (path.row == 0) {
@@ -580,16 +589,21 @@ static BOOL valid_mouse_sensitivity(NSString *text) {
         if (snapshot) {
             for (unsigned i = 0; i < 6; i++) {
                 NSString *slot = [NSString stringWithFormat:@"slot_%02u",i];
-                if ([fm fileExistsAtPath:[[snapshot URLByAppendingPathComponent:slot] URLByAppendingPathComponent:@"progress.sav"].path]) [slots addObject:slot];
+                NSURL *folder = [snapshot URLByAppendingPathComponent:slot];
+                NSData *progress = [NSData dataWithContentsOfURL:[folder URLByAppendingPathComponent:@"progress.sav"]
+                    options:NSDataReadingMappedIfSafe error:nil];
+                NSData *caption = [NSData dataWithContentsOfURL:[folder URLByAppendingPathComponent:@"caption.sav"]
+                    options:NSDataReadingMappedIfSafe error:nil];
+                if (validProgress(progress) && hasSavedCaption(caption)) [slots addObject:slot];
             }
         }
         dispatch_async(dispatch_get_main_queue(),^{
             if (!snapshot || !slots.count) {
-                [self finishEditorDirectory:directory message:error.localizedDescription ?: @"No complete save slot is available to edit."];
+                [self finishEditorDirectory:directory message:error.localizedDescription ?: @"No supported, non-empty save slot is available to edit."];
                 return;
             }
             UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Edit this save"
-                message:@"Choose a slot to open in Marc Robledo’s online editor. Website scripts can read this copy. Apply edited save creates a backup before replacement."
+                message:@"Only supported, non-empty slots are shown. Choose one for Marc Robledo’s online editor. Website scripts can read this copy. Apply edited save creates a backup before replacement."
                 preferredStyle:UIAlertControllerStyleActionSheet];
             for (NSString *slot in slots) {
                 [sheet addAction:[UIAlertAction actionWithTitle:slot style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {

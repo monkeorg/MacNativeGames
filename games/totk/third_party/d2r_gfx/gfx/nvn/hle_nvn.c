@@ -2747,8 +2747,9 @@ static uint64_t present_period(const win_t *o) {
                                     m == MFX_HALF ? "补帧 刷新率一半：跟随显示器、每两次刷新一帧" :
                                     m == MFX_MAX ? (g_uncapped ? "补帧 不限帧：不限帧率，每帧补一帧" : "补帧 不限帧：按游戏的出图间隔，每帧补一帧") :
                                     g_uncapped ? "补帧关：不限帧率" : "补帧关：按游戏的出图间隔"); was = m; }
-    if (m == MFX_30 || game_holds_30()) return 1000000000ull / 30;   /* exactly 30 fps, by display ticks or by our own clock */
-    uint64_t period = hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
+    /* Preserve the guest's 30 FPS base period, then apply any slower native cap. */
+    uint64_t period = m == MFX_30 || game_holds_30() ? 1000000000ull / 30
+        : hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
 #if TARGET_OS_IPHONE
     period = ios_fps_cap_period(period, runtime_ios_fps_period());
 #endif

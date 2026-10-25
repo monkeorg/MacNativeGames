@@ -1,4 +1,4 @@
-"""Run the production editor URL and progress validators against Apple Foundation."""
+"""Run the production editor URL, progress, and caption validators against Apple Foundation."""
 import pathlib
 import platform
 import subprocess
@@ -35,3 +35,9 @@ class IOSSaveEditorValidationTests(unittest.TestCase):
     def test_noncanonical_paths_refused(self): self.probe_case('path')
     def test_queries_refused_and_same_page_fragments_allowed(self): self.probe_case('query_fragment')
     def test_progress_size_and_offset_four_header(self): self.probe_case('progress')
+    def test_caption_dates_and_metadata_boundaries(self): self.probe_case('caption_valid')
+    def test_zero_caption_and_missing_date_fields_refused(self): self.probe_case('caption_empty_missing')
+    def test_nil_and_every_truncated_caption_refused(self): self.probe_case('caption_truncated')
+    def test_zero_and_out_of_range_date_values_refused(self): self.probe_case('caption_invalid')
+    def test_duplicate_date_fields_refused(self): self.probe_case('caption_duplicates')
+    def test_unaligned_and_out_of_section_date_fields_ignored(self): self.probe_case('caption_bounds')

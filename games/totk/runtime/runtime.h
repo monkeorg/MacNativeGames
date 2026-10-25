@@ -102,6 +102,8 @@ void *runtime_front_override(const char *name);
 int runtime_front_focus(void);
 /* iOS main-thread controls. Limits are requested native-frame ceilings, not measured frame rates. */
 void runtime_ios_set_fps_limit(unsigned fps);
+void runtime_ios_set_drawable_count(unsigned count);
+unsigned runtime_ios_drawable_count(void);
 unsigned runtime_ios_fps_limit(void);
 int runtime_ios_fps_limit_supported(unsigned fps);
 int runtime_ios_taa_supported(void);
@@ -110,7 +112,6 @@ int runtime_ios_upscaling_activity(void);
 void runtime_ios_set_display_output_size(unsigned width, unsigned height);
 void runtime_ios_set_taa_enabled(int enabled);
 int runtime_ios_taa_enabled(void);
-void runtime_ios_set_thermal_hud_visible(int visible);
 void runtime_ios_set_shader_hud_visible(int visible);
 void runtime_shortcut_help_toggle(void);
 int fps_overlay_toggle_hints(void);   /* key 1: all -> minimal (FPS only) -> off; returns the new mode, 0 = off */

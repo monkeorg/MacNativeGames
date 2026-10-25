@@ -25,9 +25,8 @@ static void *vsyncEvents[16];
 static unsigned vsyncCount;
 static __weak UIView *rateHost;
 static _Atomic unsigned fpsLimit = 60, maximumFps = 60;
-static UILabel *thermalLabel;
+static unsigned drawableCount = 3;
 static _Atomic int thermalState = -1;
-static BOOL thermalHUDVisible;
 static UILabel *shaderCompileLabel;
 static NSTimer *shaderCompileTimer;
 static BOOL shaderHUDVisible;
@@ -60,26 +59,14 @@ void runtime_ios_set_display_output_size(unsigned width,unsigned height){
 }
 int dm_thermal_now(void) { return atomic_load(&thermalState); }
 static void refresh_thermal_state(void) {
- int state = (int)NSProcessInfo.processInfo.thermalState;
- atomic_store(&thermalState,state);
- NSString *name;
- switch (state) {
-  case NSProcessInfoThermalStateNominal: name=@"Nominal"; break;
-  case NSProcessInfoThermalStateFair: name=@"Fair"; break;
-  case NSProcessInfoThermalStateSerious: name=@"Serious"; break;
-  case NSProcessInfoThermalStateCritical: name=@"Critical"; break;
-  default: name=@"Unknown"; break;
- }
- thermalLabel.text=[@"Thermal: " stringByAppendingString:name];
- thermalLabel.accessibilityValue=name;
- thermalLabel.textColor=state==NSProcessInfoThermalStateCritical ? UIColor.systemRedColor :
-     state==NSProcessInfoThermalStateSerious ? UIColor.systemOrangeColor : UIColor.whiteColor;
+ atomic_store(&thermalState,(int)NSProcessInfo.processInfo.thermalState);
 }
-void runtime_ios_set_thermal_hud_visible(int visible) {
- NSCAssert(NSThread.isMainThread,@"Thermal HUD must change on the main thread");
- thermalHUDVisible=visible!=0;
- thermalLabel.hidden=!thermalHUDVisible;
+/* Configure the drawable queue before attachment; never resize an active presentation queue. */
+void runtime_ios_set_drawable_count(unsigned count){
+ NSCAssert(NSThread.isMainThread,@"Drawable count must change on the main thread");
+ if(!metalLayer&&(count==2||count==3))drawableCount=count;
 }
+unsigned runtime_ios_drawable_count(void){return metalLayer?(unsigned)metalLayer.maximumDrawableCount:drawableCount;}
 extern int mfx_enabled(void);
 static int realtime_profile(void) {
 #if defined(TOTK_GAME_V143) && defined(TOTK_IOS_DISPLAY_SETTINGS)
@@ -208,7 +195,7 @@ static TOTKVsync *vsyncTarget;
 void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  rateHost=host;screen_maximum();
  bootStartNS=runtime_now_ns();
- metalLayer=layer;metalLayer.device=MTLCreateSystemDefaultDevice();metalLayer.pixelFormat=MTLPixelFormatBGRA8Unorm;metalLayer.framebufferOnly=NO;
+ metalLayer=layer;metalLayer.maximumDrawableCount=drawableCount;metalLayer.device=MTLCreateSystemDefaultDevice();metalLayer.pixelFormat=MTLPixelFormatBGRA8Unorm;metalLayer.framebufferOnly=NO;
  UIScreen *screen=active_screen();
  CGFloat s=screen.nativeScale>0?screen.nativeScale:host.traitCollection.displayScale;
  if(s<=0)s=1;
@@ -245,23 +232,6 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  bootDetail.font=[UIFont systemFontOfSize:14];bootDetail.textAlignment=NSTextAlignmentCenter;
  bootProgress=[[UIProgressView alloc] initWithFrame:CGRectMake(w/2-140,h/2+30,280,8)];bootProgress.hidden=YES;
  [bootOverlay addSubview:bootStage];[bootOverlay addSubview:bootDetail];[bootOverlay addSubview:bootProgress];[host addSubview:bootOverlay];
- thermalLabel=[UILabel new];
- thermalLabel.translatesAutoresizingMaskIntoConstraints=NO;
- thermalLabel.font=[UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightMedium];
- thermalLabel.textAlignment=NSTextAlignmentCenter;
- thermalLabel.backgroundColor=[UIColor.blackColor colorWithAlphaComponent:0.7];
- thermalLabel.layer.cornerRadius=8;thermalLabel.clipsToBounds=YES;
- thermalLabel.accessibilityIdentifier=@"TOTKThermalHUD";
- thermalLabel.accessibilityLabel=@"Device thermal state";
- thermalLabel.hidden=!thermalHUDVisible;
- [host addSubview:thermalLabel];
- [NSLayoutConstraint activateConstraints:@[
-  [thermalLabel.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
-  [thermalLabel.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
-  [thermalLabel.heightAnchor constraintEqualToConstant:28],
-  [thermalLabel.widthAnchor constraintGreaterThanOrEqualToConstant:170],
-  [thermalLabel.widthAnchor constraintLessThanOrEqualToAnchor:host.safeAreaLayoutGuide.widthAnchor constant:-24]
- ]];
  shaderCompileLabel=[UILabel new];shaderCompileLabel.translatesAutoresizingMaskIntoConstraints=NO;
  shaderCompileLabel.font=[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightMedium];
  shaderCompileLabel.numberOfLines=2;shaderCompileLabel.textAlignment=NSTextAlignmentCenter;
@@ -276,7 +246,7 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  [NSLayoutConstraint activateConstraints:@[
   shaderWidth,
   [shaderCompileLabel.centerXAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.centerXAnchor],
-  [shaderCompileLabel.topAnchor constraintEqualToAnchor:thermalLabel.bottomAnchor constant:4],
+  [shaderCompileLabel.topAnchor constraintEqualToAnchor:host.safeAreaLayoutGuide.topAnchor constant:8],
   [shaderCompileLabel.heightAnchor constraintEqualToConstant:44],
   [shaderCompileLabel.widthAnchor constraintLessThanOrEqualToAnchor:host.safeAreaLayoutGuide.widthAnchor constant:-24]
  ]];

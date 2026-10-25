@@ -26,10 +26,17 @@ BOOL TOTKLauncherMetalHUD(NSUserDefaults *defaults) {
     if ([value isKindOfClass:NSNumber.class] && [@[@0,@1] containsObject:value]) return [value boolValue];
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_METAL_HUD"]; return NO;
 }
+NSArray<NSNumber *> *TOTKLauncherFPSLimits(void) { return @[@20,@24,@30,@40,@60]; }
+NSInteger TOTKLauncherDrawableCount(NSUserDefaults *defaults) {
+    id value = [defaults objectForKey:@"TOTK_LAUNCHER_DRAWABLE_COUNT"];
+    if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
+        [@[@2,@3] containsObject:value]) return [value integerValue];
+    [defaults removeObjectForKey:@"TOTK_LAUNCHER_DRAWABLE_COUNT"]; return 3;
+}
 NSInteger TOTKLauncherFPSLimit(NSUserDefaults *defaults) {
     id value = [defaults objectForKey:@"TOTK_LAUNCHER_FPS_LIMIT"];
     if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) != CFBooleanGetTypeID() &&
-        [@[@30,@40,@60] containsObject:value]) return [value integerValue];
+        [TOTKLauncherFPSLimits() containsObject:value]) return [value integerValue];
     [defaults removeObjectForKey:@"TOTK_LAUNCHER_FPS_LIMIT"]; return 60;
 }
 BOOL TOTKLauncherTAA(NSUserDefaults *defaults) {

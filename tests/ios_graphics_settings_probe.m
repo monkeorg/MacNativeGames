@@ -11,6 +11,16 @@ int main(int argc,const char **argv) {
         if ([test isEqual:@"defaults"]) {
             [defaults removePersistentDomainForName:suite];
             assert(TOTKLauncherFPSLimit(defaults)==60 && !TOTKLauncherTAA(defaults));
+            assert(TOTKLauncherDrawableCount(defaults)==3);
+            for (id invalid in @[@YES,@0,@1,@4,@2.5,@"2",@[],@{},@(NAN),@(INFINITY)]) {
+                [defaults setObject:invalid forKey:@"TOTK_LAUNCHER_DRAWABLE_COUNT"];
+                assert(TOTKLauncherDrawableCount(defaults)==3);
+                assert(![defaults objectForKey:@"TOTK_LAUNCHER_DRAWABLE_COUNT"]);
+            }
+            for (NSNumber *count in @[@2,@3]) {
+                [defaults setObject:count forKey:@"TOTK_LAUNCHER_DRAWABLE_COUNT"];
+                assert(TOTKLauncherDrawableCount(defaults)==count.integerValue);
+            }
             assert(TOTKLauncherSceneScale(defaults)==100 && !TOTKLauncherSpatialUpscaling(defaults));
             assert(TOTKLauncherCustomSceneHeight(defaults)==0);
             for (id invalid in @[@YES,@0,@49,@101,@67.5,@"67",@[],@{},@(NAN),@(INFINITY)]) {
@@ -35,7 +45,7 @@ int main(int argc,const char **argv) {
                 assert(TOTKLauncherFPSLimit(defaults)==60);
                 assert([defaults objectForKey:@"TOTK_LAUNCHER_FPS_LIMIT"]==nil);
             }
-            for (NSNumber *rate in @[@30,@40,@60]) {
+            for (NSNumber *rate in TOTKLauncherFPSLimits()) {
                 [defaults setObject:rate forKey:@"TOTK_LAUNCHER_FPS_LIMIT"];
                 assert(TOTKLauncherFPSLimit(defaults)==rate.integerValue);
             }
@@ -218,6 +228,7 @@ int main(int argc,const char **argv) {
             [defaults removePersistentDomainForName:suite];
         } else if ([test isEqual:@"write"]) {
             [defaults setInteger:40 forKey:@"TOTK_LAUNCHER_FPS_LIMIT"];
+            [defaults setInteger:2 forKey:@"TOTK_LAUNCHER_DRAWABLE_COUNT"];
             [defaults setBool:YES forKey:@"TOTK_LAUNCHER_TAA"];
             [defaults setInteger:67 forKey:@"TOTK_LAUNCHER_SCENE_SCALE"];
             [defaults setInteger:900 forKey:@"TOTK_LAUNCHER_CUSTOM_HEIGHT"];
@@ -232,6 +243,7 @@ int main(int argc,const char **argv) {
             assert([defaults synchronize]);
         } else if ([test isEqual:@"read"]) {
             assert(TOTKLauncherFPSLimit(defaults)==40 && TOTKLauncherTAA(defaults));
+            assert(TOTKLauncherDrawableCount(defaults)==2);
             assert(TOTKLauncherSceneScale(defaults)==67 && !TOTKLauncherSpatialUpscaling(defaults));
             assert(TOTKLauncherOutputUpscaling(defaults) && [TOTKLauncherScalerStage(defaults) isEqual:@"game-output"]);
             assert(TOTKLauncherCustomOutputHeight(defaults)==1800 && TOTKLauncherGameCanvasHeight(defaults)==1080);

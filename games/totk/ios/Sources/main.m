@@ -41,10 +41,10 @@ void runtime_shortcut_help_toggle(void) {}
     self.gameView = [[TOTKMetalView alloc] initWithFrame:self.view.bounds];
     self.gameView.autoresizingMask = UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:self.gameView];
+    runtime_ios_set_drawable_count((unsigned)TOTKLauncherDrawableCount(NSUserDefaults.standardUserDefaults));
     runtime_ios_attach_layer((CAMetalLayer *)self.gameView.layer, self.gameView);
     BOOL metalHUD = TOTKLauncherMetalHUD(NSUserDefaults.standardUserDefaults);
     ((CAMetalLayer *)self.gameView.layer).developerHUDProperties = @{ @"mode":metalHUD ? @"default" : @"disabled" };
-    runtime_ios_set_thermal_hud_visible(metalHUD || fps_overlay_full_hud());
     TOTKSetTouchControlsVisible(self.view,TOTKLauncherTouch(NSUserDefaults.standardUserDefaults));
     TOTKStartMouseInput(self);
     TOTKAttachGameMenu(self);

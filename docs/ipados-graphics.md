@@ -91,3 +91,23 @@ At 4:3, Vert+ multiplies the half-angle tangent by 4/3 before the existing camer
 Select and warm the three real scenes in the baseline protocol, agree numerical stability thresholds, and capture a continuous physical-device session of at least 30 minutes. Report each scene, full session, first five minutes and last five minutes using synchronized tools, with overhead and gaps disclosed. Confirm render targets at 1080 high and actual display aspect, correct world/UI projection, image quality, native rendered versus presented/interpolated frames, memory and thermal transitions. Pair any later iOS-only quality tradeoff with before/after screenshots and measured work saved, added cost and whole-frame change. Mac picture quality must remain unchanged.
 
 The original cloud phase covered only the offline analyzer and repository tests. The later local Apple build evidence is recorded above; physical graphics and sustained gameplay checks remain separate gates.
+
+## Short warm-session capture — 2026-10-25
+
+The user reported 60 FPS immediately after loading, then approximately 30 FPS after a one-minute walk back to the same area. A subsequent 45.98-second, all-processes Instruments Game Performance Overview trace included the running TOTK process. No app restart or installation occurred during capture. This is a short diagnostic sample, not a controlled cold/warm comparison or sustained-performance acceptance.
+
+The exported TOTK layer metrics contain 46 one-second windows. Their mean frame interval is 33.34 ms (approximately 30 FPS); mean GPU active time is 26.53 ms and mean GPU begin-to-end is 33.69 ms. The thermal interval reports Nominal for the entire capture. Process peak footprint ranges from 4210.94 to 4236.60 MiB, and Metal allocated size ranges from 2442.70 to 2510.78 MiB. These values do not establish a leak or memory-pressure failure.
+
+CPU-cluster and GPU-state tables contain no rows, and shader compilation metrics were disabled in the template. Instruments reported overlapping library-symbol warnings during export. The capture therefore confirms slow presentation and substantial GPU work, but cannot identify why the earlier 60 FPS fell. Keep the raw trace and device identifiers private. A paired startup and warm capture with identical scene/settings remains necessary.
+
+## Frame controls and save picker revision
+
+The added drawable-buffer preference selects two or three CAMetalLayer drawables before attachment. Three preserves the prior default. It does not alter the game's own swapchain or backend allocator counts. Changes during play are saved for the next app start. Extra drawables can permit overlap but also cost memory and latency; no measured speedup is claimed.
+
+The lower 20 and 24 FPS targets use the same real-time deadline cap as 30/40/60. Options remain conditional on the active display's maximum rate being divisible by the target. They do not enable interpolation or native frame rates above 60.
+
+The app no longer displays a thermal-state label. Diagnostic state remains available to existing logs; no numerical temperature is fabricated. Apple's supported [thermalState](https://developer.apple.com/documentation/foundation/processinfo/thermalstate-swift.property) reports a category rather than degrees.
+
+The editor picker now requires a supported progress file and a non-empty caption date. It excludes unsupported formats as well as empty slots and never deletes them. The current private audit found five real older-format slots and one supported slot; these are not six empty saves. The supported editor write contract remains unchanged.
+
+Verification for this revision: 372 repository tests passed, both iPhoneOS source profiles compiled (28 objects), and the full physical-iPad app build succeeded. Independent integration review found no actionable issue. A read-only copy of the device profile passed the production picker predicates for slot_05 only; slots_00–04 had populated captions but unsupported progress formats. No saves were modified. Installation and physical pacing/buffer/UI acceptance remain separate results. No resolution preference or default changed; the menu now recommends 900p or higher input for clearer text.
