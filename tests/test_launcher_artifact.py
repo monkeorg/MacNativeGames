@@ -141,11 +141,19 @@ class ArtifactAuditTests(unittest.TestCase):
                 with self.assertRaisesRegex(audit_module.AuditError, 'collid'):
                     self.check()
                 for name in names:
-                    (self.app / name).unlink()
+                    # On case/normalization-insensitive filesystems both names
+                    # can refer to one file. The policy collision assertion
+                    # above still executes before artifact contents are read.
+                    (self.app / name).unlink(missing_ok=True)
 
     def test_disk_directory_collision_even_without_inventory_collision(self):
         self.fixture({'A/file': b'x'})
-        (self.app / 'a').mkdir()
+        try:
+            (self.app / 'a').mkdir()
+        except FileExistsError:
+            if (self.app / 'A').samefile(self.app / 'a'):
+                self.skipTest('filesystem cannot represent distinct A and a directories')
+            raise
         with self.assertRaisesRegex(audit_module.AuditError, 'collision'):
             self.check()
 
