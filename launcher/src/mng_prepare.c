@@ -1,0 +1,421 @@
+#define _POSIX_C_SOURCE 200809L
+#define _FILE_OFFSET_BITS 64
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#endif
+#include "mng_prepare.h"
+#include "mng_container.h"
+#include "mng_crypto.h"
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+/* Deliberate supported-subformat quotas, not claims about title compatibility.
+ * Payloads are never allocated in full. Even a 16 MiB hash block uses 64 KiB.
+ * Caller must discard all sink staging unless the final result is OK. */
+#define CHUNK 65536u
+#define MAX_SOURCE (UINT64_C(128)*1024*1024*1024)
+#define MAX_ASSETS (UINT64_C(64)*1024*1024*1024)
+#define MAX_EXEFS (UINT64_C(512)*1024*1024)
+#define MAX_HASHES (UINT64_C(64)*1024*1024)
+#define MAX_TICKETS 128u
+struct ticket { unsigned char rights[16], encrypted[16]; };
+struct prep {
+    int fd;
+    uint64_t size, nca_offset, nca_size;
+    const struct mng_key_provider *keys;
+    const struct mng_asset_sink *sink;
+    enum mng_prepare_status failure;
+    unsigned char header_key[32], key[16], header[0xc00];
+    struct mng_prepare_result result;
+};
+struct section { struct prep *p; uint64_t start, size; const unsigned char *fs; };
+struct level { uint64_t offset, size; unsigned power; };
+static uint32_t u32(const unsigned char *p) {
+    return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;
+}
+static uint64_t u64(const unsigned char *p) { return u32(p)|(uint64_t)u32(p+4)<<32; }
+static int fits(uint64_t a,uint64_t n,uint64_t bound) { return a<=bound && n<=bound-a; }
+static int overlap(uint64_t a,uint64_t n,uint64_t b,uint64_t m) {
+    return n && m && a<b+m && b<a+n; /* callers checked both bounded sums */
+}
+static int fail(struct prep *p,enum mng_prepare_status code) { p->failure=code; return -1; }
+static int cancelled(struct prep *p) {
+    return p->sink->cancelled && p->sink->cancelled(p->sink->context)
+        ? fail(p,MNG_PREPARE_CANCELLED):0;
+}
+static void progress(struct prep *p,const char *phase,uint64_t done,uint64_t total) {
+    if (p->sink->progress) p->sink->progress(p->sink->context,phase,done,total);
+}
+static int source_read(void *context,uint64_t at,void *out,size_t length) {
+    struct prep *p=context;
+    if (cancelled(p)) return -1;
+    if (!fits(at,length,p->size)) return fail(p,MNG_PREPARE_INVALID);
+    unsigned char *cursor=out;
+    while (length) {
+        size_t request=length>CHUNK ? CHUNK:length;
+        ssize_t n=pread(p->fd,cursor,request,(off_t)at);
+        if (n<0 && errno==EINTR) continue;
+        if (n<=0) return fail(p,MNG_PREPARE_IO);
+        cursor+=(size_t)n; at+=(uint64_t)n; length-=(size_t)n;
+        if (cancelled(p)) return -1;
+    }
+    return 0;
+}
+static int sha(const void *bytes,size_t size,unsigned char digest[32]) {
+    struct mng_sha256 *state=NULL;
+    int result=mng_sha256_init(&state);
+    if (!result) result=mng_sha256_update(state,bytes,size);
+    if (!result) result=mng_sha256_final(state,digest);
+    mng_sha256_free(state); return result;
+}
+static int section_read(void *context,uint64_t at,void *out,size_t length) {
+    struct section *s=context; struct prep *p=s->p;
+    if (!fits(at,length,s->size)) return fail(p,MNG_PREPARE_INVALID);
+    unsigned char *cursor=out, encrypted[CHUNK], counter[16]={0};
+    for (unsigned i=0;i<8;i++) counter[i]=s->fs[0x147-i];
+    uint64_t absolute=s->start+at;
+    while (length) {
+        size_t n=length>CHUNK ? CHUNK:length;
+        if (source_read(p,p->nca_offset+absolute,encrypted,n)) return -1;
+        if (mng_aes128_ctr(p->key,counter,absolute,encrypted,cursor,n))
+            return fail(p,MNG_PREPARE_KEY);
+        cursor+=n; absolute+=n; length-=n;
+    }
+    mng_secure_clear(encrypted,sizeof(encrypted)); return 0;
+}
+/* Hash a source or decrypted range. IVFC padding is authenticated as zeros;
+ * ExeFS blocks are hashed at their actual last-block length without padding. */
+static int hash_range(struct prep *p,mng_read_at read,void *reader,uint64_t at,
+    uint64_t size,uint64_t padded,unsigned char digest[32]) {
+    struct mng_sha256 *state=NULL;
+    unsigned char bytes[CHUNK]; uint64_t done=0;
+    if (mng_sha256_init(&state)) return fail(p,MNG_PREPARE_NOMEM);
+    int result=-1;
+    while (done<size) {
+        size_t n=size-done>CHUNK ? CHUNK:(size_t)(size-done);
+        if (read(reader,at+done,bytes,n)) goto end;
+        if (mng_sha256_update(state,bytes,n)) { fail(p,MNG_PREPARE_INTEGRITY); goto end; }
+        done+=n;
+        if (read==source_read) progress(p,"hash-source",done,size);
+    }
+    memset(bytes,0,sizeof(bytes));
+    while (done<padded) {
+        size_t n=padded-done>CHUNK ? CHUNK:(size_t)(padded-done);
+        if (cancelled(p)) goto end;
+        if (mng_sha256_update(state,bytes,n)) { fail(p,MNG_PREPARE_INTEGRITY); goto end; }
+        done+=n;
+    }
+    if (mng_sha256_final(state,digest)) { fail(p,MNG_PREPARE_INTEGRITY); goto end; }
+    result=0;
+end:
+    mng_secure_clear(bytes,sizeof(bytes)); mng_sha256_free(state); return result;
+}
+static enum mng_prepare_status mapped(enum mng_status status) {
+    switch (status) {
+        case MNG_OK:return MNG_PREPARE_OK;
+        case MNG_LIMIT:return MNG_PREPARE_LIMIT;
+        case MNG_NOMEM:return MNG_PREPARE_NOMEM;
+        case MNG_IO:return MNG_PREPARE_IO;
+        default:return MNG_PREPARE_INVALID;
+    }
+}
+static int container_status(struct prep *p,enum mng_status status) {
+    if (status==MNG_OK) return 0;
+    if (p->failure==MNG_PREPARE_OK) p->failure=mapped(status);
+    return -1;
+}
+static int suffix(const char *name,const char *ending) {
+    size_t n=strlen(name), m=strlen(ending);
+    if (n<m) return 0;
+    for (size_t i=0;i<m;i++) {
+        unsigned char c=(unsigned char)name[n-m+i];
+        if (c>='A' && c<='Z') c=(unsigned char)(c+('a'-'A'));
+        if (c!=(unsigned char)ending[i]) return 0;
+    }
+    return 1;
+}
+static int key_lookup(struct prep *p,const char *name,unsigned char *out,size_t length) {
+    return p->keys->lookup(p->keys->context,name,out,length) ? fail(p,MNG_PREPARE_KEY):0;
+}
+static int tickets_read(struct prep *p,const struct mng_inventory *inventory,
+    struct ticket *tickets,size_t *count) {
+    *count=0;
+    for (size_t i=0;i<inventory->count;i++) {
+        const struct mng_entry *entry=inventory->entries+i;
+        if (!suffix(entry->name,".tik")) continue;
+        unsigned char raw[0x180], signature[4]; uint64_t body;
+        if (entry->size<4) return fail(p,MNG_PREPARE_INVALID);
+        if (source_read(p,entry->offset,signature,4)) return -1;
+        switch (u32(signature)) {
+            case 0x10000:case 0x10003:body=0x240;break;
+            case 0x10001:case 0x10004:body=0x140;break;
+            case 0x10002:case 0x10005:body=0x80;break;
+            default:return fail(p,MNG_PREPARE_UNSUPPORTED);
+        }
+        if (!fits(body,sizeof(raw),entry->size)) return fail(p,MNG_PREPARE_INVALID);
+        if (source_read(p,entry->offset+body,raw,sizeof(raw))) return -1;
+        if (raw[0x141]) return fail(p,MNG_PREPARE_UNSUPPORTED);
+        size_t match=0;
+        for (;match<*count;match++) if (!memcmp(tickets[match].rights,raw+0x160,16)) break;
+        if (match<*count) {
+            if (memcmp(tickets[match].encrypted,raw+0x40,16)) return fail(p,MNG_PREPARE_INVALID);
+        } else {
+            if (*count==MAX_TICKETS) return fail(p,MNG_PREPARE_LIMIT);
+            memcpy(tickets[*count].rights,raw+0x160,16);
+            memcpy(tickets[*count].encrypted,raw+0x40,16); (*count)++;
+        }
+        mng_secure_clear(raw,sizeof(raw));
+    }
+    return 0;
+}
+static int header_read(struct prep *p,const struct mng_entry *entry,unsigned char out[0xc00]) {
+    unsigned char encrypted[0xc00];
+    if (entry->size<sizeof(encrypted)) return fail(p,MNG_PREPARE_INVALID);
+    if (source_read(p,entry->offset,encrypted,sizeof(encrypted))) return -1;
+    if (mng_aes128_xts_decrypt(p->header_key,0,encrypted,out,sizeof(encrypted)))
+        return fail(p,MNG_PREPARE_KEY);
+    mng_secure_clear(encrypted,sizeof(encrypted));
+    if (memcmp(out+0x200,"NCA3",4)) return fail(p,MNG_PREPARE_KEY);
+    if (u64(out+0x208)!=entry->size) return fail(p,MNG_PREPARE_INVALID);
+    for (unsigned i=0;i<4;i++) {
+        uint64_t a=(uint64_t)u32(out+0x240+i*16)*512;
+        uint64_t b=(uint64_t)u32(out+0x244+i*16)*512;
+        if (!a && !b) continue;
+        if (a<0xc00 || a>=b || b>entry->size) return fail(p,MNG_PREPARE_INVALID);
+        for (unsigned j=0;j<i;j++) {
+            uint64_t c=(uint64_t)u32(out+0x240+j*16)*512;
+            uint64_t d=(uint64_t)u32(out+0x244+j*16)*512;
+            if (overlap(a,b-a,c,d-c)) return fail(p,MNG_PREPARE_INVALID);
+        }
+        unsigned char digest[32];
+        if (sha(out+0x400+i*512,512,digest)) return fail(p,MNG_PREPARE_INTEGRITY);
+        if (memcmp(digest,out+0x280+i*32,32)) return fail(p,MNG_PREPARE_INTEGRITY);
+    }
+    return 0;
+}
+static int choose_program(struct prep *p,const struct mng_inventory *inventory) {
+    unsigned char header[0xc00]; uint64_t common_title=0; unsigned programs=0, ncas=0;
+    for (size_t i=0;i<inventory->count;i++) {
+        const struct mng_entry *entry=inventory->entries+i;
+        if (!suffix(entry->name,".nca")) continue;
+        if (++ncas>256) return fail(p,MNG_PREPARE_LIMIT);
+        if (header_read(p,entry,header)) return -1;
+        uint64_t title=u64(header+0x210);
+        if (!title || (common_title && title!=common_title)) return fail(p,MNG_PREPARE_UNSUPPORTED);
+        common_title=title;
+        if (header[0x205]!=0) continue;
+        if (++programs!=1) return fail(p,MNG_PREPARE_UNSUPPORTED);
+        for (unsigned j=0;j<4;j++) if (u32(header+0x240+j*16) && header[0x404+j*512]==4)
+            return fail(p,MNG_PREPARE_UNSUPPORTED); /* BKTR has a distinct merge contract. */
+        memcpy(p->header,header,sizeof(header));
+        p->nca_offset=entry->offset; p->nca_size=entry->size; p->result.title_id=title;
+    }
+    mng_secure_clear(header,sizeof(header));
+    return programs==1 ? 0:fail(p,MNG_PREPARE_UNSUPPORTED);
+}
+static int content_key(struct prep *p,const struct ticket *tickets,size_t count) {
+    unsigned generation=p->header[0x206]>p->header[0x220] ? p->header[0x206]:p->header[0x220];
+    if (generation) generation--;
+    unsigned char zero[16]={0}, wrapping[16]; char name[64];
+    const unsigned char *rights=p->header+0x230;
+    int result=-1;
+    if (memcmp(rights,zero,16)) {
+        size_t i=0;
+        for (;i<count;i++) if (!memcmp(rights,tickets[i].rights,16)) break;
+        if (i==count) return fail(p,MNG_PREPARE_KEY);
+        snprintf(name,sizeof(name),"titlekek_%02x",generation);
+        if (key_lookup(p,name,wrapping,16)) goto done;
+        if (mng_aes128_ecb_decrypt(wrapping,tickets[i].encrypted,p->key)) { fail(p,MNG_PREPARE_KEY); goto done; }
+    } else {
+        static const char *areas[]={"application","ocean","system"};
+        unsigned area=p->header[0x207];
+        if (area>=3) return fail(p,MNG_PREPARE_UNSUPPORTED);
+        snprintf(name,sizeof(name),"key_area_key_%s_%02x",areas[area],generation);
+        if (key_lookup(p,name,wrapping,16)) goto done;
+        if (mng_aes128_ecb_decrypt(wrapping,p->header+0x320,p->key)) { fail(p,MNG_PREPARE_KEY); goto done; }
+    }
+    result=0;
+done:
+    mng_secure_clear(wrapping,sizeof(wrapping)); return result;
+}
+static int emit(struct section *s,uint64_t offset,uint64_t size,const char *path) {
+    struct prep *p=s->p; struct mng_sha256 *hash=NULL;
+    unsigned char bytes[CHUNK], digest[32]; int result=-1;
+    if (p->result.asset_count>=128 || size>MAX_ASSETS-p->result.asset_bytes)
+        return fail(p,MNG_PREPARE_LIMIT);
+    if (cancelled(p)) return -1;
+    if (mng_sha256_init(&hash)) return fail(p,MNG_PREPARE_NOMEM);
+    if (p->sink->begin(p->sink->context,path,size)) { fail(p,MNG_PREPARE_IO); goto done; }
+    for (uint64_t at=0;at<size;) {
+        size_t n=size-at>CHUNK ? CHUNK:(size_t)(size-at);
+        if (section_read(s,offset+at,bytes,n)) goto done;
+        if (mng_sha256_update(hash,bytes,n)) { fail(p,MNG_PREPARE_INTEGRITY); goto done; }
+        if (p->sink->write(p->sink->context,bytes,n)) { fail(p,MNG_PREPARE_IO); goto done; }
+        at+=n; progress(p,"write-private-asset",at,size);
+    }
+    if (cancelled(p)) goto done;
+    if (mng_sha256_final(hash,digest)) { fail(p,MNG_PREPARE_INTEGRITY); goto done; }
+    if (p->sink->end(p->sink->context,digest)) { fail(p,MNG_PREPARE_IO); goto done; }
+    p->result.asset_count++; p->result.asset_bytes+=size; result=0;
+done:
+    mng_secure_clear(bytes,sizeof(bytes)); mng_sha256_free(hash); return result;
+}
+static int exefs(struct section *s) {
+    struct prep *p=s->p; const unsigned char *fs=s->fs;
+    uint32_t block=u32(fs+0x28), levels=u32(fs+0x2c);
+    uint64_t hashes=u64(fs+0x30), hash_size=u64(fs+0x38), data=u64(fs+0x40), size=u64(fs+0x48);
+    if (size>MAX_EXEFS || hash_size>MAX_HASHES) return fail(p,MNG_PREPARE_LIMIT);
+    if (levels!=2 || block<4096 || block>(1u<<24) || (block&(block-1)))
+        return fail(p,MNG_PREPARE_UNSUPPORTED);
+    uint64_t blocks=size/block+(size%block!=0);
+    if (!size || !fits(hashes,hash_size,s->size) || !fits(data,size,s->size) ||
+        hash_size<blocks*32 || overlap(hashes,hash_size,data,size)) return fail(p,MNG_PREPARE_INVALID);
+    unsigned char digest[32], expected[32];
+    if (hash_range(p,section_read,s,hashes,hash_size,hash_size,digest)) return -1;
+    if (memcmp(digest,fs+8,32)) return fail(p,MNG_PREPARE_INTEGRITY);
+    for (uint64_t i=0;i<blocks;i++) {
+        uint64_t n=size-i*block; if (n>block) n=block;
+        if (section_read(s,hashes+i*32,expected,32) ||
+            hash_range(p,section_read,s,data+i*block,n,n,digest)) return -1;
+        if (memcmp(digest,expected,32)) return fail(p,MNG_PREPARE_INTEGRITY);
+        progress(p,"verify-exefs",i+1,blocks);
+    }
+    struct mng_inventory inventory={0};
+    if (container_status(p,mng_partition_inspect(section_read,s,s->size,data,size,MNG_PFS0,&inventory))) return -1;
+    int found=0, main_found=0, result=-1;
+    if (inventory.count>127) { fail(p,MNG_PREPARE_LIMIT); goto done; }
+    for (size_t i=0;i<inventory.count;i++) {
+        const char *name=inventory.entries[i].name;
+        size_t length=strlen(name);
+        if (length>64) { fail(p,MNG_PREPARE_UNSUPPORTED); goto done; }
+        for (size_t j=0;j<length;j++) {
+            unsigned char c=(unsigned char)name[j];
+            if (!((c>='a' && c<='z') || (c>='A' && c<='Z') ||
+                  (c>='0' && c<='9') || c=='.' || c=='_' || c=='-')) {
+                fail(p,MNG_PREPARE_UNSUPPORTED); goto done;
+            }
+        }
+        for (size_t j=0;j<i;j++) {
+            const char *other=inventory.entries[j].name; size_t k=0;
+            for (;name[k] && other[k];k++) {
+                unsigned char a=(unsigned char)name[k], b=(unsigned char)other[k];
+                if (a>='A' && a<='Z') a=(unsigned char)(a+32);
+                if (b>='A' && b<='Z') b=(unsigned char)(b+32);
+                if (a!=b) break;
+            }
+            if (!name[k] && !other[k]) { fail(p,MNG_PREPARE_INVALID); goto done; }
+        }
+        if (!strcmp(name,"main.npdm")) found=1;
+        if (!strcmp(name,"main")) main_found=1;
+    }
+    if (!found || !main_found) { fail(p,MNG_PREPARE_UNSUPPORTED); goto done; }
+    for (size_t i=0;i<inventory.count;i++) {
+        const struct mng_entry *e=inventory.entries+i;
+        char path[MNG_MAX_NAME+8];
+        snprintf(path,sizeof(path),"exefs/%s",e->name);
+        if (emit(s,e->offset,e->size,path)) goto done;
+    }
+    p->result.exefs_verified=1; result=0;
+done:
+    mng_inventory_free(&inventory); return result;
+}
+static int romfs(struct section *s) {
+    struct prep *p=s->p; const unsigned char *fs=s->fs;
+    if (memcmp(fs+8,"IVFC",4) || u32(fs+12)!=0x20000 || u32(fs+16)!=32 || u32(fs+20)!=7)
+        return fail(p,MNG_PREPARE_UNSUPPORTED);
+    struct level levels[6];
+    for (unsigned i=0;i<6;i++) {
+        const unsigned char *raw=fs+0x18+i*24;
+        levels[i]=(struct level){u64(raw),u64(raw+8),u32(raw+16)};
+        if (levels[i].power<12 || levels[i].power>24 || u32(raw+20)) return fail(p,MNG_PREPARE_UNSUPPORTED);
+        if (!levels[i].size || !fits(levels[i].offset,levels[i].size,s->size)) return fail(p,MNG_PREPARE_INVALID);
+        if (levels[i].size>(i==5 ? MAX_ASSETS:MAX_HASHES)) return fail(p,MNG_PREPARE_LIMIT);
+        for (unsigned j=0;j<i;j++) if (overlap(levels[i].offset,levels[i].size,levels[j].offset,levels[j].size))
+            return fail(p,MNG_PREPARE_INVALID);
+    }
+    for (unsigned i=0;i<6;i++) {
+        uint64_t block=UINT64_C(1)<<levels[i].power;
+        uint64_t count=levels[i].size/block+(levels[i].size%block!=0);
+        uint64_t parent_size=i ? levels[i-1].size:32;
+        if (count>parent_size/32) return fail(p,MNG_PREPARE_INVALID);
+        for (uint64_t index=0;index<count;index++) {
+            unsigned char digest[32], expected[32];
+            uint64_t n=levels[i].size-index*block; if (n>block) n=block;
+            if (i) { if (section_read(s,levels[i-1].offset+index*32,expected,32)) return -1; }
+            else memcpy(expected,fs+0xc8,32);
+            if (hash_range(p,section_read,s,levels[i].offset+index*block,n,block,digest)) return -1;
+            if (memcmp(digest,expected,32)) return fail(p,MNG_PREPARE_INTEGRITY);
+            progress(p,"verify-ivfc",index+1,count);
+        }
+    }
+    if (emit(s,levels[5].offset,levels[5].size,"romfs.bin")) return -1;
+    p->result.romfs_verified=1; return 0;
+}
+static int sections(struct prep *p) {
+    struct section exe={0}, rom={0};
+    for (unsigned i=0;i<4;i++) {
+        uint64_t start=(uint64_t)u32(p->header+0x240+i*16)*512;
+        uint64_t end=(uint64_t)u32(p->header+0x244+i*16)*512;
+        if (!start) continue;
+        const unsigned char *fs=p->header+0x400+i*512;
+        struct section s={p,start,end-start,fs};
+        if (fs[4]!=3) return fail(p,MNG_PREPARE_UNSUPPORTED);
+        if (fs[2]==1 && fs[3]==2 && !exe.p) exe=s;
+        else if (fs[2]==0 && fs[3]==3 && !rom.p) rom=s;
+        else return fail(p,MNG_PREPARE_UNSUPPORTED);
+    }
+    if (!exe.p || !rom.p) return fail(p,MNG_PREPARE_UNSUPPORTED);
+    return exefs(&exe) || romfs(&rom) ? -1:0;
+}
+static int stable(const struct stat *a,const struct stat *b) {
+#ifdef __APPLE__
+    const struct timespec am=a->st_mtimespec, bm=b->st_mtimespec;
+    const struct timespec ac=a->st_ctimespec, bc=b->st_ctimespec;
+#else
+    const struct timespec am=a->st_mtim, bm=b->st_mtim;
+    const struct timespec ac=a->st_ctim, bc=b->st_ctim;
+#endif
+    return S_ISREG(b->st_mode) && a->st_dev==b->st_dev && a->st_ino==b->st_ino &&
+        a->st_size==b->st_size && am.tv_sec==bm.tv_sec && am.tv_nsec==bm.tv_nsec &&
+        ac.tv_sec==bc.tv_sec && ac.tv_nsec==bc.tv_nsec;
+}
+enum mng_prepare_status mng_prepare_fd(int fd,const struct mng_key_provider *keys,
+    const struct mng_asset_sink *sink,struct mng_prepare_result *result) {
+    if (!result || !keys || !keys->lookup || !sink || !sink->begin || !sink->write || !sink->end)
+        return MNG_PREPARE_INVALID;
+    unsigned char zero[32]={0};
+    if (result->title_id || result->source_size || result->asset_count || result->asset_bytes ||
+        result->exefs_verified || result->romfs_verified || memcmp(result->source_sha256,zero,32))
+        return MNG_PREPARE_INVALID;
+    struct stat before, after;
+    if (fstat(fd,&before)) return MNG_PREPARE_IO;
+    if (!S_ISREG(before.st_mode) || before.st_size<0) return MNG_PREPARE_INVALID;
+    if ((uint64_t)before.st_size>MAX_SOURCE) return MNG_PREPARE_LIMIT;
+    struct prep p={0}; p.fd=fd; p.size=(uint64_t)before.st_size; p.keys=keys; p.sink=sink;
+    struct mng_inventory inventory={0};
+    struct ticket tickets[MAX_TICKETS]; size_t count=0;
+    if (cancelled(&p)) goto done;
+    if (container_status(&p,mng_container_inspect(source_read,&p,p.size,&inventory))) goto done;
+    if (key_lookup(&p,"header_key",p.header_key,32) || tickets_read(&p,&inventory,tickets,&count) ||
+        choose_program(&p,&inventory) || content_key(&p,tickets,count) || sections(&p)) goto done;
+    progress(&p,"hash-source",0,p.size);
+    if (hash_range(&p,source_read,&p,0,p.size,p.size,p.result.source_sha256)) goto done;
+    progress(&p,"hash-source",p.size,p.size);
+    if (cancelled(&p)) goto done;
+    p.result.source_size=p.size;
+done:
+    if (fstat(fd,&after) || !stable(&before,&after)) p.failure=MNG_PREPARE_IO;
+    enum mng_prepare_status status=p.failure;
+    if (status==MNG_PREPARE_OK) *result=p.result;
+    mng_inventory_free(&inventory);
+    mng_secure_clear(tickets,sizeof(tickets)); mng_secure_clear(&p,sizeof(p));
+    return status;
+}
+const char *mng_prepare_status_name(enum mng_prepare_status status) {
+    static const char *names[]={"ok","invalid","io","unsupported","key","integrity","cancelled","limit","nomem"};
+    return status>=MNG_PREPARE_OK && status<=MNG_PREPARE_NOMEM ? names[status]:"unknown";
+}

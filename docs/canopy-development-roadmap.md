@@ -40,6 +40,21 @@ save formats, credentials, compatibility claims or passing test results.
 
 ## Development workstreams
 
+### Delivery order at a glance
+
+| Milestone | Required user outcome | Remaining Mac/iPad acceptance |
+|---|---|---|
+| 1. Prepare a game | Import a supported user-owned NSP or folder, select local keys when needed, see real progress, cancel/resume and obtain verified assets | Real private-input format coverage and device resource limits |
+| 2. Manage a library | Keep multiple titles/versions, compose supported updates/DLC, inspect storage, recover failed jobs and roll back generations | Large-library and interrupted-device validation |
+| 3. Configure and protect | Use per-game settings, assign independent players, export/import saves and restore backups while preserving account identity | Physical controls, save-format validation and UIKit/accessibility acceptance |
+| 4. Launch and control | Bind prepared assets to the existing native runtime, apply settings, use the floating overlay, pause/resume and recover from startup errors | Signing/executable permissions, real gameplay, lifecycle and touch/mouse checks |
+| 5. Finish the platform | Reuse compatible shader/content caches, expose measured diagnostics and connect supported multiplayer services | Actual title/version compatibility, visual correctness, performance and multiplayer sessions |
+
+Milestones describe connected outcomes, not an instruction to wait for hardware
+before implementing the next one. Source work may proceed in parallel wherever
+its own dependencies are available. The detailed matrix below remains the
+completion checklist; this table does not narrow its scope.
+
 These are required outcomes, not optional ideas. Reuse the existing code and
 pins; port host tooling into native app-callable components instead of wrapping
 Python/subprocesses that cannot run in the shipping iPad app.
