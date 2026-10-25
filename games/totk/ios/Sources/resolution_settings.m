@@ -163,7 +163,9 @@
     double fit = fmin((double)plan.displayWidth / plan.canvasWidth,(double)plan.displayHeight / plan.canvasHeight);
     unsigned width = (unsigned)(2 * round(plan.canvasWidth * fit / 2));
     unsigned height = (unsigned)(2 * round(plan.canvasHeight * fit / 2));
-    return [NSString stringWithFormat:@"Input %u × %u → canvas %u × %u → output %u × %u",
+    if (plan.inputWidth == plan.canvasWidth && plan.inputHeight == plan.canvasHeight)
+        return [NSString stringWithFormat:@"Input   %u × %u\nOutput  %u × %u",plan.inputWidth,plan.inputHeight,width,height];
+    return [NSString stringWithFormat:@"Input   %u × %u\nCanvas  %u × %u\nOutput  %u × %u",
         plan.inputWidth,plan.inputHeight,plan.canvasWidth,plan.canvasHeight,width,height];
 }
 - (NSString *)activity {
@@ -216,15 +218,15 @@
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
-    if (section == 1) return @"Input renders the game into its canvas. The game or scene MetalFX scales that image; final MetalFX scales the canvas to output. Full display fills the iPad; 16:9 keeps black bars. Native uses the window’s physical pixels.";
+    if (section == 1) return @"Input is the render size. Output is the final picture size. Native matches the iPad’s pixels.";
     if (section == 2) return [[self summary] isEqual:@"Invalid resolution plan"]
         ? @"Adjust output, multiplier, or game canvas. Input must fit 1920 × 1080. Game canvas must be at least the input height."
-        : @"Configured sizes and multiplier describe the saved plan for the next game start, not active buffers. Activity shows MetalFX encodes from the last two seconds.";
+        : @"Configured values apply at the next game start. Activity reports MetalFX encodes from the last two seconds.";
     return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     (void)tableView;
-    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil];
+    UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:path.section == 2 ? UITableViewCellStyleSubtitle : UITableViewCellStyleValue1 reuseIdentifier:nil];
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     cell.accessoryType = path.section == 2 ? UITableViewCellAccessoryNone : UITableViewCellAccessoryDisclosureIndicator;
     cell.selectionStyle = path.section == 2 ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
@@ -251,10 +253,15 @@
         cell.textLabel.text = (@[@"Configured",@"Activity",@"Configured multiplier"])[path.row];
         cell.detailTextLabel.text = path.row == 0 ? self.summary : path.row == 1 ? self.activity : self.effectiveMultiplier;
     }
-    NSDictionary *symbols = @{@"Mode":@"slider.horizontal.3",@"Aspect":@"aspectratio",@"Input":@"square.arrow.down",
+    NSDictionary *symbols = @{@"Mode":@"slider.horizontal.3",@"Aspect":@"aspectratio",@"Input":@"arrow.down.square",
         @"Output":@"display",@"Game canvas":@"rectangle.on.rectangle",@"Multiplier":@"multiply",@"Configured multiplier":@"multiply",@"Scaler":@"sparkles",@"Configured":@"rectangle.on.rectangle",@"Activity":@"waveform.path"};
     cell.accessibilityIdentifier = [@"resolution." stringByAppendingString:cell.textLabel.text.lowercaseString];
     TOTKStyleSettingsCell(cell,symbols[cell.textLabel.text]);
+    if (path.section == 2) {
+        cell.detailTextLabel.textAlignment = NSTextAlignmentLeft;
+        if (path.row == 0) cell.detailTextLabel.font = [UIFontMetrics.defaultMetrics scaledFontForFont:
+            [UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightRegular]];
+    }
     return cell;
 }
 - (void)save:(void (^)(NSUserDefaults *))update resetScene:(BOOL)resetScene {

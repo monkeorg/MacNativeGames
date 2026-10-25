@@ -1,11 +1,13 @@
 #import "settings_choices.h"
 #import "menu_style.h"
+#include <math.h>
 
 @interface TOTKSettingsChoices : UITableViewController <UIPopoverPresentationControllerDelegate>
 @property(nonatomic, copy) NSArray<NSString *> *choices;
 @property(nonatomic) NSUInteger selectedIndex;
 @property(nonatomic, copy) NSIndexSet *disabled;
 @property(nonatomic, copy) void (^selection)(NSUInteger);
+@property(nonatomic) CGFloat maximumHeight;
 @end
 
 @implementation TOTKSettingsChoices {
@@ -22,6 +24,14 @@
     if (self.selectedIndex < self.choices.count)
         [self.tableView scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:self.selectedIndex inSection:0]
                              atScrollPosition:UITableViewScrollPositionMiddle animated:NO];
+}
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    UIEdgeInsets inset = self.tableView.adjustedContentInset;
+    CGFloat contentHeight = ceil(self.tableView.contentSize.height + inset.top + inset.bottom);
+    CGFloat height = MIN(self.maximumHeight, contentHeight);
+    if (fabs(self.preferredContentSize.height - height) > 1)
+        self.preferredContentSize = CGSizeMake(self.preferredContentSize.width, height);
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     (void)tableView; (void)section;
@@ -96,7 +106,8 @@ void TOTKChooseSetting(UIViewController *owner, NSString *title, NSArray<NSStrin
     page.modalPresentationStyle = UIModalPresentationPopover;
     CGFloat width = MIN(360, MAX(240, CGRectGetWidth(owner.view.bounds) - 32));
     CGFloat height = MIN(420, MAX(120, CGRectGetHeight(owner.view.bounds) - 64));
-    page.preferredContentSize = CGSizeMake(width, MIN(height, 56 * choices.count + 64));
+    page.maximumHeight = height;
+    page.preferredContentSize = CGSizeMake(width, MIN(height, 56 * choices.count + 112));
     UIPopoverPresentationController *popover = page.popoverPresentationController;
     popover.delegate = page;
     popover.sourceView = owner.view;
@@ -111,7 +122,13 @@ void TOTKChooseSetting(UIViewController *owner, NSString *title, NSArray<NSStrin
     }
     if (anchor) {
         popover.sourceView = anchor;
-        popover.sourceRect = anchor.bounds;
+        CGRect value = anchor.detailTextLabel.text.length
+            ? [anchor.detailTextLabel convertRect:anchor.detailTextLabel.bounds toView:anchor] : anchor.bounds;
+        popover.sourceRect = value;
+        CGRect screenRect = [anchor convertRect:value toView:owner.view.window];
+        CGFloat below = CGRectGetMaxY(owner.view.window.safeAreaLayoutGuide.layoutFrame) - CGRectGetMaxY(screenRect);
+        popover.permittedArrowDirections = below >= MIN(page.preferredContentSize.height, 240) + 20
+            ? UIPopoverArrowDirectionUp : UIPopoverArrowDirectionDown;
     }
     [owner presentViewController:page animated:YES completion:nil];
 }
