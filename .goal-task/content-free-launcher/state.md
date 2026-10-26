@@ -1,6 +1,6 @@
-# Canopy active cloud development — acceptance gates open
+# Canopy reviewed cloud source handoff — acceptance gates open
 
-## Active continuation after #151
+## Cloud source continuation through #170
 
 The full D0–D14 roadmap remains the goal. The finite compiler-source handoff
 below is historical, not an instruction to stop independent implementation.
@@ -9,11 +9,25 @@ building on it. Preserve the draft dependency chain and existing app behavior.
 No tests, probes, builds, CI dispatches, new tests, private inputs, installs,
 merges or releases in this continuation. Source review is not runtime evidence.
 
-Latest published source: `3c3313e08138982a2b831a52debec06411514944`, draft #168,
-`feat/totk-upstream-vertex-input-types`, depends on #167 → #166 → #165 → #164 → #163 → #162 → #161 → #160 → #159 →
+Latest published source: `8005afed3adb7a06aa8f887fd3d90256bfaa1c27`, draft #170,
+`feat/canopy-pinned-runtime-data`, depends on #169 → #168 (docs checkpoint
+`0522701f779d8a492e4dc18fd5f906472d5ccddd`) → #167 → #166 → #165 → #164 → #163 → #162 → #161 → #160 → #159 →
 #158 → #157 → #156 → #155 →
-#154 → #153 → #152 → #151. Current worktree has additional uncommitted source;
-inspect actual status and ownership before staging.
+#154 → #153 → #152 → #151. Later documentation commits may advance this branch;
+inspect actual status before staging. Source is committed, unbuilt and untested.
+#170 / `8005afe`: coherent original upstream runtime/game-data separation,
+fixed private metadata, cancellable owned snapshots, additive pinned v4 wrapper,
+actual loader/resource consumers and Mac/original-iOS/private-Canopy packaging.
+Strict legacy ABI3 and shared mapper/remap/patch validation retained. Runtime
+author; independent storage/root critical source reviews, including the final
+table/provenance publication correction. Separate execution D14 source/header/
+data graph review found no missing production wiring. No new public payload
+inputs; actual private artifact/format/resource/Apple/device gates remain open.
+#169 / `0895cfa`: actual keyboard picker/conflict-confirmation callbacks now bind
+exact owned UI, foreground scene and consumed epochs. Cancel/retry uses fresh
+callbacks; background/navigation expires old intent without foreign dismissal.
+Existing conflict CAS/settings persistence/application retained. Product author,
+independent artifact/root source reviews; no execution/UIKit/device acceptance.
 #168 / `3c3313e`: coherent original upstream d69206f7 vertex-format retyping,
 all actual pipeline callers, paired runtime/seed matchers and pipeline schema4/
 renderer ABI. Required MSL/declaration/output-structure absence refuses rather
@@ -92,25 +106,37 @@ units and bounded logical I/O attempt counters reach opt-in diagnostics/export;
 publication and uncertainty are separate. Product author, independent execution
 and root source reviews; unbuilt/untested. No performance/device acceptance.
 
-Active ownership (shared worktree; stage exact reviewed files only):
+Final ownership/reassessment record (no worker source edits outstanding):
 
-- native_review: D10 retry source published #166; independent critical vertex
-  review complete/published #168. No current edits.
-- runtime_impl: D11 published; coherent original upstream runtime/game-data
-  separation port. Own readers/generators/Makefile/original packagers/host and
-  Runtime/private TOTK builder only; additive v4 data wrapper preserves strict
-  legacy ABI3, immutable metadata bytes and independent profile pins. No NVN,
-  Settings or Storage edits. Root owns production inventory after freeze.
-- storage_audit: independent critical review of that coherent game-data cohort;
-  provider-cache management is published, no current edits.
-- product_audit: mapping modes published #167; bounded actual keyboard picker/
-  conflict-confirmation stale-intent audit/fix in Games.m keyboard UI only.
-- artifact_audit: independent keyboard UI review after product freeze;
-  own SaveStore retirement implementation is published, not self-approved.
-- execution_audit: pinned original TOTK upstream source audit, pacing and vertex
-  authors; vertex published #168, no current edits. No payloads fetched/imported.
-- root: integration and independent reviews; risky storage/translator
-  slices need two independent reviewers. Authors cannot approve themselves.
+- native_review: D10 author, independent vertex reviewer; bounded D8/D11 actual
+  ownership/lifecycle/input/modal recheck found no further demonstrated gap.
+- runtime_impl: D11 and runtime-data author; both cohorts published. Not their
+  own independent approver.
+- storage_audit: cache author and independent runtime-data reviewer; bounded
+  supported D1–D4/D7/D12 recheck found no further demonstrated source gap.
+- product_audit: diagnostics/mapping/keyboard author; bounded D5/D6/D9/D13/D14
+  actual-caller recheck through #169 found no further demonstrated source gap.
+- artifact_audit: independent cache/mapping/keyboard and handoff reviewer;
+  SaveStore author, not its own approver.
+- execution_audit: pacing/vertex author, independent D10 reviewer; bounded
+  D10/D12/D14 recheck and final #170 production graph review found no further
+  demonstrated wiring gap. No payloads fetched/imported.
+- root: integration and independent critical source reviews; all identified
+  producer/consumer findings were fixed and re-reviewed before publication.
+
+No additional demonstrated, authorized cloud source task remains after these
+bounded reviews. This is a source handoff, not product completion or a claim
+that every possible defect was found. No tests/probes/builds/CI were run, no new
+tests were written, and no private inputs, installs, merges or releases occurred.
+The local Mac/iPad phase must first update the documented existing harness setup
+and validate the exact new source. Earlier green CI does not cover these commits;
+the later #85 red result and unrun #99/#100 fixes remain recorded below.
+Exact save integrity, actual engine restart request, full SDK controller
+contracts, private products/link/parity/resource proof, signing/external-code
+permission and physical acceptance remain open. SaveEditor candidate-only is
+active; production Apply is off. BOTW/mod manager remain parked. Resume source
+work when new local/format/SDK evidence identifies an actionable contract or
+defect; do not guess it or relabel a metadata/assignment screen as gameplay.
 
 The interrupted save-backup deletion gap is source-fixed in #155, not exercised.
 Real MK8DX integration from pinned original MIT host/HLE source is published
