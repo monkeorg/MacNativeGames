@@ -53,7 +53,7 @@ static int par_fill_light(void) {
 static NSString *par_dir(void) { return [totk_rt_dir() stringByAppendingPathComponent:@"pipelines"]; }
 static NSString *par_file(NSString *key) { return [par_dir() stringByAppendingFormat:@"/%@.metalarchive", key]; }
 static NSDictionary *par_identity(id<MTLDevice> dev) {
-    return @{@"schema": @3, @"chain": @DMSH_CHAIN, @"gpu": dev.name ?: @"?",
+    return @{@"schema": @4, @"rendererABI": @"nvn-vertex-input-types-v1", @"chain": @DMSH_CHAIN, @"gpu": dev.name ?: @"?",
              @"os": NSProcessInfo.processInfo.operatingSystemVersionString ?: @"?"};
 }
 static NSString *par_hash(const void *bytes, size_t n) {
