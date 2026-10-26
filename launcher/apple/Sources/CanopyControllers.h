@@ -23,6 +23,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// state survives guest focus changes so resuming cannot replay held Home.
 /// Commands are separate from guest snapshots; consume them before guest input.
 - (uint64_t)consumeUICommandEdges;
+/// One shared production compiler for controller and mouse target/mode options.
++ (BOOL)compileInputMapping:(struct mng_input_mapping *)mapping settings:(NSDictionary *)settings error:(NSError * _Nullable * _Nullable)error;
 /// Per-player physical layout. Mapping values use existing Default/None or
 /// target strings; defaults preserve position-based Xbox/PlayStation controls.
 /// A changed configuration clears that device's held/pending input and epoch.

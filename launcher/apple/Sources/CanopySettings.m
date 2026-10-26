@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "mng_keyboard.h"
+#include "../../../games/totk/runtime/controller_map.h"
 
 static const NSUInteger CanopySettingsLimit = 1024 * 1024;
 static const NSUInteger CanopyTitleLimit = 500;
@@ -38,7 +39,31 @@ static BOOL KeyboardBindingsValid(id value) {
     }
     return mng_keyboard_bindings_valid(bindings) != 0;
 }
+static int MappingSlot(id name) {
+    if(![name isKindOfClass:NSString.class])return -1;
+    for(int i=0;i<CONTROLLER_BUTTONS;i++)if([name isEqualToString:[NSString stringWithUTF8String:controller_physical_names[i]]])return i;
+    return -1;
+}
+static BOOL ModesValid(id value) {
+    if(![value isKindOfClass:NSDictionary.class] || [value count]>CONTROLLER_BUTTONS)return NO;
+    for(id button in value) {
+        if(![button isKindOfClass:NSString.class])return NO;
+        int slot=MappingSlot(button);
+        id row=value[button];if(slot<0 || ![row isKindOfClass:NSDictionary.class])return NO;
+        id mode=row[@"mode"];
+        if(![mode isKindOfClass:NSString.class] || ![@[@"hold",@"tap",@"toggle",@"aim"] containsObject:mode])return NO;
+        BOOL aim=[mode isEqual:@"aim"];
+        if(![[NSSet setWithArray:[row allKeys]] isEqual:[NSSet setWithArray:aim?@[@"mode",@"fire"]:@[@"mode"]]])return NO;
+        if(aim) {
+            id fire=row[@"fire"];if(![fire isKindOfClass:NSString.class])return NO;
+            int other=MappingSlot(fire);
+            if(other<0 || other==slot || (slot<CONTROLLER_MOUSE_FIRST)!=(other<CONTROLLER_MOUSE_FIRST))return NO;
+        }
+    }
+    return YES;
+}
 static BOOL ValidOption(NSString *key, id value) {
+    if ([key isEqual:@"mappingModes"]) return ModesValid(value);
     if ([key isEqual:@"keyboardBindings"]) return KeyboardBindingsValid(value);
     if ([@[@"metalHUD", @"taa", @"touch", @"mouseInvertY", @"mouseEnabled"] containsObject:key]) return IsBoolean(value);
     if ([key isEqual:@"fpsLimit"]) return IsInteger(value, 30, 60) && [@[@30,@40,@60] containsObject:value];
@@ -57,10 +82,33 @@ static BOOL ValidOption(NSString *key, id value) {
     }
     return NO;
 }
+static NSString *MappingText(NSDictionary *targets,NSDictionary *modes) {
+    if(!ValidOption(@"buttonMappings",targets) || !ModesValid(modes))return nil;
+    uint16_t defaults[CONTROLLER_BUTTONS];uint8_t defaultModes[CONTROLLER_BUTTONS];controller_map_default(defaults,defaultModes);
+    NSMutableString *text=[NSMutableString new];
+    for(unsigned slot=0;slot<CONTROLLER_BUTTONS;slot++) {
+        NSString *button=[NSString stringWithUTF8String:controller_physical_names[slot]],*target=targets[button];
+        NSDictionary *override=modes[button];
+        if(!target || [target isEqual:@"default"]) {
+            if(!override)continue; // Preserve original default mouse Aim exactly.
+            target=@"none";
+            for(unsigned bit=0;bit<CONTROLLER_SWITCH_BUTTONS;bit++)if(defaults[slot]&(1u<<bit))target=[NSString stringWithUTF8String:controller_switch_names[bit]];
+        }
+        [text appendFormat:@"%@ = %@",button,target];
+        if(override) {
+            [text appendFormat:@" %@",override[@"mode"]];
+            if([override[@"mode"] isEqual:@"aim"])[text appendFormat:@" %@",override[@"fire"]];
+        }
+        [text appendString:@"\n"];
+    }
+    NSData *bytes=[text dataUsingEncoding:NSUTF8StringEncoding];const char *reason=NULL;
+    if(bytes.length>4096 || controller_map_parse(text.UTF8String,defaults,defaultModes,&reason))return nil;
+    return [text copy];
+}
 static BOOL ValidSettings(id value) {
     if (![value isKindOfClass:NSDictionary.class]) return NO;
     for (id key in value) if (![key isKindOfClass:NSString.class] || !ValidOption(key, value[key])) return NO;
-    return YES;
+    return MappingText(value[@"buttonMappings"] ?: @{},value[@"mappingModes"] ?: @{})!=nil;
 }
 
 @implementation CanopySettings {
@@ -72,8 +120,9 @@ static BOOL ValidSettings(id value) {
 + (NSDictionary *)defaults {
     return @{@"fpsLimit":@60, @"renderHeight":@720, @"aspect":@"16:9", @"hud":@1,
         @"metalHUD":@NO, @"taa":@NO, @"touch":@YES, @"mouseSensitivity":@50,
-        @"mouseInvertY":@NO, @"mouseEnabled":@YES, @"controllerType":@"auto", @"language":@"", @"buttonMappings":@{}, @"keyboardBindings":@{}};
+        @"mouseInvertY":@NO, @"mouseEnabled":@YES, @"controllerType":@"auto", @"language":@"", @"buttonMappings":@{}, @"mappingModes":@{}, @"keyboardBindings":@{}};
 }
++ (NSString *)inputMappingTextWithTargets:(NSDictionary *)targets modes:(NSDictionary *)modes {return MappingText(targets,modes);}
 + (NSArray *)keyboardActions {
     NSMutableArray *actions = [NSMutableArray array];
     for (unsigned i = 0; i < MNG_KEY_ACTIONS; i++) [actions addObject:[NSString stringWithUTF8String:mng_keyboard_action_name(i)]];
@@ -182,8 +231,20 @@ static BOOL ValidSettings(id value) {
     NSData *snapshot = [NSJSONSerialization dataWithJSONObject:@[value] options:0 error:NULL];
     if (!snapshot) return SettingsError(error, @"Invalid setting value.");
     settings[key] = [NSJSONSerialization JSONObjectWithData:snapshot options:0 error:NULL][0];
+    if(!ValidSettings(settings))return SettingsError(error,@"The combined button target/mode map is invalid. No preference was changed.");
     row[@"settings"] = [settings copy]; titles[titleID] = [row copy];
     return [self writeTitles:titles error:error];
+}
+- (BOOL)setButtonMappings:(NSDictionary *)targets modes:(NSDictionary *)modes titleID:(NSString *)titleID error:(NSError **)error {
+    if(_recoveryRequired || ![CanopySettings isValidTitleID:titleID] || !MappingText(targets,modes))return SettingsError(error,@"The button target/mode combination is invalid. Nothing was changed.");
+    NSData *data=[NSJSONSerialization dataWithJSONObject:@[targets,modes] options:0 error:NULL];
+    NSArray *snapshot=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+    if(!snapshot)return SettingsError(error,@"The mapping could not be snapshotted.");
+    NSMutableDictionary *titles=[_titles mutableCopy];
+    NSMutableDictionary *row=[_titles[titleID] mutableCopy] ?: [@{@"displayName":titleID,@"settings":@{}} mutableCopy];
+    NSMutableDictionary *settings=[row[@"settings"] mutableCopy];settings[@"buttonMappings"]=snapshot[0];settings[@"mappingModes"]=snapshot[1];
+    if(!ValidSettings(settings))return SettingsError(error,@"The combined input options are invalid.");
+    row[@"settings"]=[settings copy];titles[titleID]=[row copy];return [self writeTitles:titles error:error];
 }
 - (BOOL)setDisplayName:(NSString *)name forTitleID:(NSString *)titleID error:(NSError **)error {
     if (_recoveryRequired || ![CanopySettings isValidTitleID:titleID] || !IsName(name)) return SettingsError(error, @"Invalid title name, or metadata needs explicit recovery.");

@@ -189,10 +189,7 @@ static NSDictionary *Applied(id value,NSString *message) {
     _rebuilding=NO;
 }
 - (BOOL)mapping:(struct mng_input_mapping *)mapping settings:(NSDictionary *)settings {
-    NSMutableString *text=[NSMutableString string];NSDictionary *bindings=settings[@"buttonMappings"];
-    if(![bindings isKindOfClass:NSDictionary.class])return NO;
-    for(NSString *key in [bindings.allKeys sortedArrayUsingSelector:@selector(compare:)])if(![bindings[key] isEqual:@"default"])[text appendFormat:@"%@ = %@\n",key,bindings[key]];
-    NSData *bytes=[text dataUsingEncoding:NSUTF8StringEncoding];return mng_input_mapping_parse(bytes.bytes,bytes.length,mapping,NULL)==MNG_INPUT_OK;
+    return [CanopyControllers compileInputMapping:mapping settings:settings error:NULL];
 }
 - (NSDictionary *)applySettings:(NSDictionary *)settings {
     NSAssert(NSThread.isMainThread,@"Frontend settings belong on main thread");
@@ -208,7 +205,7 @@ static NSDictionary *Applied(id value,NSString *message) {
     _settings=[settings copy];_touchEnabled=[settings[@"touch"] boolValue];_mouseEnabled=[settings[@"mouseEnabled"] boolValue];
     (void)mng_keyboard_set_bindings(&_keyboard,bindings);[self clearInput];_eligible=[self eligible];[self rebuildHardware];[self refreshGates];
     NSMutableDictionary *states=[NSMutableDictionary dictionary];
-    for(NSString *key in @[@"touch",@"mouseSensitivity",@"mouseInvertY",@"mouseEnabled",@"controllerType",@"buttonMappings",@"keyboardBindings"])
+    for(NSString *key in @[@"touch",@"mouseSensitivity",@"mouseInvertY",@"mouseEnabled",@"controllerType",@"buttonMappings",@"mappingModes",@"keyboardBindings"])
         states[key]=Applied(settings[key] ?: CanopySettings.defaults[key],@"Configured in this session's input frontend. Hardware availability and pointer-lock grant are checked for every event.");
     states[@"mouseEnabled"]=Applied(@(_mouseEnabled),_mouseEnabled ?
         @"Mouse input is enabled by this session's frontend policy. Motion and buttons still require active focus and an actual pointer-lock grant." :
