@@ -73,6 +73,23 @@ struct canopy_totk_host {
     struct canopy_totk_display display;
     struct canopy_totk_lifecycle lifecycle;
 };
+/* Additive data-bearing host wrapper. ABI3 byte layout and legacy accessor are
+ * unchanged. A present invalid v4 descriptor is a refusal, never a v3 fallback. */
+#define CANOPY_TOTK_HOST_V4_ABI 4u
+#define CANOPY_TOTK_GAME_DATA_ABI 1u
+struct canopy_totk_game_data {
+    uint32_t abi_version,size;
+    const char *manifest_sha256;
+    int (*prepare)(int resources_fd,int (*cancelled)(void *),void *cancel_context,void **out);
+    void (*release)(void *prepared); /* Pre-entry only. */
+    int (*install)(void *prepared); /* Main-only, no I/O; consumes lifetime. */
+};
+struct canopy_totk_host_v4 {
+    uint32_t abi_version,size;
+    const struct canopy_totk_host *legacy;
+    struct canopy_totk_game_data game_data;
+};
+const struct canopy_totk_host_v4 *totk_canopy_host_v4(void);
 /* SINGLE USE, process-owned. No safe stop/join/relaunch exists yet. Focus
  * deactivation pauses GPU submission; it does not promise CPU suspension. */
 const struct canopy_totk_host *totk_canopy_host_v1(void);

@@ -1,8 +1,10 @@
 # Canopy executable development backlog
 
-## Active continuation after #168
+## Reviewed source handoff through #170
 
-Full D0–D14 implementation continues; older handoff language below is historical.
+Full D0–D14 product acceptance remains open; source follow-ups through #170 are
+published. Bounded final caller/build-graph reviews found no further demonstrated
+authorized cloud source task. New Mac/format/SDK evidence can reopen source work.
 No tests/probes/builds/CI/new tests in this continuation. See state.md ownership.
 
 - [x] D13 slice: actual preparation I/O and native progress units connected to redacted
@@ -47,14 +49,15 @@ No tests/probes/builds/CI/new tests in this continuation. See state.md ownership
 - [x] D6/D9 source slice: existing Tap/Toggle/Aim mapping modes connected to
   per-title persistence/shared compiler/real UI, #167 / `7980f26`, independent
   artifact/root reviews; unbuilt/unrun, later controllers harness dependency debt.
-- [ ] ACTIVE D6/D9: bounded keyboard picker/conflict confirmation stale-intent
-  actual caller audit/fix, product author, Games.m keyboard UI only.
+- [x] D6/D9 source slice: keyboard picker/conflict confirmation intent, #169 /
+  `0895cfa`, independent artifact/root reviews; unbuilt/unrun.
 - [x] Upstream source slice: coherent vertex-input retyping + paired runtime/seed
   matchers and pipeline ABI, #168 / `3c3313e`, independent native/root critical
   reviews; unbuilt/unrun, Metal/format parity/Mac visuals/device gates open.
-- [ ] ACTIVE upstream runtime/game-data separation: coherent reader/generator/
-  package/additive ABI4 snapshot cohort, runtime author; storage/root critical
-  reviews pending, legacy ABI3/Mac/loader safeguards and trusted pins retained.
+- [x] Upstream runtime/game-data separation source slice, #170 / `8005afe`:
+  coherent reader/generator/package/additive ABI4 snapshots; independent
+  storage/root critical reviews and execution production-graph review. Legacy
+  ABI3/Mac/loader safeguards and trusted pins retained; unbuilt/unrun.
 - [ ] EXTERNAL VALIDATION: Apple/private-format/device and combined integration
   evidence; source completion does not close these gates.
 
@@ -88,6 +91,33 @@ recorded evidence, not executions performed for this reconciliation.
 
 Status vocabulary: TODO, ACTIVE(owner/files), REVIEW, DONE(source/check evidence),
 EXTERNAL(exact missing dependency/next step). Only real evidence changes status.
+
+### Current reconciliation of the broad implementation rows
+
+The original checkboxes below retain broad acceptance scope; they are not a
+queue of unassigned coding tasks. This table records the current supported-source
+state separately from missing validation/contracts. No product acceptance box
+is closed by source review.
+
+| Rows | Current source evidence | Remaining work category |
+|---|---|---|
+| C00/C04 | Versioned profile/preparation/store/job/session contracts and real registry/callers (#86/#87), exact update selection (#159), durable add-on identity/resume (#156) | Private supported-format/schema/migration validation; future unknown schemas are not invented |
+| C01–C03/C07–C10 | Native supported crypto/extraction/update composition, immutable generations, verified reuse and actual importer/store callers; later retirement/resume fixes #99/#100/#155/#156 | Existing suites, fault injection, private inputs/provider failures and resource/device evidence; no new execution authorized here |
+| C05/C17/C19 | Actual TOTK host/shared mapper and additive MK host (#163), lifecycle/input callers, pinned runtime-data v4 (#170) | Apple/private/signing/execution permission; exact full controller SDK and total-owner teardown contracts; no fabricated multiplayer or relaunch |
+| C06/C18 | Actual controlled translator/private link (#157), retry/Metal-ready consumer (#166), original vertex port (#168), leased cache management (#164) | Default seed-only; managed/static/link/parity/resource/Metal/compiler-safety and device validation remain open |
+| C11–C13/C16 | Prepared catalog/settings/overlay/input callers, mouse policy (#153), configurable mapping modes (#167), exact keyboard intent (#169), prior accessibility source | Current UIKit/private session/physical input and accessibility acceptance |
+| C14/C15/C26 | Per-title/profile SaveStore, account separation, seals/backup/recovery (#155), actual candidate preview/share in both tracks (#77/#85) | Exact1.4.3 integrity/checksum contract and physical load/recovery; active Apply stays disabled |
+| C20/C21 | Actual reuse/update/add-on/native cache paths, real progress/I/O/startup/add-on/cache diagnostics (#152/#156/#158/#160/#164/#165/#170) | Combined update/recovery validation and actual allocation/performance evidence; logical bytes are not physical savings |
+| C22 | Production source/header/data graphs reviewed through #170; exact old direct-harness dependency/setup debt documented | Later authorized existing harness updates, Apple/CI/artifact validation; no tests/probes/CI dispatched here |
+| C23 | Actual component callers are connected; no new end-to-end execution claimed | Validation debt: combined import→assets→library→settings/saves→native session/update/recovery, prohibited in this continuation |
+| C24/C25 | Independent critical reviews, concrete finding/fix/re-review records and final bounded source/caller/graph reconciliation through #170 | Validation can reveal new defects; this is not an assertion of whole-program safety |
+| C27 | Experimental restart control protocol exists, actual game request does not | External exact engine-owned Title/reload target/context contract; risk authorization does not supply missing addresses or a callable mechanism |
+
+Source finish evidence: final product, storage, native and shader/cache caller
+rechecks found no additional demonstrated gap; the final runtime-data graph
+review also found none. The narrower source handoff is complete within current
+contracts/authorization. E01–E04 and the validation/format/SDK gates above remain
+open. Older dated queue descriptions below are historical, not active workers.
 
 ## Foundation batch
 

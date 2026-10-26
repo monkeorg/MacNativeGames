@@ -1267,6 +1267,30 @@ def install_app(new, out, *, verify=None, remove=None):
     return kept
 
 
+GAME_DATA = ('runtime-tables.bin', 'romfs-config.txt', 'shared-fonts.txt', 'rewriter.txt')   # games/totk/runtime/game_data.h
+
+
+def game_data_files(version):
+    return GAME_DATA + (('aoc-config.txt',) if version.startswith('botw') else ())
+
+
+def place_game_data(tree, res, version):
+    """build/game-data/<version>: what the runtime reads from the player's files at start instead of having it compiled in
+    (module tables, RomFS / add-on content / font sizes and hashes; games/totk/runtime/game_data.h), at the same place in
+    the app. Optional seed aliases remain private packaging metadata."""
+    if version.startswith('botw'): return  # Existing compiled-header BOTW path is unchanged.
+    data, dst = tree / f'build/game-data/{version}', res / f'build/game-data/{version}'
+    missing = [name for name in game_data_files(version) if not (data / name).is_file()]
+    if missing:
+        raise BuildError(f'{data}: {", ".join(missing)} missing (games/totk/Makefile game-data-{version})')
+    for name in game_data_files(version):
+        clone(data / name, dst / name)
+    aliases = tree / f'build/shader-seed/{version}.aliases.tsv'   # listed variants the seed carries under another name
+    if aliases.is_file():
+        clone(aliases, dst / 'shader-seed.aliases.tsv')
+
+
+
 def step_app(tree, out, logs, *, version="v0", game='totk'):
     expected = VERSIONS[version]
     app_name, bundle_id, executable = APPS[game]
@@ -1275,6 +1299,7 @@ def step_app(tree, out, logs, *, version="v0", game='totk'):
         remove_tree(tmp)
     res = tmp / 'Contents/Resources/totk'   # the launcher's game folder, for both games (app/launcher.m)
     clone(tree / ('build/totk-native' if version == 'v0' else f'build/totk-native-{version}'), res/'build/totk-native')
+    place_game_data(tree,res,version)
     files = ['build/spirv-cross/spirv-cross', f'rewritten/{version}/main.patched.bin', f'rewritten/{version}/sdk.patched.bin',
              f'rewritten/{version}/subsdk0.patched.bin', f'extracted/{version}/romfs/runtime-index.bin']   # romfs.bin: data_bundle
     files += ['build/pso_manifest.tsv', 'build/pso_title.tsv']   # exported from the game's shared shader list (games/totk/Makefile)

@@ -30,6 +30,11 @@
 #if !defined(CANOPY_HOST_RUNTIME)
 __attribute__((weak,noinline)) const struct canopy_totk_host *totk_canopy_host_v1(void) {return NULL;}
 #endif
+#if !defined(CANOPY_GAME_DATA_RESOURCES)
+/* Optional for public AND legacy ABI3 private hosts; new data-resource builds
+ * require the actual strong v4 accessor at link time. */
+__attribute__((weak,noinline)) const struct canopy_totk_host_v4 *totk_canopy_host_v4(void) {return NULL;}
+#endif
 
 static NSError *CRError(NSInteger code,NSString *message) {
     return [NSError errorWithDomain:@"CanopyRuntime" code:code userInfo:@{NSLocalizedDescriptionKey:message}];
@@ -89,7 +94,12 @@ static BOOL CRDisplaySame(const struct mng_display_config *a,const struct mng_di
         a->experimental==b->experimental && a->fixed_resolution==b->fixed_resolution;
 }
 static const struct canopy_totk_host *CRHost(void) {
-    const struct canopy_totk_host *h=totk_canopy_host_v1();
+    const struct canopy_totk_host *legacy=totk_canopy_host_v1();
+    const struct canopy_totk_host_v4 *v4=totk_canopy_host_v4();
+    if(v4&&(v4->abi_version!=CANOPY_TOTK_HOST_V4_ABI||v4->size!=sizeof(*v4)||v4->legacy!=legacy||
+        v4->game_data.abi_version!=CANOPY_TOTK_GAME_DATA_ABI||v4->game_data.size!=sizeof(v4->game_data)||
+        !CRHex(CRString(v4->game_data.manifest_sha256),64)||!v4->game_data.prepare||!v4->game_data.release||!v4->game_data.install))return NULL;
+    const struct canopy_totk_host *h=v4?v4->legacy:legacy;
     if(!h || h->abi_version!=CANOPY_TOTK_HOST_ABI || h->size!=sizeof(*h) || !h->title_id ||
        !CRHex(CRString(h->original_main_sha256),64) || !CRHex(CRString(h->romfs_sha256),64) ||
        !CRHex(CRString(h->runtime_index_sha256),64) || !CRHex(CRString(h->shader_seed_manifest_sha256),64) ||
@@ -343,6 +353,8 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     NSDictionary *_settingStates,*_startupSettings;
     CanopyShaderCacheLease *_shaderLease;
     const struct canopy_totk_host *_host;
+    const struct canopy_totk_host_v4 *_hostV4;
+    void *_gameData;
     int _lease;
     BOOL _nativeEntryInvoked;
     _Atomic int _preflightCancelled;
@@ -438,7 +450,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     if(!savePath || !identityPath || strnlen(savePath,1024)>=1024 || strnlen(identityPath,1024)>=1024) {
         if(error)*error=CRError(4,@"Native save or identity path exceeds the host limit.");return NO;
     }
-    _host=CRHost();_titleID=[titleID copy];_state=@"preparing";
+    _host=CRHost();_hostV4=totk_canopy_host_v4();_titleID=[titleID copy];_state=@"preparing";
     NSMutableDictionary *startup=[settings mutableCopy];
     if(!startup[@"renderHeight"])startup[@"renderHeight"]=@720;if(!startup[@"aspect"])startup[@"aspect"]=@"16:9";
     _startupSettings=[[NSDictionary alloc] initWithDictionary:startup copyItems:YES];atomic_store(&_preflightCancelled,0);
@@ -471,6 +483,11 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         if(valid) {
             preflightFailure=@"The RomFS image does not match the approved native profile.";
             valid=verified.romfs.present==1 && [CRDigest(verified.romfs.sha256) isEqual:CRString(self->_host->romfs_sha256)];
+        }
+        void *gameData=NULL;
+        if(valid&&self->_hostV4){
+            preflightFailure=@"The pinned private runtime tables or configuration could not be verified.";
+            valid=self->_hostV4->game_data.prepare(resources,CRCancelled,&self->_preflightCancelled,&gameData)==0&&gameData;
         }
         if(valid && self->_host->display.profile.flags) {
             preflightFailure=@"Compiled native display overlays do not match their pinned resources or source RomFS.";
@@ -515,10 +532,10 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         if(saveFD>=0)close(saveFD);if(identityFD>=0)close(identityFD);if(cacheFD>=0)close(cacheFD);
         if(gen>=0)close(gen);if(exefs>=0)close(exefs);if(resources>=0)close(resources);
         dispatch_async(dispatch_get_main_queue(),^{
-            if(!valid || atomic_load(&self->_preflightCancelled)){if(lease>=0)close(lease);self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
+            if(!valid || atomic_load(&self->_preflightCancelled)){if(gameData)self->_hostV4->game_data.release(gameData);if(lease>=0)close(lease);self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
                 completion(NO,atomic_load(&self->_preflightCancelled)?CRError(7,@"Native startup preparation cancelled."):
                     deviceUnavailable?CRError(3,@"No native Metal device is available."):CRError(4,preflightFailure));return;}
-            self->_lease=lease;
+            self->_gameData=gameData;self->_lease=lease;
             self->_shaderLease=shaderLease;
             NSDictionary *desired=self->_startupSettings;
             NSString *language=[desired[@"language"] isKindOfClass:NSString.class]?desired[@"language"]:@"";
@@ -526,15 +543,18 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
             if(![@[@30,@40,@60] containsObject:desired[@"fpsLimit"]] || !self->_host->fps_supported(fps) ||
                (taa && !self->_host->taa_supported()) || ![@[@0,@1,@2] containsObject:desired[@"hud"]] ||
                ![@[@"",@"zh-Hant",@"zh-Hans",@"en-US",@"ja",@"de",@"es",@"fr",@"it",@"nl",@"ru",@"ko"] containsObject:language]) {
+                if(self->_gameData){self->_hostV4->game_data.release(self->_gameData);self->_gameData=NULL;}
                 close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
                 completion(NO,CRError(4,@"Requested startup settings are unsupported by the native host."));return;
             }
             if(metalLayer.device!=selectedDevice) {
+                if(self->_gameData){self->_hostV4->game_data.release(self->_gameData);self->_gameData=NULL;}
                 close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
                 completion(NO,CRError(4,@"The native graphics device changed during preparation. Retry startup."));return;
             }
             CGSize currentViewSize;struct mng_display_resolution selected={0};
             if(!CRViewSize(view,&currentViewSize) || !CRDisplayResolve(self->_host,desired,currentViewSize,&selected)) {
+                if(self->_gameData){self->_hostV4->game_data.release(self->_gameData);self->_gameData=NULL;}
                 close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
                 completion(NO,CRError(4,@"The native game view bounds are unavailable. Retry startup."));return;
             }
@@ -547,7 +567,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
                 language.UTF8String,fps,taa,hud,
                 (__bridge void *)surface,(__bridge void *)view,(__bridge void *)selectedDevice,selected.config};
             self->_nativeEntryInvoked=YES;self->_state=@"starting";
-            if(self->_host->start(&start)){[self captureFailedWorker];completion(NO,CRError(5,@"Native startup failed; this single-use process cannot safely relaunch."));return;}
+            if((self->_hostV4&&self->_hostV4->game_data.install(self->_gameData))||self->_host->start(&start)){[self captureFailedWorker];completion(NO,CRError(5,@"Native startup failed; this single-use process cannot safely relaunch."));return;}
             NSError *lifecycleError=nil;
             if(![self observeMainWorker:&lifecycleError]) {completion(NO,lifecycleError);return;}
             NSString *validation=[self displayValidation];
@@ -737,5 +757,5 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     if(!_nativeEntryInvoked && [_state isEqual:@"idle"])return YES;
     if(error)*error=CRError(6,@"Safe native thread teardown is unavailable. Keep this session sealed until the application exits.");return NO;
 }
-- (void)dealloc {if(!_nativeEntryInvoked && _lease>=0)close(_lease);}
+- (void)dealloc {if(!_nativeEntryInvoked){if(_gameData)_hostV4->game_data.release(_gameData);if(_lease>=0)close(_lease);}}
 @end

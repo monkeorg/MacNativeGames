@@ -6,7 +6,7 @@ root=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--version', choices=('v0','v112','v121','v143','botw160','botw190'), default='v0')
 parser.add_argument('--aoc', action='store_true', help='Breath of the Wild: the add-on content volumes extracted/<version>/aoc/<index> -> aoc_config.h')
 args=parser.parse_args();version=args.version
-out=root/('build' if version=='v0' else f'build/{version}');out.mkdir(parents=True,exist_ok=True)
+out=root/(f'build/{version}' if version.startswith('botw') else f'build/game-data/{version}');out.mkdir(parents=True,exist_ok=True)
 if args.aoc:
     # One volume per add-on content index (games/botw/scripts/extract_aoc_romfs.py); a missing index has size 0 and is not listed.
     lines=[];present=[]
@@ -31,5 +31,8 @@ for item in manifest['files']:
     name=item['path'].encode()+b'\0';rows.extend(struct.pack('<QQII',item['offset'],item['size'],len(strings),len(name)));strings.extend(name)
 index=struct.pack('<8sQQ',b'TOTKRFS1',len(manifest['files']),24+len(rows))+rows+strings
 (folder/'runtime-index.bin').write_bytes(index)
-(out/'romfs_config.h').write_text(f'#define ROMFS_IMAGE_SIZE {manifest["romfs_size"]}ULL\n#define ROMFS_IMAGE_SHA256 "{manifest["romfs_sha256"]}"\n#define ROMFS_INDEX_SHA256 "{hashlib.sha256(index).hexdigest()}"\n')
+if version.startswith('botw'):
+    (out/'romfs_config.h').write_text(f'#define ROMFS_IMAGE_SIZE {manifest["romfs_size"]}ULL\n#define ROMFS_IMAGE_SHA256 "{manifest["romfs_sha256"]}"\n#define ROMFS_INDEX_SHA256 "{hashlib.sha256(index).hexdigest()}"\n')
+else:
+    (out/'romfs-config.txt').write_text(f'ROMFS_IMAGE_SIZE {manifest["romfs_size"]}\nROMFS_IMAGE_SHA256 {manifest["romfs_sha256"]}\nROMFS_INDEX_SHA256 {hashlib.sha256(index).hexdigest()}\n')
 print(json.dumps({'files':len(manifest['files']),'index_bytes':len(index)}))

@@ -15,9 +15,11 @@ exact revisions, jobs, source ownership and integration status, and
 No complete-product, arbitrary-game compatibility or physical gameplay claim is
 made. A source feature or fixture is not a checked product acceptance box.
 
-Current published source is [#168](https://github.com/monkeorg/MacNativeGames/pull/168),
-`feat/totk-upstream-vertex-input-types` at
-`3c3313e08138982a2b831a52debec06411514944`. Full-roadmap development continues.
+Current published source is [#170](https://github.com/monkeorg/MacNativeGames/pull/170),
+`feat/canopy-pinned-runtime-data` at
+`8005afed3adb7a06aa8f887fd3d90256bfaa1c27`. The full product goal remains open;
+bounded source/caller/graph reviews found no further demonstrated authorized
+cloud implementation task. New local/format/SDK evidence can reopen source work.
 Independent source reviews cover preparation diagnostics (#152), mouse policy
 (#153), terminal audio (#154), backup retirement recovery (#155), durable add-on
 resume (#156), controlled private shader link (#157), startup failures (#158),
@@ -25,12 +27,13 @@ exact revision selection (#159), add-on diagnostics (#160), compiled player
 admission (#161), iOS pacing ceiling (#162), separate original-source MK host
 (#163), actual leased MK/RomFS cache management (#164) and closed cache aggregates
 (#165), bounded shader retries (#166), input mapping modes (#167) and coherent
-upstream vertex-format retyping (#168). Every new slice is **unbuilt and untested**; no tests/probes/builds/CI were
+upstream vertex-format retyping (#168), keyboard selection intent (#169) and
+pinned runtime-data separation (#170). Every new slice is **unbuilt and untested**; no tests/probes/builds/CI were
 run in this continuation. Issue comments retain commit-specific evidence. Public
 provider absence, private signing/execution permission, exact save integrity,
 full controller contracts, actual Metal/multiplayer and physical acceptance
-remain open. Source work on keyboard-dialog intent and coherent upstream
-runtime/game-data separation is active; no complete-product acceptance is claimed.
+remain open. The reviewed cloud source is handed off; no complete-product
+acceptance is claimed.
 
 The earlier finite compiler handoff was [#150](https://github.com/monkeorg/MacNativeGames/pull/150),
 `feat/canopy-shader-specialization-composite-bounds` at

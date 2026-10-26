@@ -1,16 +1,22 @@
 # Canopy · development update
 
-**FOSS native launcher · cloud development active · local validation outstanding**
+**FOSS native launcher · reviewed cloud source handoff · local validation outstanding**
 
-Current published source: [#168 / `3c3313e`](https://github.com/monkeorg/MacNativeGames/pull/168),
-`feat/totk-upstream-vertex-input-types`,
-`3c3313e08138982a2b831a52debec06411514944`.
-Published source is source-reviewed but **unbuilt and untested**; additional
-in-flight implementation is not yet fully reviewed. This cloud pass ran no
+Next local run: [short iPad checklist](canopy-ipad-smoke-checklist.md) ·
+[ordered Mac/build handoff](canopy-mac-ipad-checklist.md).
+
+Current published source: [#170 / `8005afe`](https://github.com/monkeorg/MacNativeGames/pull/170),
+`feat/canopy-pinned-runtime-data`,
+`8005afed3adb7a06aa8f887fd3d90256bfaa1c27`.
+Published source is source-reviewed but **unbuilt and untested**. Final bounded
+caller/build-graph reviews found no further demonstrated authorized cloud source
+task. New local evidence can reveal additional work. This cloud pass ran no
 new tests, probes, compilers or builds and performed no installs, merges or releases.
 
 | Recent change | Published source | Acceptance |
 |---|---|---|
+| Runtime metadata | Coherent original upstream data separation, pinned owned snapshots and additive v4 host wrapper; legacy ABI3 retained (#170 / `8005afe`) | Two independent critical source reviews plus production-graph review; private data formats/Apple/resource/device behavior unverified; not an execution-permission solution |
+| Keyboard dialogs | Exact picker/confirmation ownership and consumed scene-bound intent preserve conflict checks (#169 / `0895cfa`) | Two source reviews; UIKit/physical keyboard behavior unverified |
 | Vertex input types | Coherent original upstream format retyping, paired runtime/seed matching and pipeline ABI invalidation (#168 / `3c3313e`) | Two independent critical source reviews; actual Metal/format parity/Mac visuals/device behavior unverified; no shader payload imported |
 | Input modes | Existing Hold/Tap/Toggle/Aim-fire modes connected to validated per-title settings, actual UI and shared compiler (#167 / `7980f26`) | Two source reviews; defaults preserved; physical timing and UIKit unverified |
 | Shader retry bounds | Full-request/epoch admission and immutable checked-Metal reuse after failed publication (#166 / `faa504b`) | Two critical source reviews; no measured performance/hard-heap/parity/Metal acceptance; default seed-only |
@@ -49,11 +55,10 @@ acceptance remain explicit gates.
 The table below includes the app-source snapshot through #100 plus the later
 corrections above. None inherits old green CI as proof of current behavior.
 
-Active source work continues across the full roadmap: the coherent upstream
-runtime/game-data separation and bounded keyboard-dialog intent correction.
-These are
-in-flight implementations, not completed features. Pinned public original MIT
-MK host/HLE source now provides a concrete reuse path; metadata is not execution
+The supported source follow-ups above are published with their independent
+reviews. The full product remains incomplete at the named external contracts and
+local validation gates. Pinned public original MIT MK host/HLE source provides
+a concrete reuse path; metadata is not execution
 authority, and private version pins, Apple builds and multiplayer acceptance
 remain open. Nintendo-derived code/assets/shaders are never public inputs.
 

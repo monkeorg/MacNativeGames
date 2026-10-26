@@ -21,9 +21,9 @@ split is clarity cleanup, not a reproduced compiler failure; #77 compiled the ol
 form successfully. No new tests/probes run under this `/goal`; the steps below
 are the later authorized local handoff. A locked-iPad run executed no new-build checks.
 
-**Current published source starting point:** the dependent chain through #168,
-`feat/totk-upstream-vertex-input-types` /
-`3c3313e08138982a2b831a52debec06411514944`,
+**Current published source starting point:** the dependent chain through #170,
+`feat/canopy-pinned-runtime-data` /
+`8005afed3adb7a06aa8f887fd3d90256bfaa1c27`,
 includes the friendly library/session title fixes (#110/#119), storage UI intent
 correction (#120), save UI intent correction (#122) and compiler source through
 #150, plus preparation diagnostics (#152), per-title mouse policy (#153) and
@@ -33,9 +33,11 @@ startup failure diagnostics (#158), exact update selection (#159), add-on
 diagnostics (#160), compiled player admission (#161), iOS pacing ceiling (#162),
 separate private MK host (#163) and provider cache management/diagnostics
 (#164/#165), bounded shader retries (#166), input modes (#167) and upstream
-vertex-format retyping (#168).
+vertex-format retyping (#168), keyboard selection intent (#169) and coherent
+pinned runtime-data separation (#170).
 Inspect the actual recovery cursor and
-status before checkout; full-roadmap source work continues. No later source
+status before checkout; bounded cloud source reviews found no further concrete
+authorized source task. New local evidence can reopen implementation. No later source
 inherits earlier green CI. The overall product acceptance remains open.
 Both lifecycle corrections have two independent source reviews and no execution.
 
@@ -121,6 +123,19 @@ For #168, exercise pure integer, float/normalized/conversion and unbound vertex
 formats across live/warm/border/replay paths; missing MSL/declaration must refuse.
 Check old pipeline archive invalidation and newly pinned seed output separately,
 then compare Mac and iPad visuals. No Metal/format parity checks ran here.
+For #169, hold a key reassignment confirmation across app/scene/navigation
+changes, Cancel, retry and duplicate callbacks; only the current exact picker/
+dialog may save, with the current conflict list still matching.
+For #170, review [the runtime-data contract](canopy-runtime-data.md), then update
+existing direct harness/CLI setup for the new data folder and v4 branch. Retain
+legacy ABI3 coverage and add the existing native reader dependency where the
+new branch is selected. Validate real private table sizes/counts, supported gate
+kinds0/1, cancellation, malformed/overflow/unknown metadata refusal and exact
+compiled manifest/profile pins. Exercise failed table/provenance publication and
+outdated-record regeneration. Compare original Mac, original iOS and private
+Canopy packaging separately; verify the exact same owned snapshot bytes reach
+consumers and survive native failure. No metadata separation proves permitted
+execution of private modules absent from the public signed executable.
 
 | Order | Mac / iPad action | Evidence to retain locally |
 |---|---|---|
