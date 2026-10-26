@@ -1,6 +1,6 @@
 # Canopy executable development backlog
 
-## Active continuation after #159
+## Active continuation after #168
 
 Full D0–D14 implementation continues; older handoff language below is historical.
 No tests/probes/builds/CI/new tests in this continuation. See state.md ownership.
@@ -21,15 +21,40 @@ No tests/probes/builds/CI/new tests in this continuation. See state.md ownership
 - [x] D7 slice: interrupted backup deletion retirement/recovery, independent
   execution/root source reviews, #155 / `2f5d3ba`; unbuilt/unrun. Wider D7
   format/physical acceptance remains open.
-- [ ] ACTIVE D11: pinned original MK8DX native host integration, independent seats,
-  controller-support semantics and real private-build/runtime caller.
+- [x] D11 source slice: pinned original MK8DX native host integration, independent
+  seats, bounded controller-support semantics and real private-build/runtime
+  caller, #163 / `7186908`; independent native/root and final artifact/root
+  reviews. Private/Apple/full SDK/gameplay/multiplayer acceptance remains open.
 - [x] D4 slice: exact/latest revision through existing native API and actual
   scene/owned-modal UI, #159 / `9687115`, artifact/root reviews; unbuilt/unrun.
 - [x] D13 startup-failure slice: actual closed failure error survives idle runtime,
   #158 / `1842a79`, independent execution/root reviews; unbuilt/unrun.
-- [ ] ACTIVE D13: actual add-on preparation phase/I/O/publication diagnostics.
-- [ ] ACTIVE D11/D12: reuse existing RomFS materializer through worker-callable
-  lifetime lease bridge; actual Games player gate and MK cache management queued.
+- [x] D13 add-on slice: actual phase/I/O/outcome history and manual snapshot/export,
+  #160 / `2d13c10`, execution/root reviews; unbuilt/unrun.
+- [x] D9 caller slice: actual compiled player ceiling at Play, #161 / `9d3b021`,
+  execution/root reviews; TOTK stays one player, no multiplayer acceptance.
+- [x] D13 source slice: actual provider-cache listed/active/known unverified logical
+  byte counters through existing closed diagnostics/export, #165 / `0e9d1d7`,
+  independent execution/root reviews; unbuilt/unrun.
+- [x] D11/D12 source slice: existing RomFS worker-callable lifetime lease bridge
+  (#163), actual MK/RomFS cache management (#164 / `1bc153b`); independent
+  artifact/root critical journal/producer interlock reviews; unbuilt/unrun.
+- [x] TOTK upstream source pacing ceiling, #162 / `4391b27`, root review;
+  no measured performance/FPS/device evidence.
+- [x] D10 source slice: bounded immutable Metal-ready reuse and retry admission,
+  #166 / `faa504b`; native author, independent execution/root critical reviews;
+  unbuilt/unrun, no measured performance/hard-heap claim, default seed-only.
+- [x] D6/D9 source slice: existing Tap/Toggle/Aim mapping modes connected to
+  per-title persistence/shared compiler/real UI, #167 / `7980f26`, independent
+  artifact/root reviews; unbuilt/unrun, later controllers harness dependency debt.
+- [ ] ACTIVE D6/D9: bounded keyboard picker/conflict confirmation stale-intent
+  actual caller audit/fix, product author, Games.m keyboard UI only.
+- [x] Upstream source slice: coherent vertex-input retyping + paired runtime/seed
+  matchers and pipeline ABI, #168 / `3c3313e`, independent native/root critical
+  reviews; unbuilt/unrun, Metal/format parity/Mac visuals/device gates open.
+- [ ] ACTIVE upstream runtime/game-data separation: coherent reader/generator/
+  package/additive ABI4 snapshot cohort, runtime author; storage/root critical
+  reviews pending, legacy ABI3/Mac/loader safeguards and trusted pins retained.
 - [ ] EXTERNAL VALIDATION: Apple/private-format/device and combined integration
   evidence; source completion does not close these gates.
 
