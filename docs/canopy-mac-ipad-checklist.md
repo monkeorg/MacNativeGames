@@ -1,5 +1,7 @@
 # Canopy · ordered Mac and iPad handoff
 
+**Local validation update — 2026-10-26:** the isolated #170 validation and repairs are recorded in [the current evidence](canopy-local-validation.md). The final source suite passes 978 run / 969 passed / 9 skipped; public, original-iPad and private v143 stock/display builds pass. No installation or physical acceptance ran. The historical evidence below remains attributed to its original revisions.
+
 **Pending local acceptance, not completed results.** Newest fully green baseline
 [#77 / `976d856`](https://github.com/monkeorg/MacNativeGames/commit/976d8561ce9839dcf3da86221fa7c1c321bd87fd): recorded Canopy 524 run/517 passed/7 skipped
 (71.610s), Source 940 run/931 passed/9 skipped (231.342s), unsigned SDK 26.2 app
