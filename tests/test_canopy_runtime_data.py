@@ -49,9 +49,9 @@ def original_data(root, version='v121'):
     profile = {'romfs': {'size': 17, 'sha256': sha(b'original RomFS')}, 'shared_fonts_sha256': {}}
     fonts = []
     for i in range(6):
-        name = f'original-{i}.bfttf'; digest = sha(name.encode())
+        name = f'original-{i}'; digest = sha(name.encode())
         profile['shared_fonts_sha256'][name] = digest
-        fonts += [f'FONT{i}_FILE {name}', f'FONT{i}_FILE_BYTES 9',
+        fonts += [f'FONT{i}_FILE {i}-{name}.bfttf', f'FONT{i}_FILE_BYTES 9',
                   f'FONT{i}_FONT_BYTES 1', f'FONT{i}_SHA256 {digest}']
     payloads = (original_tables(version),
         (f'ROMFS_IMAGE_SIZE 17\nROMFS_IMAGE_SHA256 {profile["romfs"]["sha256"]}\n'
@@ -84,11 +84,14 @@ class RuntimeDataRecipeTests(unittest.TestCase):
                 self.assertEqual({name: (source / name).read_bytes() for name in FILES}, before)
 
     def test_staging_refuses_unexpected_output_and_config_identity_changes(self):
-        for fault in ('extra', 'romfs', 'index', 'font', 'rewriter', 'duplicate', 'symlink'):
+        for fault in ('extra', 'romfs', 'index', 'font', 'font-basename', 'rewriter', 'duplicate', 'symlink'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary).resolve(); source, profile = original_data(root)
                 if fault == 'extra': (source / 'unexpected').write_bytes(b'original')
                 elif fault == 'index': (root / 'extracted/v121/romfs/runtime-index.bin').write_bytes(b'changed')
+                elif fault == 'font-basename':
+                    target = source / FILES[2]
+                    target.write_bytes(target.read_bytes().replace(b'0-original-0.bfttf', b'original-0'))
                 elif fault == 'symlink':
                     target = source / FILES[0]; data = target.read_bytes(); target.unlink()
                     outside = root / 'outside'; outside.write_bytes(data); target.symlink_to(outside)
@@ -171,6 +174,22 @@ class RuntimeDataReaderTests(unittest.TestCase):
     def test_both_versions_use_owned_snapshots_after_source_removal(self):
         for version in self.probes:
             self.assertEqual(self.run_reader(version=version), 'accepted owned-snapshot gates-0-1\n')
+
+    def test_zero_size_end_marker_is_metadata_but_cannot_extend_beyond_image(self):
+        def boundary(value, size, symbol_type=0):
+            def fault(directory):
+                path = directory / FILES[0]; data = bytearray(path.read_bytes())
+                struct.pack_into('<QQ', data, 688, value, size)
+                data[688 + 22] = symbol_type
+                path.write_bytes(data)
+            return fault
+        for version in self.probes:
+            with self.subTest(version=version):
+                self.assertEqual(self.run_reader(boundary(0x4000, 0), version), 'accepted owned-snapshot gates-0-1\n')
+                for value, size in ((0x4000, 1), (0x4001, 0), ((1 << 64)-1, 0)):
+                    with self.subTest(value=value, size=size):
+                        self.assertTrue(self.run_reader(boundary(value, size), version).startswith('refused '))
+                self.assertTrue(self.run_reader(boundary(0x4000, 0, 2), version).startswith('refused '))
 
     def test_cancellation_during_read_hash_and_metadata_parse_refuses(self):
         for stop in (1, 3, 7, 12, 20, 30):
