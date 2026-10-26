@@ -15,7 +15,24 @@ exact revisions, jobs, source ownership and integration status, and
 No complete-product, arbitrary-game compatibility or physical gameplay claim is
 made. A source feature or fixture is not a checked product acceptance box.
 
-Current source handoff is [#150](https://github.com/monkeorg/MacNativeGames/pull/150),
+Current published source is [#168](https://github.com/monkeorg/MacNativeGames/pull/168),
+`feat/totk-upstream-vertex-input-types` at
+`3c3313e08138982a2b831a52debec06411514944`. Full-roadmap development continues.
+Independent source reviews cover preparation diagnostics (#152), mouse policy
+(#153), terminal audio (#154), backup retirement recovery (#155), durable add-on
+resume (#156), controlled private shader link (#157), startup failures (#158),
+exact revision selection (#159), add-on diagnostics (#160), compiled player
+admission (#161), iOS pacing ceiling (#162), separate original-source MK host
+(#163), actual leased MK/RomFS cache management (#164) and closed cache aggregates
+(#165), bounded shader retries (#166), input mapping modes (#167) and coherent
+upstream vertex-format retyping (#168). Every new slice is **unbuilt and untested**; no tests/probes/builds/CI were
+run in this continuation. Issue comments retain commit-specific evidence. Public
+provider absence, private signing/execution permission, exact save integrity,
+full controller contracts, actual Metal/multiplayer and physical acceptance
+remain open. Source work on keyboard-dialog intent and coherent upstream
+runtime/game-data separation is active; no complete-product acceptance is claimed.
+
+The earlier finite compiler handoff was [#150](https://github.com/monkeorg/MacNativeGames/pull/150),
 `feat/canopy-shader-specialization-composite-bounds` at
 `6f166e738a4748dde8e0a844a3b1acc327c3ddd5`. Later app corrections preserve
 friendly names (#110/#119), expire storage UI intent (#120) and expire save

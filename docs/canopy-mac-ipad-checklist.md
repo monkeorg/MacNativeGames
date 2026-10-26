@@ -21,15 +21,19 @@ split is clarity cleanup, not a reproduced compiler failure; #77 compiled the ol
 form successfully. No new tests/probes run under this `/goal`; the steps below
 are the later authorized local handoff. A locked-iPad run executed no new-build checks.
 
-**Current published source starting point:** the dependent chain through #159,
-`feat/canopy-exact-update-revision` /
-`96871151c4f690936088d44106acdab5cfdc5e7e`,
+**Current published source starting point:** the dependent chain through #168,
+`feat/totk-upstream-vertex-input-types` /
+`3c3313e08138982a2b831a52debec06411514944`,
 includes the friendly library/session title fixes (#110/#119), storage UI intent
 correction (#120), save UI intent correction (#122) and compiler source through
 #150, plus preparation diagnostics (#152), per-title mouse policy (#153) and
 terminal audio output suspension (#154), backup deletion recovery (#155),
 durable add-on resume (#156), guarded private shader link (#157) and actual
-startup failure diagnostics (#158) and exact update selection (#159).
+startup failure diagnostics (#158), exact update selection (#159), add-on
+diagnostics (#160), compiled player admission (#161), iOS pacing ceiling (#162),
+separate private MK host (#163) and provider cache management/diagnostics
+(#164/#165), bounded shader retries (#166), input modes (#167) and upstream
+vertex-format retyping (#168).
 Inspect the actual recovery cursor and
 status before checkout; full-roadmap source work continues. No later source
 inherits earlier green CI. The overall product acceptance remains open.
@@ -69,6 +73,54 @@ publication uncertainty; deactivate only the owning iPad scene while the app
 stays active, then return. No stale selection may resume. Cancel/foreign-modal/
 UIKit auto-dismiss must preserve exact ownership; app-background cancellation
 and native completion remain authoritative. These checks have not run here.
+
+For #160/#165, opt in explicitly and inspect actual add-on phases/I/O/errors and
+Storage provider-cache aggregates. Active/unknown usage must remain unavailable;
+known inactive zero must remain zero. Export only closed redacted fields.
+For #162, compare the requested display-link rate and actual device cadence on
+both 60-Hz and ProMotion hardware; a ceiling is not measured gameplay FPS.
+
+Before later authorized Mac validation, update existing direct-link harness
+source lists: Runtime requires RuntimeRegistry.m; shader/runtime cache consumers
+require CacheFS.m, and Storage requires CacheFS.m plus ProviderCache.m. Production
+build inventory already includes these sources/headers. No harness was edited or
+run here, and its older compile list is not current build evidence.
+The #167 mapping compiler also adds existing Settings.m and mng_keyboard.c
+to the future controllers harness's direct-link dependencies; production already
+links both. Record `7980f26` or its reviewed successor before updating that recipe.
+
+For #163, retain original TOTK as the first private baseline, then build the
+separate MK source recipe using retained original source and explicit trusted
+full-byte module/RomFS/seed/dependency pins. Never use public build IDs as full
+hash authority. Check real native entry, account UID stability, existing saves,
+four separate FullKey seats/disconnect/capture, original keyboard/save warnings,
+startup language and owned-scene deactivate/reactivate with explicit Resume.
+Positive1..4 controller support is the implemented subset; unsupported/min0
+requests refuse. Full single-mode/cancellation contracts are not implemented or
+verified by this bounded adapter. Do not release save seals,
+leases or process ownership after native entry, or attempt another launch.
+
+For #164, start with invented local cache fixtures: interrupt each retirement
+phase and retry failed sync outcomes. Active leases, changed/linked/unknown/
+corrupt entries and pending journals must refuse producer reuse/removal. A
+recreated canonical RomFS folder and its sidecar must survive recovery. Only
+after source/build/fixture checks use real private caches. Keep saves and account
+identity inventories outside cache targets. No such checks ran in this cloud.
+
+For #166, use the later authorized synthetic provider/Metal checks to exercise
+failed index publication, focus cancellation, stale tickets, busy/quota outcomes,
+same/alternating bindings, exhaustion and actual async consumption. Confirm
+three actual ABI attempts per request/epoch,256 outstanding failure records and
+64 reserved pending checked libraries; these are policy limits, not hard heap
+isolation. Verify Mac/unlinked seed-only behavior separately and leave default
+translation off pending its existing parity/resource/Apple/device gates.
+For #167, check per-title legacy/default mouse Aim and custom Hold persistence,
+Tap400ms/Toggle timing, same-device Aim/fire, None/reset, held-input remapping and
+scene/navigation/Cancel/duplicate-action refusal in both mapping phases.
+For #168, exercise pure integer, float/normalized/conversion and unbound vertex
+formats across live/warm/border/replay paths; missing MSL/declaration must refuse.
+Check old pipeline archive invalidation and newly pinned seed output separately,
+then compare Mac and iPad visuals. No Metal/format parity checks ran here.
 
 | Order | Mac / iPad action | Evidence to retain locally |
 |---|---|---|

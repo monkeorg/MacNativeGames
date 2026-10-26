@@ -2,15 +2,24 @@
 
 **FOSS native launcher · cloud development active · local validation outstanding**
 
-Current published source: [#159 / `9687115`](https://github.com/monkeorg/MacNativeGames/pull/159),
-`feat/canopy-exact-update-revision`,
-`96871151c4f690936088d44106acdab5cfdc5e7e`.
+Current published source: [#168 / `3c3313e`](https://github.com/monkeorg/MacNativeGames/pull/168),
+`feat/totk-upstream-vertex-input-types`,
+`3c3313e08138982a2b831a52debec06411514944`.
 Published source is source-reviewed but **unbuilt and untested**; additional
 in-flight implementation is not yet fully reviewed. This cloud pass ran no
 new tests, probes, compilers or builds and performed no installs, merges or releases.
 
 | Recent change | Published source | Acceptance |
 |---|---|---|
+| Vertex input types | Coherent original upstream format retyping, paired runtime/seed matching and pipeline ABI invalidation (#168 / `3c3313e`) | Two independent critical source reviews; actual Metal/format parity/Mac visuals/device behavior unverified; no shader payload imported |
+| Input modes | Existing Hold/Tap/Toggle/Aim-fire modes connected to validated per-title settings, actual UI and shared compiler (#167 / `7980f26`) | Two source reviews; defaults preserved; physical timing and UIKit unverified |
+| Shader retry bounds | Full-request/epoch admission and immutable checked-Metal reuse after failed publication (#166 / `faa504b`) | Two critical source reviews; no measured performance/hard-heap/parity/Metal acceptance; default seed-only |
+| MK8DX native integration | Real compiled original-source host, four isolated FullKey seats, private pinned builder and shared leased RomFS materializer (#163 / `7186908`) | Independent critical source reviews; public provider remains unavailable; private inputs, Apple/signing/full SDK contracts and multiplayer acceptance open |
+| Provider cache management | Actual Storage rows, inactive MK runtime/identity and derived RomFS removal with lease-bound recorded recovery (#164 / `1bc153b`) | Two independent critical source reviews; fault injection, Apple/device behavior and physical space unverified |
+| Provider cache diagnostics | Closed actual listed/active counts and known inactive UNVERIFIED logical-byte subset (#165 / `0e9d1d7`) | Independently source-reviewed; no IDs/paths exported; unknown/active sizes unavailable |
+| iOS pacing | NVN screen-rate ceiling follows the frontend's requested 60-Hz display link, including ProMotion displays (#162 / `4391b27`) | Independently source-reviewed; no measured cadence, gameplay FPS or performance acceptance |
+| Player capability | Play checks the actual compiled provider's player ceiling; TOTK stays exactly one player (#161 / `9d3b021`) | Independently source-reviewed; imported metadata cannot enable multiplayer |
+| Add-on diagnostics | Default-Off screen-local progress/I/O/outcome history and manual snapshot/export (#160 / `2d13c10`) | Independently source-reviewed; actual UI/export unbuilt/unrun |
 | Preparation diagnostics | Actual native logical I/O attempt counters, exact progress units and separate publication/uncertainty flags (#152 / `796c089`) | Independently source-reviewed; no new execution; counters do not prove physical savings |
 | Mouse switch | Existing per-title settings now control real mouse handlers, capture requests and event admission; default On (#153 / `ad8da58`) | Independently source-reviewed; physical lock transitions and UI unverified |
 | Terminal audio | Real main-worker cleanup stops tracked outputs and irreversibly prevents further audio output (#154 / `7d112a2`) | Independently source-reviewed; CoreAudio unbuilt/unrun; no teardown/relaunch claim |
@@ -40,8 +49,9 @@ acceptance remain explicit gates.
 The table below includes the app-source snapshot through #100 plus the later
 corrections above. None inherits old green CI as proof of current behavior.
 
-Active source work continues across the full roadmap: add-on preparation diagnostics;
-original-source MK8DX host/runtime integration and its remaining callers. These are
+Active source work continues across the full roadmap: the coherent upstream
+runtime/game-data separation and bounded keyboard-dialog intent correction.
+These are
 in-flight implementations, not completed features. Pinned public original MIT
 MK host/HLE source now provides a concrete reuse path; metadata is not execution
 authority, and private version pins, Apple builds and multiplayer acceptance
@@ -54,7 +64,7 @@ remain open. Nintendo-derived code/assets/shaders are never public inputs.
 | ✎ SaveEditor · #7 | **Active:** TOTK reference-family rupee preview and explicit raw candidate share; Canopy source reviewed | No active Apply until an exact format/integrity contract exists; candidate integrity, checksum and game compatibility remain unverified. Both original iPad and Canopy candidate-share callers are committed; exact format/integrity and physical acceptance remain open |
 | 🎮 Input & accessibility | Real controller/keyboard/mouse/touch routing, modal capture; reviewed focus-owned VoiceOver analog actions and bounded preparation announcements | Physical models, pointer-lock, focus/rotation and VoiceOver interaction; four seats do not establish multiplayer TOTK/Mario Kart support |
 | ⚙ Display & settings | Supported live controls, System language; immutable startup projection with presentation-only layout updates and incompatible-4:3 capture | New Apple results, physical visual/input checks and actual rendered-resolution evidence; experimental quality presets remain off |
-| ⚡ Storage & reuse | Existing copy-on-write reuse with earlier Mac growth/shrink evidence; inode/lease-bound retirement recovery; nonmutating preflight correction source-fixed in #99 | Later Source run is **red** on hardlink refusal preserving the canonical namespace; new-request full-tree preflight is source-fixed, **not rerun**. Logical counters are not physical space savings |
+| ⚡ Storage & reuse | Existing copy-on-write reuse with earlier Mac growth/shrink evidence; inode/lease-bound retirement recovery; nonmutating preflight correction source-fixed in #99; connected MK/RomFS management in #164 | Later Source run is **red** on hardlink refusal preserving the canonical namespace; new-request full-tree preflight is source-fixed, **not rerun**. New cache source unrun. Logical counters are not physical space savings |
 | ◉ Lifecycle & restart · #55 | Native ownership observation retains protections; reviewed two-confirmation restart control protocol | **No actual TOTK restart mechanism or UIKit restart caller.** Protocol/fixture is not game reload; full teardown/relaunch remains separate |
 | ✦ Shaders | Private cache identity, cooperative controls, existing pack route and real guarded renderer/private static-link source (#157) | Default stays **seed-only**. Optional linked path is source-reviewed, unbuilt/unrun; compiler safety, NativeAOT, parity/resource, Metal and device gates remain open |
 | 🌿 Packaging & profiles | Compiled trusted profiles and actual UI/validator callers; upstream safe packaging/transfer checkpoints and actual thermal-state reporting | New source is unbuilt; metadata is not a provider, thermal reporting is not an optimization, and warm-up controls establish no performance gain |

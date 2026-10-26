@@ -9,10 +9,54 @@ building on it. Preserve the draft dependency chain and existing app behavior.
 No tests, probes, builds, CI dispatches, new tests, private inputs, installs,
 merges or releases in this continuation. Source review is not runtime evidence.
 
-Latest published source: `96871151c4f690936088d44106acdab5cfdc5e7e`, draft #159,
-`feat/canopy-exact-update-revision`, depends on #158 → #157 → #156 → #155 →
+Latest published source: `3c3313e08138982a2b831a52debec06411514944`, draft #168,
+`feat/totk-upstream-vertex-input-types`, depends on #167 → #166 → #165 → #164 → #163 → #162 → #161 → #160 → #159 →
+#158 → #157 → #156 → #155 →
 #154 → #153 → #152 → #151. Current worktree has additional uncommitted source;
 inspect actual status and ownership before staging.
+#168 / `3c3313e`: coherent original upstream d69206f7 vertex-format retyping,
+all actual pipeline callers, paired runtime/seed matchers and pipeline schema4/
+renderer ABI. Required MSL/declaration/output-structure absence refuses rather
+than falling back; async source/recipe captured, no PSO-key pointer retained.
+Execution author, independent native/root critical source reviews. No payloads
+imported or Metal/format parity/Mac visual/device execution performed.
+#167 / `7980f26`: existing Hold/Tap400ms/Toggle/Aim-fire backend modes now have
+backward-compatible per-title settings, closed same-source validation, atomic
+target/mode writes, shared actual compiler and UI. Exact-origin actions consume
+epochs before Save/Cancel; Aim has a fresh guarded phase. Product author,
+independent artifact/root source reviews; no execution. Later direct controllers
+harness needs existing Settings.m+mng_keyboard.c; production already links both.
+#166 / `faa504b`: bounded full-request/code-SHA shader retry admission, exact
+epoch/tickets, typed backoff,64 reserved pending checked-Metal entries and actual
+immutable reuse/consumption. Native-only retry pulse addresses stuck/alternating
+negative-cache callers without fabricating ready generation. Native author,
+independent execution/root critical source reviews; no execution/performance/
+hard-heap/Metal acceptance. Default seed-only and existing translator gates stay.
+#165 / `0e9d1d7`: actual provider-cache aggregates, closed/redacted, bounded,
+known inactive UNVERIFIED logical-byte subset only. Product author,
+execution/root source reviews; no execution.
+#164 / `1bc153bd6062f316d39e255435d5b588c37d0d94`: connected MK/RomFS Storage
+management, shared filesystem walker, fixed-family recorded retirement/recovery,
+actual active leases and production source/header/capability wiring. Storage
+author, independent artifact/root critical source reviews, including canonical
+RomFS/sidecar preservation and empty-journal sync. Unbuilt/unrun.
+#163 / `7186908485def1d44d559021f2e07452ac203029`: actual separate MK8DX
+original-source compiled host, existing Runtime/Session dispatch, private pinned
+builder, four isolated FullKey seats, account/save protection and worker-callable
+shared RomFS materializer/lifetime lease. Runtime author, native/root review plus
+artifact/root final producer guards and owned-scene activation review. TOTK ABI3
+preserved. Public NULL provider, full controller SDK contracts, trusted private
+inputs, Apple/signing/permissions/gameplay/multiplayer acceptance remain open.
+#162 reuses original upstream c313e878: the existing requested 60-Hz iOS
+display-link rate caps NVN's screen maximum. Execution author/root source
+review; no performance/FPS/device evidence. Mac branch preserved.
+#161 validates actual compiled maxPlayers before Play; no imported metadata
+raises it. TOTK's exact one-player restriction remains. Product author,
+execution/root source reviews; no multiplayer/device acceptance.
+#160 / `2d13c101a7af97155d833f693defe3a53fd453c0` connects screen-local,
+default-Off Addons diagnostics, actual phases/I/O/outcomes and manual snapshot/
+export via existing backend/controller; shared unit mapping reused. Product
+author, execution/root source reviews. Unbuilt/unrun.
 #159 adds actual exact/latest uint32 update revision UI and Foundation/native
 dispatch, preserving default-latest API/helper behavior. Selection is bound to
 its exact key/foreground scene and owned UI through UIKit auto-dismiss; original
@@ -50,22 +94,27 @@ and root source reviews; unbuilt/untested. No performance/device acceptance.
 
 Active ownership (shared worktree; stage exact reviewed files only):
 
-- native_review: independent D11 integration review after runtime author freeze.
-  Own D10 implementation is published, not self-approved.
-- runtime_impl: real additive MK compiled-host ABI/Registry/Runtime dispatch,
-  original-source MK glue and private builder (D11); TOTK ABI3 untouched.
-- storage_audit: exact revision slice published; no active write ownership.
-- product_audit: actual Addons preparation diagnostics in AddonsController,
-  Diagnostics and Games shared unit helper; default off, real opt-in/history/
-  manual snapshot/export caller (D13). Games player-capability gate queued next.
-- artifact_audit: available for independent source review;
+- native_review: D10 retry source published #166; independent critical vertex
+  review complete/published #168. No current edits.
+- runtime_impl: D11 published; coherent original upstream runtime/game-data
+  separation port. Own readers/generators/Makefile/original packagers/host and
+  Runtime/private TOTK builder only; additive v4 data wrapper preserves strict
+  legacy ABI3, immutable metadata bytes and independent profile pins. No NVN,
+  Settings or Storage edits. Root owns production inventory after freeze.
+- storage_audit: independent critical review of that coherent game-data cohort;
+  provider-cache management is published, no current edits.
+- product_audit: mapping modes published #167; bounded actual keyboard picker/
+  conflict-confirmation stale-intent audit/fix in Games.m keyboard UI only.
+- artifact_audit: independent keyboard UI review after product freeze;
   own SaveStore retirement implementation is published, not self-approved.
-- execution_audit/root: independent reviews; risky storage/translator
+- execution_audit: pinned original TOTK upstream source audit, pacing and vertex
+  authors; vertex published #168, no current edits. No payloads fetched/imported.
+- root: integration and independent reviews; risky storage/translator
   slices need two independent reviewers. Authors cannot approve themselves.
 
 The interrupted save-backup deletion gap is source-fixed in #155, not exercised.
-Real MK8DX integration from pinned original MIT host/HLE source is active
-(D11), including seat isolation and truthful controller-support handling.
+Real MK8DX integration from pinned original MIT host/HLE source is published
+in #163 (D11 source slice), including seat isolation and truthful controller-support handling.
 Public original upstream metadata/source exists; the earlier blanket claim that
 no MK source exists is superseded. Nintendo-derived code/assets/shaders remain
 forbidden to fetch or vendor. Exact private hashes, Apple compilation and actual
@@ -74,14 +123,13 @@ multiplayer acceptance remain open. No metadata-only provider counts as runtime.
 Combined same-run import→library→settings/saves→session/update/recovery evidence
 remains validation debt, not a new test authorized by this continuation.
 
-D11 additional source is unreviewed/in flight: games/mk8dx/runtime original glue,
+Historical D11 ownership/review details (source is published in #163): games/mk8dx/runtime original glue,
 CanopyRuntimeRegistry.h/.m, CanopyRuntime.h/.m, mng_apple_host.h and
 tools/launcher/build_private_mk8dx.py. Root added Registry.m to public SOURCES and
-Registry.h/mng_apple_host.h to HEADERS in build_canopy.py; include this actual
-build wiring in D11 review/commit. Original TOTK ABI3 must remain unchanged.
-Remaining connected D11 followups include Games' hard Player-1 gate (conditional
-on actual compiled maxPlayers), actual MK cache storage management and independent
-Session/input caller review. Metadata/null weak providers do not complete D11.
+Registry.h/mng_apple_host.h to HEADERS in build_canopy.py; actual build wiring is
+published. Original TOTK ABI3 is preserved. Games' compiled player gate is #161;
+actual MK cache storage management is #164. Session/input source review completed.
+Metadata/null weak providers do not establish executable or device acceptance.
 Root requested central process release enforce actual nativeEntryInvoked==NO.
 That release check is now in the source. Current root/native reviews found and
 requested fixes for immutable async title/generation/language/path capture,
@@ -91,6 +139,43 @@ Runtime author also owns CanopyRomFS.h/.m for a bounded worker-callable lease
 bridge to its existing materializer: avoid whole RomFS extraction on every launch
 or app-only source change. Preserve the existing main async API and cancellation
 cutoff, use one core materializer and retain a real sidecar/folder lease.
+
+Published D11 coherent source has native_review independent approval plus root
+review, including one-line insertion of native layer behind UIKit sublayers.
+The final producer/cache-journal interlock was independently re-reviewed:
+providers do not recreate canonical cache while a family removal journal is
+pending. Cache reviewers independently found RomFS phase1 must recheck canonical
+absence before removing its recorded sidecar. Root also requested empty-journal
+fsync confirmation before reporting recovery success or permitting producers.
+Runtime author owns producer guards in MKPrepare/CanopyRomFS; storage author
+owns CacheFS recovery correction. Unknown/corrupt journal entries are preserved.
+Cache corrections and producer guards have root/artifact source approval and
+are published in #163/#164. The final owned-scene activation observer also has
+artifact/root source review; no automatic host-focus grant was introduced.
+
+Pinned upstream audit f4fe63ac→f541e14e found16 commits. Original source-only
+pacing port is #162; coherent vertex-input retyping + paired runtime/seed matcher
+changes are published in #168. Runtime/game-data separation is a coordinated
+producer/reader/package/trusted-pin contract; do not replace only generators or
+trust environment-selected config. New games, shader lists, generated game
+tables and prebuilt executables are outside this audit/import scope.
+
+Public API research for controller cancellation is bounded and complete:
+switchbrew/libnx `b156b4774fb2df7b93402169509266da7547fc4c`,
+nx/source/applets/hid_la.c lines67–76 explicitly substitutes a libnx error and
+says official SDK values differ. Its header proves applet bytes0/1 min/max,
+byte5 single-mode and packed8-byte count/ID output, NOT full equivalence to the
+direct nn::hid SDK object. Pinned nxnative proves only direct argument bytes0/1.
+The implemented positive1..4 subset must not invent SDK cancel/single-mode facts;
+unsupported requests use named internal host failure/thread exit while retaining
+protections. No game/SDK payload was fetched. Exact SDK cancellation remains an
+external contract with pinned evidence, not a guessed successful result.
+
+Known validation-only build-list debt (no test/probe edits or execution here):
+tests/test_canopy_runtime.py direct-link commands need RuntimeRegistry.m;
+after shared cache extraction shader-cache/runtime commands need CacheFS.m,
+and storage commands need CacheFS.m + ProviderCache.m. Root production build
+inventory is updated separately; never claim those older harness lists pass.
 
 ## Live source cursor after the published #101 handoff
 
