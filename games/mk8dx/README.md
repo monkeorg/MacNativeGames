@@ -91,9 +91,10 @@ once at startup, not an effective language code queried from the guest. Failed
 or pre-entry sessions cannot report a newly applied language preference.
 
 This implementation is source-only and has not been compiled, tested or run.
-Storage's MK namespace management is a separate pending source checkpoint; the
-capability dictionary continues to report cache management unavailable until
-that checkpoint is approved. Producers refuse pending/unknown removal journals
+Storage now connects MK shader identities/runtime clearing and derived RomFS
+removal through the reviewed family-specific recovery backend. The capability
+dictionary reports these connected source routes, not tested behavior.
+Producers refuse pending/unknown removal journals
 under their existing parent locks, preserving Storage's recovery authority.
 No local multiplayer gameplay, content-free iPad execution, complete controller
 applet cancellation, safe stop or relaunch acceptance is claimed.

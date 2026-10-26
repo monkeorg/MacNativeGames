@@ -2,6 +2,7 @@
 #define _DARWIN_C_SOURCE
 #endif
 #import "CanopyShaderCache.h"
+#import "CanopyCacheFS.h"
 #import <CoreFoundation/CoreFoundation.h>
 #include "mng_crypto.h"
 #include <TargetConditionals.h>
@@ -45,16 +46,9 @@ static BOOL SCText(id value,NSUInteger maximum) {
     return [value isKindOfClass:NSString.class] && [value length]>0 && [value length]<=maximum &&
         [value rangeOfCharacterFromSet:NSCharacterSet.controlCharacterSet].location==NSNotFound;
 }
-static BOOL SCStable(const struct stat *a,const struct stat *b) {
-    return a->st_dev==b->st_dev && a->st_ino==b->st_ino && a->st_mode==b->st_mode && a->st_nlink==b->st_nlink &&
-        a->st_size==b->st_size && a->st_mtimespec.tv_sec==b->st_mtimespec.tv_sec &&
-        a->st_mtimespec.tv_nsec==b->st_mtimespec.tv_nsec && a->st_ctimespec.tv_sec==b->st_ctimespec.tv_sec &&
-        a->st_ctimespec.tv_nsec==b->st_ctimespec.tv_nsec;
-}
-static BOOL SCPrivate(int fd,BOOL directory) {
-    struct stat s;return fd>=0 && !fstat(fd,&s) && (directory ? S_ISDIR(s.st_mode):S_ISREG(s.st_mode)) &&
-        s.st_uid==geteuid() && !(s.st_mode&077) && (directory || s.st_nlink==1);
-}
+#define SCStable CCFStable
+#define SCPrivate CCFPrivate
+#define SCWalk CCFWalk
 static int SCRoot(NSURL *url,BOOL create,BOOL private) {
     const char *path=url.fileSystemRepresentation;
     if (!url.isFileURL || !path || path[0]!='/' || strnlen(path,4096)>=4096) return -1;
@@ -214,21 +208,6 @@ static BOOL SCSeedStructure(int seed,NSDictionary *manifest,NSArray<NSString *> 
 }
 /* Bounded descriptor-relative metadata walk. Only private regular single-link
  * files and directories are accepted; no symlink traversal or outside deletes. */
-static BOOL SCWalk(int directory,unsigned depth,uint64_t *bytes,uint64_t *count,BOOL remove,BOOL strict,BOOL (^cancel)(void)) {
-    struct stat owner;
-    if(depth>8 || fstat(directory,&owner) || !S_ISDIR(owner.st_mode) || owner.st_uid!=geteuid() || (strict && (owner.st_mode&077)))return NO;
-    int fd=openat(directory,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return NO;
-    DIR *d=fdopendir(fd);if(!d){close(fd);return NO;}BOOL ok=YES;struct dirent *e;errno=0;
-    while((e=readdir(d))) {if(!strcmp(e->d_name,".") || !strcmp(e->d_name,".."))continue;struct stat s;
-        if((cancel && cancel()) || ++*count>200010 || fstatat(directory,e->d_name,&s,AT_SYMLINK_NOFOLLOW) || s.st_uid!=geteuid() || (strict && (s.st_mode&077))){ok=NO;break;}
-        if(S_ISDIR(s.st_mode)) {int child=openat(directory,e->d_name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);ok=child>=0 && SCWalk(child,depth+1,bytes,count,remove,strict,cancel);if(child>=0)close(child);
-            if(ok && remove && unlinkat(directory,e->d_name,AT_REMOVEDIR))ok=NO;
-        } else {if(!S_ISREG(s.st_mode) || s.st_nlink!=1 || s.st_size<0 || (uint64_t)s.st_size>(UINT64_C(128)<<30)-*bytes)ok=NO;
-            else {*bytes+=(uint64_t)s.st_size;if(remove && unlinkat(directory,e->d_name,0))ok=NO;}}
-        if(!ok)break;errno=0;
-    }
-    if(!e && errno)ok=NO;closedir(d);return ok;
-}
 static BOOL SCDevice(NSDictionary *device) {
     if(![device isKindOfClass:NSDictionary.class] || device.count!=8 || !SCNumber(device[@"schema"],1,1) ||
         ![@[@"iphoneos",@"macos"] containsObject:device[@"platform"]] || !SCText(device[@"os"],256) || !SCText(device[@"device"],256) ||
