@@ -74,6 +74,9 @@ typedef NS_ENUM(NSInteger, CanopyDiagnosticsError) {
 /// Sanitizes real provider values; records at most one sample when requested
 /// and collection is enabled. Storage bytes cover listed verified/available
 /// rows only, never total disk use, allocation or promised reclaimed space.
+/// Provider-cache counts are listed/known-active observations. Their separate
+/// UNVERIFIED logical-byte subset includes only known inactive usage, excludes
+/// active/missing/unsafe sizes and carries no content verification or identities.
 - (NSDictionary<NSString *,id> *)snapshotWithDiagnostics:(CanopyDiagnostics *)diagnostics
     recordIfEnabled:(BOOL)record;
 /// Explicit user export; no files/network, same64KiB backend limit.

@@ -104,9 +104,9 @@ static NSDictionary *CDMetrics(id supplied) {
     if(CDInteger(metrics[@"seedFiles"],100002))safe[@"seedFiles"]=metrics[@"seedFiles"];
     if(CDInteger(metrics[@"filesAndDirectories"],200010))safe[@"filesAndDirectories"]=metrics[@"filesAndDirectories"];
     if(CDBoolean(metrics[@"cacheReused"]))safe[@"cacheReused"]=metrics[@"cacheReused"];
-    for(NSString *key in @[@"storageListedGenerations",@"storageVerifiedGenerations",@"storageListedJobs",@"storageListedShaders",@"storageAvailableShaders"])
+    for(NSString *key in @[@"storageListedGenerations",@"storageVerifiedGenerations",@"storageListedJobs",@"storageListedShaders",@"storageAvailableShaders",@"storageListedProviderCaches",@"storageKnownActiveProviderCaches",@"storageInactiveProviderCachesWithKnownUsage"])
         if(CDInteger(metrics[key],128))safe[key]=metrics[key];
-    for(NSString *key in @[@"storageVerifiedAssetBytes",@"storageAvailableSeedBytes",@"storageAvailableRuntimeBytes"])
+    for(NSString *key in @[@"storageVerifiedAssetBytes",@"storageAvailableSeedBytes",@"storageAvailableRuntimeBytes",@"storageUnverifiedInactiveProviderLogicalBytes"])
         if(CDInteger(metrics[key],UINT64_C(1)<<44))safe[key]=metrics[key];
     if(CDBoolean(metrics[@"storageListingComplete"]))safe[@"storageListingComplete"]=metrics[@"storageListingComplete"];
     id io=metrics[@"preparationIO"];
@@ -260,7 +260,7 @@ static NSDictionary *CDStorage(id supplied) {
     if(![supplied isKindOfClass:NSDictionary.class])return @{};
     NSDictionary *snapshot=supplied;NSMutableDictionary *metrics=[NSMutableDictionary new];
     if(CDBoolean(snapshot[@"complete"]))metrics[@"storageListingComplete"]=snapshot[@"complete"];
-    NSArray *generations=snapshot[@"generations"],*jobs=snapshot[@"jobs"],*shaders=snapshot[@"shaders"];
+    NSArray *generations=snapshot[@"generations"],*jobs=snapshot[@"jobs"],*shaders=snapshot[@"shaders"],*providers=snapshot[@"providerCaches"];
     if([generations isKindOfClass:NSArray.class]&&generations.count<=128) {
         uint64_t bytes=0;NSUInteger verified=0;
         for(id value in generations)if([value isKindOfClass:NSDictionary.class]&&[value[@"verification"] isEqual:@"verified"]&&
@@ -277,6 +277,24 @@ static NSDictionary *CDStorage(id supplied) {
         }
         metrics[@"storageListedShaders"]=@(shaders.count);metrics[@"storageAvailableShaders"]=@(available);
         metrics[@"storageAvailableSeedBytes"]=@(seed);metrics[@"storageAvailableRuntimeBytes"]=@(runtime);
+    }
+    if([providers isKindOfClass:NSArray.class] && providers.count<=128) {
+        uint64_t bytes=0;NSUInteger active=0,known=0;
+        for(id row in providers) {
+            if(![row isKindOfClass:NSDictionary.class] || ![@[@"mkShader",@"romfsDerived"] containsObject:row[@"kind"]] ||
+                !CDBoolean(row[@"active"]))continue;
+            if([row[@"active"] boolValue]) {active++;continue;}
+            // Namespace/usage observation only, never content verification.
+            // Missing, active or unsafe sizes do not contribute guessed zeros.
+            if([row[@"usageState"] isEqual:@"available"] && [row[@"verification"] isEqual:@"notChecked"] &&
+                CDInteger(row[@"logicalBytes"],UINT64_C(128)<<30)) {
+                bytes+=[row[@"logicalBytes"] unsignedLongLongValue];known++;
+            }
+        }
+        metrics[@"storageListedProviderCaches"]=@(providers.count);
+        metrics[@"storageKnownActiveProviderCaches"]=@(active);
+        metrics[@"storageInactiveProviderCachesWithKnownUsage"]=@(known);
+        if(known)metrics[@"storageUnverifiedInactiveProviderLogicalBytes"]=@(bytes);
     }
     return [metrics copy];
 }
