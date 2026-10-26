@@ -207,14 +207,20 @@ profile selection, per-source entry rename, stable input copies, rejection of
 modified original/rewrite/RomFS/font/report bytes and explicit seed/map pins.
 It does not contain game inputs and does not pretend to compile a private app.
 
-An actual private link has not been run in this environment. The first retained
-Mac build must verify the complete generated headers, local codec ABI and link
-against the selected SDK. Signing and physical-device native acceptance are
+**Local validation — 2026-10-26:** actual private v143 stock and display-profile
+unsigned builds passed. The actual Mac NativeAOT publisher and original-shader
+parity checks also passed. See [the local validation evidence](canopy-local-validation.md)
+for exact source revisions, build scopes and platform limits. No app was installed
+or accepted on a device; the iOS linked-translator route remains a separate gate.
+
+**Historical cloud checkpoint:** no actual private link ran during that phase.
+Generated headers, local codec ABI and the selected SDK link still required a
+local Mac build then. Signing and physical-device native acceptance remain
 separate gates; existing vm-remap source is not proof of permission on a device.
 The host remains single use. CPU pause, safe stop, save-writer teardown and
 in-process relaunch are still development work, not solved by producing an app.
 
-### Optional linked native shader provider (source only)
+### Optional linked native shader provider (historical source-only checkpoint)
 
 Seed-only remains the default. To request the actual in-process consumer, add both `--shader-native-products /trusted/local/publish-output` and `--shader-native-build-sha256 <independently-reviewed-native-build.json-sha256>` to the private build. The directory must be real `publish_library.py --rid ios-arm64 --kind Static` output with a completed static-consumer link, current source recipe, both archives, native dependency plan/properties and license texts. This option never downloads or builds the translator.
 

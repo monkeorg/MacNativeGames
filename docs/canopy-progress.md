@@ -1,14 +1,27 @@
 # Canopy · development update
 
-**FOSS native launcher · reviewed cloud source handoff · local validation outstanding**
+**FOSS native launcher · local host validation complete · device acceptance open**
+
+## Local validation — 2026-10-26
+
+Source `8cc737c` passed the final suite: 992 run, 988 passed, four skipped
+(90.185 s). Public Canopy, original iPad and private v143 stock/display Apple
+builds passed. The actual Mac NativeAOT publisher and original-shader parity
+checks passed; these results do not establish iOS translator or game acceptance.
+No installation, device acceptance, merge or release occurred.
+
+See [the local validation evidence](canopy-local-validation.md) for exact build
+revisions, platform limits, skipped checks and separate public/private gates.
 
 Next local run: [short iPad checklist](canopy-ipad-smoke-checklist.md) ·
 [ordered Mac/build handoff](canopy-mac-ipad-checklist.md).
 
-Current published source: [#170 / `8005afe`](https://github.com/monkeorg/MacNativeGames/pull/170),
+## Historical cloud handoff — before local validation
+
+Published cloud snapshot: [#170 / `8005afe`](https://github.com/monkeorg/MacNativeGames/pull/170),
 `feat/canopy-pinned-runtime-data`,
 `8005afed3adb7a06aa8f887fd3d90256bfaa1c27`.
-Published source is source-reviewed but **unbuilt and untested**. Final bounded
+That cloud snapshot was source-reviewed but **unbuilt and untested in cloud**. Final bounded
 caller/build-graph reviews found no further demonstrated authorized cloud source
 task. New local evidence can reveal additional work. This cloud pass ran no
 new tests, probes, compilers or builds and performed no installs, merges or releases.

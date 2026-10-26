@@ -4,9 +4,9 @@
 
 The local phase starts from pinned #170 / `f91f58253778aca0764f9bd0c36bb60bdcacf259` in an isolated worktree. The working TOTK checkout remains unchanged. The local user goal authorizes tests and Apple builds; historical cloud prohibitions below do not override it.
 
-Repairs `4376ecc` and `9b91ed4` update actual harness dependencies and v4 runtime-data setup, fix Apple renderer declarations/callers, admit the verified zero-size ELF end marker without weakening pointer bounds, and match the exact generated font basename. Final source suite: 978 run, 969 passed, 9 skipped. Public Canopy, Mac CLI/host, original iPad matrix/app and private v143 stock/display builds pass. Actual private reader and Canopy seed import/reuse also pass. No device installation occurred.
+Repairs `4376ecc` and `9b91ed4` update harness dependencies, runtime-data setup, Apple compilation and verified metadata readers. Compiler repair `8cc737c` handles Darwin archive metadata and unsupported LeakSanitizer options. Final source suite: 992 run, 988 passed, 4 skipped (90.185 s), with actual pinned Cross, current CLI and published Mac static NativeAOT products supplied. Public Canopy, Mac CLI/host, original iPad matrix/app and private v143 stock/display builds pass. Actual private reader and Canopy seed import/reuse also pass. No device installation occurred.
 
-See [the local validation evidence](../../docs/canopy-local-validation.md) for exact scopes, failures, commands, reviews and skips. Overall D0–D14/device acceptance remains OPEN. Save/identity backup is mandatory before later installation. Optional translation remains off; no gameplay, FPS, full compiler safety or standalone imported-code permission is implied.
+All three filesystem skips subsequently passed on a private case-sensitive APFS volume, which was detached afterward. Only the intentional non-Apple refusal remains unexecuted. See [the local validation evidence](../../docs/canopy-local-validation.md) for exact scopes, failures, commands, reviews and skips. Local host validation is complete; overall D0–D14/device acceptance remains OPEN. Save/identity backup is mandatory before later installation. Optional translation remains off; no gameplay, FPS, full compiler safety or standalone imported-code permission is implied.
 
 ## Cloud source continuation through #170
 
