@@ -8,6 +8,8 @@
 /* Install exactly once on main before any cache/render access; NULL keeps seed-only. */
 int totk_rt_install_provider(const struct totk_shader_provider *provider);
 int totk_rt_native_epoch_current(uint64_t epoch);
+int totk_rt_native_provider_present(void);
+uint64_t totk_rt_native_retry_token(void);
 void totk_rt_set_checked_ready_hook(int (*hook)(NSString *,int,uint64_t));
 /* Actual NVN consumer installs its checked Metal loader before host worker. */
 void nvn_canopy_install_shader_ready_hook(void);
