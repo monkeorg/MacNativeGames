@@ -380,6 +380,9 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 @implementation CanopyMappingController {
     CanopySettings *_settings;
     NSString *_titleID;
+    NSUInteger _mappingEpoch;
+    __weak UIWindowScene *_mappingScene;
+    UIViewController *_mappingUI;
 }
 - (instancetype)initWithSettings:(CanopySettings *)settings titleID:(NSString *)titleID {
     if ((self = [super initWithStyle:UITableViewStyleInsetGrouped])) { _settings = settings; _titleID = [titleID copy]; }
@@ -388,43 +391,128 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 - (void)viewDidLoad {
     [super viewDidLoad]; self.title = @"Button mappings";
     self.tableView.rowHeight = UITableViewAutomaticDimension; self.tableView.estimatedRowHeight = 65;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(mappingInterrupted:) name:UIApplicationWillResignActiveNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(mappingInterrupted:) name:UISceneWillDeactivateNotification object:nil];
+}
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self]; }
+- (void)invalidateMappingIntent {
+    ++_mappingEpoch;UIViewController *owned=_mappingUI;_mappingUI=nil;
+    if(owned && self.presentedViewController==owned)[owned dismissViewControllerAnimated:NO completion:nil];
+}
+- (void)mappingInterrupted:(NSNotification *)notification {
+    if([notification.name isEqual:UISceneWillDeactivateNotification] && notification.object!=_mappingScene && notification.object!=self.viewIfLoaded.window.windowScene)return;
+    [self invalidateMappingIntent];
+}
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    if(self.isMovingFromParentViewController || self.isBeingDismissed || self.navigationController.topViewController!=self)[self invalidateMappingIntent];
+}
+- (BOOL)mappingIntentValid:(NSUInteger)epoch {
+    UIWindow *window=self.viewIfLoaded.window;
+    return epoch==_mappingEpoch && self.navigationController.topViewController==self && window.isKeyWindow &&
+        window.windowScene==_mappingScene && window.windowScene.activationState==UISceneActivationStateForegroundActive &&
+        UIApplication.sharedApplication.applicationState==UIApplicationStateActive &&
+        (!self.presentedViewController || self.presentedViewController==_mappingUI);
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { (void)tableView; (void)section; return (NSInteger)MappingButtons().count; }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView; (void)section;
     if (self.settingStates) {
         NSError *error = nil; NSDictionary *values = [_settings settingsForTitleID:_titleID error:&error];
-        return values ? SettingApplicationDetail(@"buttonMappings",values[@"buttonMappings"],self.settingStates) : error.localizedDescription;
+        return values ? [NSString stringWithFormat:@"%@\n%@",SettingApplicationDetail(@"buttonMappings",values[@"buttonMappings"],self.settingStates),SettingApplicationDetail(@"mappingModes",values[@"mappingModes"],self.settingStates)] : error.localizedDescription;
     }
-    return @"Saved for this title only. Default retains the runtime layout; other choices map a held physical button. Runtime application requires a supported session and remains unverified here.";
+    return @"Per-title targets and modes. Hold follows the button; Tap lasts 400 ms; Toggle releases on the next press or after movement returns to center. Aim suppresses its target while the selected same-device fire button is held. Default preserves the existing mouse-right Aim/mouse-left fire behavior; legacy custom targets remain Hold.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     NSError *error = nil; NSDictionary *values = [_settings settingsForTitleID:_titleID error:&error];
     NSString *button = MappingButtons()[(NSUInteger)path.row];
     NSString *detail = values ? (values[@"buttonMappings"][button] ?: @"default") : @"Metadata recovery required";
+    struct mng_input_mapping compiled;
+    if(values && [CanopyControllers compileInputMapping:&compiled settings:values error:NULL]) {
+        unsigned mode=compiled.modes[(NSUInteger)path.row]&7;
+        NSString *name=@[@"Hold",@"Tap",@"Toggle",@"Aim"][mode];
+        if(mode==3)name=[name stringByAppendingFormat:@" • fire %@",MappingButtons()[compiled.modes[(NSUInteger)path.row]>>3]];
+        detail=[detail stringByAppendingFormat:@" • %@",name];
+    }
     UITableViewCell *cell = GamesCell(tableView, button, detail);
     if (values) cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     return cell;
 }
+- (NSUInteger)consumeMappingIntent:(NSUInteger)epoch origin:(UIViewController *)origin {
+    if(!origin || _mappingUI!=origin || ![self mappingIntentValid:epoch])return 0;
+    // Retain this exact UI through UIKit auto-dismissal, but consume its old
+    // callbacks before any write or transition. Its action blocks own us weakly.
+    return ++_mappingEpoch;
+}
+- (void)finishMappingUI:(UIViewController *)origin epoch:(NSUInteger)epoch error:(NSString *)message {
+    void (^finish)(void)=^{
+        if(self->_mappingUI!=origin || ![self mappingIntentValid:epoch] || self.presentedViewController)return;
+        self->_mappingUI=nil;
+        if(message)GamesAlert(self,@"Could not save mapping",message);
+    };
+    if(self.presentedViewController==origin)[origin dismissViewControllerAnimated:YES completion:finish];
+    else if(!self.presentedViewController)finish();
+}
+- (void)cancelMappingUI:(UIViewController *)origin epoch:(NSUInteger)epoch {
+    NSUInteger next=[self consumeMappingIntent:epoch origin:origin];
+    if(next)[self finishMappingUI:origin epoch:next error:nil];
+}
+- (void)saveTarget:(NSString *)target mode:(NSDictionary *)mode changeMode:(BOOL)changeMode button:(NSString *)button origin:(UIViewController *)origin epoch:(NSUInteger)epoch {
+    NSUInteger next=[self consumeMappingIntent:epoch origin:origin];if(!next)return;
+    NSError *error=nil;NSDictionary *current=[_settings settingsForTitleID:_titleID error:&error];
+    if(!current){[self finishMappingUI:origin epoch:next error:error.localizedDescription ?: @"Load valid settings before editing mappings."];return;}
+    NSMutableDictionary *targets=[current[@"buttonMappings"] mutableCopy],*modes=[current[@"mappingModes"] mutableCopy];
+    if(target)targets[button]=target;
+    if(changeMode) {if(mode)modes[button]=mode;else [modes removeObjectForKey:button];}
+    if([target isEqual:@"none"])[modes removeObjectForKey:button];
+    NSString *failure=nil;
+    if(![_settings setButtonMappings:targets modes:modes titleID:_titleID error:&error])failure=@"The combined mapping could not be saved. Choose an assigned target before a timed or Aim mode; None supports Hold only. Reload settings if they changed elsewhere.";
+    else ApplySavedSettings(_settings,_titleID,self.applySettings);
+    [self.tableView reloadData];[self finishMappingUI:origin epoch:next error:failure];
+}
+- (void)chooseAimFireForButton:(NSString *)button path:(NSIndexPath *)path epoch:(NSUInteger)epoch {
+    if(![self mappingIntentValid:epoch] || self.presentedViewController)return;
+    NSUInteger slot=[MappingButtons() indexOfObject:button];if(slot==NSNotFound)return;
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:@"Choose the Aim fire button" message:@"Use another physical button on the same controller or mouse. While Aim and fire are held together, the Aim target is released and fire's own mapping is suppressed." preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak CanopyMappingController *weakSelf=self;__weak UIAlertController *weakSheet=sheet;
+    for(NSUInteger i=0;i<MappingButtons().count;i++)if(i!=slot && (i<17)==(slot<17)) {
+        NSString *fire=MappingButtons()[i];
+        [sheet addAction:[UIAlertAction actionWithTitle:fire style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            (void)action;[weakSelf saveTarget:nil mode:@{@"mode":@"aim",@"fire":fire} changeMode:YES button:button origin:weakSheet epoch:epoch];
+        }]];
+    }
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){(void)action;[weakSelf cancelMappingUI:weakSheet epoch:epoch];}]];
+    GamesAnchor(sheet,self.tableView,path);_mappingUI=sheet;[self presentViewController:sheet animated:YES completion:nil];
+}
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
     [tableView deselectRowAtIndexPath:path animated:YES];
-    NSError *error = nil; NSDictionary *values = [_settings settingsForTitleID:_titleID error:&error];
-    if (!values) { GamesAlert(self,@"Settings unavailable",error.localizedDescription); return; }
-    NSString *button = MappingButtons()[(NSUInteger)path.row];
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:button message:@"Save the target button for this game." preferredStyle:UIAlertControllerStyleActionSheet];
-    NSArray *targets = @[@"default",@"none",@"a",@"b",@"x",@"y",@"lstick",@"rstick",@"l",@"r",@"zl",@"zr",@"plus",@"minus",@"left",@"up",@"right",@"down"];
-    for (NSString *target in targets) [sheet addAction:[UIAlertAction actionWithTitle:target style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        (void)action; NSError *writeError = nil;
-        NSDictionary *current = [self->_settings settingsForTitleID:self->_titleID error:&writeError];
-        if (!current) { GamesAlert(self,@"Could not save mapping",writeError.localizedDescription); return; }
-        NSMutableDictionary *mappings = [current[@"buttonMappings"] mutableCopy]; mappings[button] = target;
-        if (![self->_settings setValue:mappings forSetting:@"buttonMappings" titleID:self->_titleID error:&writeError]) GamesAlert(self,@"Could not save mapping",writeError.localizedDescription);
-        else ApplySavedSettings(self->_settings,self->_titleID,self.applySettings);
-        [self.tableView reloadData];
+    if(self.presentedViewController)return;
+    [self invalidateMappingIntent];_mappingScene=self.viewIfLoaded.window.windowScene;NSUInteger epoch=_mappingEpoch;
+    if(![self mappingIntentValid:epoch])return;
+    NSString *button=MappingButtons()[(NSUInteger)path.row];
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:button message:@"Choose a target or mode. Changing the target retains an explicit mode; None removes it. Use Default mode to restore legacy behavior." preferredStyle:UIAlertControllerStyleActionSheet];
+    __weak CanopyMappingController *weakSelf=self;__weak UIAlertController *weakSheet=sheet;
+    for(NSString *target in @[@"default",@"none",@"a",@"b",@"x",@"y",@"lstick",@"rstick",@"l",@"r",@"zl",@"zr",@"plus",@"minus",@"left",@"up",@"right",@"down"])
+        [sheet addAction:[UIAlertAction actionWithTitle:[@"Target: " stringByAppendingString:target] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+            (void)action;[weakSelf saveTarget:target mode:nil changeMode:NO button:button origin:weakSheet epoch:epoch];
+        }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Default mode" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){(void)action;[weakSelf saveTarget:nil mode:nil changeMode:YES button:button origin:weakSheet epoch:epoch];}]];
+    for(NSString *mode in @[@"hold",@"tap",@"toggle"])[sheet addAction:[UIAlertAction actionWithTitle:[@"Mode: " stringByAppendingString:mode] style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        (void)action;[weakSelf saveTarget:nil mode:@{@"mode":mode} changeMode:YES button:button origin:weakSheet epoch:epoch];
     }]];
-    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    GamesAnchor(sheet,tableView,path); [self presentViewController:sheet animated:YES completion:nil];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Mode: Aim…" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){
+        (void)action;CanopyMappingController *owner=weakSelf;UIAlertController *origin=weakSheet;
+        NSUInteger next=[owner consumeMappingIntent:epoch origin:origin];if(!next)return;
+        void (^choose)(void)=^{
+            if(owner->_mappingUI!=origin || ![owner mappingIntentValid:next] || owner.presentedViewController)return;
+            owner->_mappingUI=nil;[owner chooseAimFireForButton:button path:path epoch:next];
+        };
+        if(owner.presentedViewController==origin)[origin dismissViewControllerAnimated:YES completion:choose];else if(!owner.presentedViewController)choose();
+    }]];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){(void)action;[weakSelf cancelMappingUI:weakSheet epoch:epoch];}]];
+    GamesAnchor(sheet,tableView,path);_mappingUI=sheet;[self presentViewController:sheet animated:YES completion:nil];
 }
+
 @end
 
 @interface CanopyKeyboardKeyPicker : UITableViewController

@@ -1,4 +1,5 @@
 #import "CanopyControllers.h"
+#import "CanopySettings.h"
 #import <GameController/GameController.h>
 #include <time.h>
 #include <string.h>
@@ -19,21 +20,12 @@ static BOOL ControllerError(NSError **error, NSString *message) {
     if (error) *error = [NSError errorWithDomain:@"CanopyControllers" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];
     return NO;
 }
-static BOOL ControllerConfiguration(NSString *type, NSDictionary *bindings, int *parsedType, struct mng_input_mapping *mapping, NSError **error) {
+static BOOL ControllerConfiguration(NSString *type, NSDictionary *bindings, NSDictionary *modes, int *parsedType, struct mng_input_mapping *mapping, NSError **error) {
     if (![type isKindOfClass:NSString.class] || type.length > 32 ||
         ![bindings isKindOfClass:NSDictionary.class] || bindings.count > MNG_PHYSICAL_BUTTONS) return ControllerError(error,@"Invalid controller layout preferences.");
     int parsed = mng_input_controller_type(type.UTF8String);
     if (parsed < 0) return ControllerError(error,@"Unknown controller type.");
-    NSArray *buttons = @[@"south",@"east",@"west",@"north",@"l3",@"r3",@"l1",@"r1",@"l2",@"r2",@"menu",@"view",@"left",@"up",@"right",@"down",@"touchpad",@"mouse_left",@"mouse_right",@"mouse_middle",@"mouse4",@"mouse5"];
-    NSArray *targets = @[@"default",@"none",@"a",@"b",@"x",@"y",@"lstick",@"rstick",@"l",@"r",@"zl",@"zr",@"plus",@"minus",@"left",@"up",@"right",@"down"];
-    for (id button in bindings) if (![button isKindOfClass:NSString.class] || ![buttons containsObject:button] || ![targets containsObject:bindings[button]]) return ControllerError(error,@"Unknown controller button or target.");
-    NSMutableString *text = [NSMutableString string];
-    for (NSString *button in [bindings.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
-        NSString *target = bindings[button];
-        if (![target isEqual:@"default"]) [text appendFormat:@"%@ = %@\n",button,target];
-    }
-    NSData *bytes = [text dataUsingEncoding:NSUTF8StringEncoding];
-    if (mng_input_mapping_parse(bytes.bytes,bytes.length,mapping,NULL) != MNG_INPUT_OK) return ControllerError(error,@"Controller mappings could not be validated.");
+    if(![CanopyControllers compileInputMapping:mapping settings:@{@"buttonMappings":bindings,@"mappingModes":modes ?: @{}} error:error])return NO;
     *parsedType = parsed; return YES;
 }
 
@@ -50,6 +42,14 @@ static BOOL ControllerConfiguration(NSString *type, NSDictionary *bindings, int 
     uint64_t _nextIdentifier;
     uint64_t _commandEdges;
 }
++ (BOOL)compileInputMapping:(struct mng_input_mapping *)mapping settings:(NSDictionary *)settings error:(NSError **)error {
+    if(!mapping || ![settings isKindOfClass:NSDictionary.class])return ControllerError(error,@"Invalid input map options.");
+    NSString *text=[CanopySettings inputMappingTextWithTargets:settings[@"buttonMappings"] ?: @{} modes:settings[@"mappingModes"] ?: @{}];
+    NSData *bytes=[text dataUsingEncoding:NSUTF8StringEncoding];
+    if(!text || mng_input_mapping_parse(bytes.bytes,bytes.length,mapping,NULL)!=MNG_INPUT_OK)return ControllerError(error,@"The combined target/mode map was rejected.");
+    return YES;
+}
+
 - (instancetype)init {
     NSAssert(NSThread.isMainThread, @"CanopyControllers belongs on the main thread");
     if ((self = [super init])) {
@@ -230,7 +230,7 @@ static BOOL ControllerConfiguration(NSString *type, NSDictionary *bindings, int 
     NSAssert(NSThread.isMainThread,@"Controller configuration belongs on main thread");
     if (player >= MNG_PLAYER_COUNT) return ControllerError(error,@"Invalid player seat.");
     struct mng_input_mapping mapping; int parsedType;
-    if (!ControllerConfiguration(type,mappings,&parsedType,&mapping,error)) return NO;
+    if (!ControllerConfiguration(type,mappings,@{},&parsedType,&mapping,error)) return NO;
     BOOL okay = [self installConfiguration:&mapping type:parsedType player:player error:error];
     if (okay) [self changed];
     return okay;
@@ -239,7 +239,7 @@ static BOOL ControllerConfiguration(NSString *type, NSDictionary *bindings, int 
     NSAssert(NSThread.isMainThread,@"Controller configuration belongs on main thread");
     if (![settings isKindOfClass:NSDictionary.class]) return ControllerError(error,@"Invalid controller settings.");
     struct mng_input_mapping mapping; int type;
-    if (!ControllerConfiguration(settings[@"controllerType"],settings[@"buttonMappings"],&type,&mapping,error)) return NO;
+    if (!ControllerConfiguration(settings[@"controllerType"],settings[@"buttonMappings"],settings[@"mappingModes"] ?: @{},&type,&mapping,error)) return NO;
     unsigned resets = 0;
     for (unsigned player = 0; player < MNG_PLAYER_COUNT; player++) if (_players.seats[player] &&
         (_controllerTypes[player] != type || memcmp(&_mappings[player],&mapping,sizeof(mapping)))) resets++;
