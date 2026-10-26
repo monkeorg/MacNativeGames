@@ -156,6 +156,11 @@ void runtime_ios_set_host_active(int active) {
 void runtime_front_request_close(void){fprintf(stderr,"[totk] close requested; iOS apps are closed by the user\n");}
 void runtime_front_text_test(const char *op,const char *text){(void)text;fprintf(stderr,"[totk] text entry test \"%s\" ignored: iOS has no text entry bar (the keyboard request is cancelled)\n",op?op:"");}
 
+/* The display-service link requests 60 Hz even on a ProMotion screen. Keep
+   mtl_display_hz's ceiling tied to that request (upstream c313e878). */
+#define TOTK_IOS_LINK_HZ 60
+int front_display_link_hz(void){return TOTK_IOS_LINK_HZ;}
+
 @interface TOTKVsync:NSObject
 @end
 @implementation TOTKVsync
@@ -243,7 +248,7 @@ void runtime_ios_attach_layer(CAMetalLayer *layer,UIView *host){
  [nc addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil usingBlock:^(NSNotification *n){(void)n;app_active_changed(1);}];
  vsyncTarget=[TOTKVsync new];displayLink=[CADisplayLink displayLinkWithTarget:vsyncTarget selector:@selector(tick:)];
  /* VI remains the display-service clock. Native-frame caps use the existing NVN pacer and Metal display link. */
- displayLink.preferredFrameRateRange=CAFrameRateRangeMake(60,60,60);[displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+ displayLink.preferredFrameRateRange=CAFrameRateRangeMake(TOTK_IOS_LINK_HZ,TOTK_IOS_LINK_HZ,TOTK_IOS_LINK_HZ);[displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 }
 /* The app already runs the loader on a game thread with a large stack; the event loop belongs to UIKit. */
 void runtime_front_run(void(*callback)(void)){
