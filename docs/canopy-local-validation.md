@@ -5,7 +5,7 @@
 This local Mac phase starts from draft #170, branch
 `feat/canopy-pinned-runtime-data`, commit
 `f91f58253778aca0764f9bd0c36bb60bdcacf259`.
-The repair branch is `fix/canopy-local-validation` and depends on #170.
+The repair branch is `fix/canopy-local-validation`; [draft #171](https://github.com/monkeorg/MacNativeGames/pull/171) targets #170’s branch.
 No merge, release, signing-account change or device installation occurred.
 
 The original working TOTK checkout remained at
@@ -102,6 +102,8 @@ python games/totk/ios/tools/build_sources.py --jobs 4 --output "$VALIDATION_OUT/
 make -C games/totk binary-v143 PY="$(command -v python)" -j2
 python tools/launcher/build_private_canopy.py --plan --version v143 --display-settings
 ```
+
+Before an original iPad export, run `make -C games/totk game-data-v143` with the retained verified inputs and the same isolated Python interpreter. The normal `runtime-v143` target combines binary and data preparation. The original iPad builder must see all four files under `build/game-data/v143`; the private Canopy builder generates its own verified staged copy.
 
 Actual private builds follow [the private build recipe](canopy-private-build.md)
 with retained verified inputs and a separately reviewed manifest pin. Stock and
