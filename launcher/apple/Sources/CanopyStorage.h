@@ -3,17 +3,19 @@ NS_ASSUME_NONNULL_BEGIN
 typedef NS_ENUM(NSUInteger, CanopyStorageAction) {
     CanopyStorageVerifyGeneration, CanopyStorageSelectGeneration,
     CanopyStorageRemoveGeneration, CanopyStorageDiscardJob,
-    CanopyStorageClearShaderRuntime, CanopyStorageRemoveShaderIdentity
+    CanopyStorageClearShaderRuntime, CanopyStorageRemoveShaderIdentity,
+    CanopyStorageClearMKRuntime, CanopyStorageRemoveMKIdentity, CanopyStorageRemoveRomFSFolder
 };
 typedef void (^CanopyStorageCompletion)(NSDictionary<NSString *,id> *snapshot, NSError * _Nullable error);
 
 /// Main-thread owner; all filesystem/hash work runs on its private serial queue.
 /// Roots are app-owned private physical directories. cacheRoot is global
 /// Canopy/Caches; shader roots are <titleID>/shader-identities below it.
+/// Fixed MK shader namespaces and romfs-derived folders are also managed.
 /// No profiles, saves, accounts, source inputs or unrelated cache kinds are read.
 @interface CanopyStorage : NSObject
 @property(nonatomic, readonly) BOOL busy;
-/// generations/jobs/shaders/issues arrays, complete flag and optional operation.
+/// generations/jobs/shaders/providerCaches/issues arrays, complete flag and optional operation.
 /// Lists are capped128 real directory entries before filtering, with128 rows
 /// per category. Unknown/corrupt entries are preserved. Initial generation sizes
 /// are unknown; explicit verification obtains logical asset bytes, not allocation.
@@ -27,7 +29,8 @@ typedef void (^CanopyStorageCompletion)(NSDictionary<NSString *,id> *snapshot, N
 /// verifiedBaseEntry. Missing legacy intent is an error for this typed route.
 - (BOOL)resolveAddonResumeJob:(NSString *)jobIdentifier
     completion:(void (^)(NSDictionary<NSString *,id> * _Nullable route,NSError * _Nullable error))completion;
-/// Exact lowercase64hex generation/cache IDs or32hex job IDs. Jobs take nil
+/// Exact lowercase64hex generation/shader IDs or32hex job IDs. Derived RomFS
+/// uses the closed romfs-folders-v1-<title16>-<generation64> identifier. Jobs take nil
 /// title; all other actions require exact nonzero16hex title. Existing native
 /// store/cache APIs enforce current/previous/pins/leases at the point of mutation.
 /// Completion is authoritative, even after a controller requests navigation.

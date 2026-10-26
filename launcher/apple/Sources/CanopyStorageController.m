@@ -103,12 +103,12 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
     [self refresh];
 }
 - (NSArray *)rows:(NSInteger)section {
-    return _storage.snapshot[@[@"generations",@"jobs",@"shaders"][(NSUInteger)section]]?:@[];
+    return _storage.snapshot[@[@"generations",@"jobs",@"shaders",@"providerCaches"][(NSUInteger)section]]?:@[];
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {(void)tableView;return 3;}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {(void)tableView;return 4;}
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {(void)tableView;return MAX((NSInteger)[self rows:section].count,1);}
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    (void)tableView;return @[@"Prepared data",@"Unfinished preparations",@"Private shader caches"][(NSUInteger)section];
+    (void)tableView;return @[@"Prepared data",@"Unfinished preparations",@"Private shader caches",@"Provider and derived caches"][(NSUInteger)section];
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView;
@@ -116,7 +116,7 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
     if(section==1)return @"Recorded add-on jobs open their exact verified base's Add-ons flow after verification. Legacy jobs require original mode and inputs. Unavailable or corrupt resume metadata never falls back to generic preparation. Only unpublished jobs can be discarded; saves and supplied sources are preserved.";
     NSArray *issues=_storage.snapshot[@"issues"];
     NSString *details=issues.count?[[issues componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"]:@"";
-    return [details stringByAppendingString:@"Sizes are logical file lengths, not disk allocation or promised free space. Clear keeps the seed; remove targets one identity. In-use caches cannot be cleared or removed. Unknown or corrupt entries are preserved."];
+    return [details stringByAppendingString:@"Sizes are logical file lengths, not disk allocation or promised free space. Listing does not authenticate payload contents. Clear keeps the shader seed; removal targets one identity or derived folder. In-use caches cannot be cleared or removed. Unknown or corrupt entries are preserved."];
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"storage"];
@@ -128,7 +128,7 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
     NSArray *rows=[self rows:path.section];
     if(!rows.count){cell.textLabel.text=[_storage.snapshot[@"complete"] boolValue]?@"No entries":@"Storage unavailable";
         cell.detailTextLabel.text=nil;cell.accessoryType=UITableViewCellAccessoryNone;cell.selectionStyle=UITableViewCellSelectionStyleNone;return cell;}
-    NSDictionary *row=rows[(NSUInteger)path.row];NSString *identifier=STShort(row[@"identifier"]);
+    NSDictionary *row=rows[(NSUInteger)path.row];NSString *identifier=STShort(row[@"cacheIdentity"]?:row[@"identifier"]);
     if(path.section==0) {
         NSString *position=[row[@"current"] boolValue]?@"Current":[row[@"previous"] boolValue]?@"Previous rollback copy":@"Unused selection";
         cell.textLabel.text=[NSString stringWithFormat:@"%@ • %@",row[@"titleID"],position];
@@ -139,6 +139,10 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
         cell.textLabel.text=[kind isEqual:@"addon"]?@"Unfinished add-on preparation":@"Unfinished preparation";
         NSString *route=[kind isEqual:@"addon"]?@"Verify exact base before resuming":[kind isEqual:@"legacy"]?@"Reselect original mode and inputs":@"Resume unavailable; metadata could not be verified";
         cell.detailTextLabel.text=[NSString stringWithFormat:@"%@ • %@",identifier,route];
+    }
+    else if(path.section==3) {
+        cell.textLabel.text=[NSString stringWithFormat:@"%@ • %@",row[@"titleID"],[row[@"kind"] isEqual:@"mkShader"]?@"MK shader identity":@"Derived RomFS folder"];
+        cell.detailTextLabel.text=[NSString stringWithFormat:@"%@ • %@\nLogical files: %@ • content hashes not checked",identifier,[row[@"active"] boolValue]?@"In use":[row[@"usageState"] isEqual:@"available"]?@"Available":@"Unavailable",STBytes(row[@"logicalBytes"])];
     }
     else {cell.textLabel.text=[NSString stringWithFormat:@"%@ • %@",row[@"titleID"],identifier];
         cell.detailTextLabel.text=[row[@"usageState"] isEqual:@"available"]?[NSString stringWithFormat:@"Seed %@ • generated cache %@",STBytes(row[@"seedBytes"]),STBytes(row[@"runtimeBytes"])]:@"Cache could not be verified for management. Existing files were preserved.";}
@@ -214,7 +218,7 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
     [tableView deselectRowAtIndexPath:path animated:YES];if(_storage.busy||![self activeOwner]||self.presentedViewController)return;
     NSArray *rows=[self rows:path.section];if((NSUInteger)path.row>=rows.count)return;NSDictionary *row=[rows[(NSUInteger)path.row] copy];
     NSUInteger intent=++_intentEpoch;_intentScene=self.view.window.windowScene;
-    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:STShort(row[@"identifier"]) message:nil preferredStyle:UIAlertControllerStyleActionSheet];
+    UIAlertController *sheet=[UIAlertController alertControllerWithTitle:STShort(row[@"cacheIdentity"]?:row[@"identifier"]) message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     __weak UIAlertController *weakSheet=sheet;
     if(path.section==0) {
         [sheet addAction:[UIAlertAction actionWithTitle:@"Verify assets and logical size" style:UIAlertActionStyleDefault handler:^(UIAlertAction *button){(void)button;if(!weakSheet||self->_ownedUI!=weakSheet||![self intentValid:intent])return;[self perform:CanopyStorageVerifyGeneration row:row intent:intent];}]];
@@ -249,7 +253,14 @@ static NSString *STShort(NSString *identifier) {return identifier.length>12?[ide
         }]];
         [sheet addAction:[UIAlertAction actionWithTitle:@"Discard unfinished preparation" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *button){(void)button;if(!weakSheet||self->_ownedUI!=weakSheet||![self intentValid:intent])return;
             [self confirm:CanopyStorageDiscardJob row:row title:@"Discard this preparation?" message:@"Only this unpublished job is discarded. Finish or cancel an active preparation first. Prepared versions, saves and source files are preserved." intent:intent];}]];
-    } else if([row[@"usageState"] isEqual:@"available"]) {
+    } else if(path.section==3 && [row[@"usageState"] isEqual:@"available"] && ![row[@"active"] boolValue]) {
+        BOOL mk=[row[@"kind"] isEqual:@"mkShader"];
+        if(mk)[sheet addAction:[UIAlertAction actionWithTitle:@"Clear generated MK shader cache" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *button){(void)button;if(!weakSheet||self->_ownedUI!=weakSheet||![self intentValid:intent])return;
+            [self confirm:CanopyStorageClearMKRuntime row:row title:@"Clear generated MK cache?" message:@"The immutable seed is retained. Native leases are checked again. Disk space changes may differ from logical sizes." intent:intent];}]];
+        CanopyStorageAction action=mk?CanopyStorageRemoveMKIdentity:CanopyStorageRemoveRomFSFolder;
+        [sheet addAction:[UIAlertAction actionWithTitle:mk?@"Remove MK shader seed and cache":@"Remove derived RomFS folder" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *button){(void)button;if(!weakSheet||self->_ownedUI!=weakSheet||![self intentValid:intent])return;
+            [self confirm:action row:row title:@"Remove this private cache?" message:@"Only this exact unused cache is retired. Prepared generations, source inputs, profiles, saves and account identity are preserved. Active native leases refuse removal; interrupted recorded removal is reconciled on reload." intent:intent];}]];
+    } else if(path.section==2 && [row[@"usageState"] isEqual:@"available"]) {
         [sheet addAction:[UIAlertAction actionWithTitle:@"Clear generated shader cache" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *button){(void)button;if(!weakSheet||self->_ownedUI!=weakSheet||![self intentValid:intent])return;
             [self confirm:CanopyStorageClearShaderRuntime row:row title:@"Clear generated shader cache?" message:@"The seed is retained. Active caches cannot be cleared. Disk space changes may differ from logical file sizes." intent:intent];}]];
         [sheet addAction:[UIAlertAction actionWithTitle:@"Remove shader seed and cache" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *button){(void)button;if(!weakSheet||self->_ownedUI!=weakSheet||![self intentValid:intent])return;

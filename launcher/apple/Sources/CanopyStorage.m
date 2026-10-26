@@ -3,6 +3,7 @@
 #endif
 #import "CanopyStorage.h"
 #import "CanopyShaderCache.h"
+#import "CanopyProviderCache.h"
 #include "mng_store.h"
 #include <dirent.h>
 #include <errno.h>
@@ -16,6 +17,10 @@
 static BOOL STHex(id value,NSUInteger length) {
     return [value isKindOfClass:NSString.class] && [value length]==length &&
         [value rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location==NSNotFound;
+}
+static BOOL STDerived(NSString *title,id identifier) {
+    NSString *prefix=[NSString stringWithFormat:@"romfs-folders-v1-%@-",title];
+    return [identifier isKindOfClass:NSString.class]&&[identifier hasPrefix:prefix]&&STHex([identifier substringFromIndex:prefix.length],64);
 }
 static BOOL STTitle(id value) {return STHex(value,16)&&![value isEqual:@"0000000000000000"];}
 static NSURL *STPhysicalURL(NSURL *url) {
@@ -92,7 +97,7 @@ static NSDictionary *STAddonIntent(NSString *job,const struct mng_store_job_inte
         @"baseGenerationID":[NSString stringWithUTF8String:intent->base_generation_id],
         @"addonTitleID":[NSString stringWithFormat:@"%016llx",(unsigned long long)intent->addon_title_id]};
 }
-static NSDictionary *STEmpty(void) {return @{@"generations":@[],@"jobs":@[],@"shaders":@[],@"issues":@[],@"complete":@YES};}
+static NSDictionary *STEmpty(void) {return @{@"generations":@[],@"jobs":@[],@"shaders":@[],@"providerCaches":@[],@"issues":@[],@"complete":@YES};}
 static NSError *STError(NSInteger code) {
     NSString *message=code==2?@"Storage is busy or the selected target is protected. Review current/rollback selections, active leases and retained preparation jobs before retrying.":
         code==4?@"The selected prepared assets did not pass verification. Existing data was preserved.":
@@ -102,7 +107,9 @@ static NSError *STError(NSInteger code) {
 static NSString *STAction(CanopyStorageAction action) {
     switch(action){case CanopyStorageVerifyGeneration:return @"verifyGeneration";case CanopyStorageSelectGeneration:return @"selectGeneration";
         case CanopyStorageRemoveGeneration:return @"removeGeneration";case CanopyStorageDiscardJob:return @"discardJob";
-        case CanopyStorageClearShaderRuntime:return @"clearShaderRuntime";case CanopyStorageRemoveShaderIdentity:return @"removeShaderIdentity";}
+        case CanopyStorageClearShaderRuntime:return @"clearShaderRuntime";case CanopyStorageRemoveShaderIdentity:return @"removeShaderIdentity";
+        case CanopyStorageClearMKRuntime:return @"clearMKRuntime";case CanopyStorageRemoveMKIdentity:return @"removeMKIdentity";
+        case CanopyStorageRemoveRomFSFolder:return @"removeRomFSFolder";}
     return @"unknown";
 }
 @interface CanopyStorage ()
@@ -123,7 +130,7 @@ static NSString *STAction(CanopyStorageAction action) {
 - (BOOL)busy {return _busy;}
 - (NSDictionary *)snapshot {return _snapshot;}
 - (NSDictionary *)scan {
-    NSMutableArray *generations=[NSMutableArray new],*jobs=[NSMutableArray new],*shaders=[NSMutableArray new],*issues=[NSMutableArray new];
+    NSMutableArray *generations=[NSMutableArray new],*jobs=[NSMutableArray new],*shaders=[NSMutableArray new],*providerCaches=[NSMutableArray new],*issues=[NSMutableArray new];
     BOOL complete=YES;
     int root=STRoot(_prepared);struct mng_store *store=NULL;
     if(root>=0) {
@@ -203,9 +210,16 @@ static NSString *STAction(CanopyStorageAction action) {
             }
             close(shaderFD);
         }
+        CanopyProviderCache *providers=[[CanopyProviderCache alloc] initWithCacheRootURL:_cache];
+        for(NSString *title in titles) {
+            if(!STTitle(title))continue;
+            NSError *failure=nil;NSArray *entries=[providers entriesForTitleID:title error:&failure];
+            if(!entries||failure){complete=NO;STIssue(issues,@"Provider cache storage is active, unsupported or unsafe. Unknown data was preserved; recorded recovery may require a retry.");}
+            for(NSDictionary *entry in entries){if(providerCaches.count==128){complete=NO;STIssue(issues,@"Provider cache rows exceed 128. Additional data was preserved.");break;}[providerCaches addObject:entry];}
+        }
         close(cache);
     } else if(errno!=ENOENT){complete=NO;STIssue(issues,@"Cache storage could not be opened privately. Existing files were preserved.");}
-    return @{@"generations":[generations copy],@"jobs":[jobs copy],@"shaders":[shaders copy],@"issues":[issues copy],@"complete":complete?@YES:@NO};
+    return @{@"generations":[generations copy],@"jobs":[jobs copy],@"shaders":[shaders copy],@"providerCaches":[providerCaches copy],@"issues":[issues copy],@"complete":complete?@YES:@NO};
 }
 - (BOOL)reloadWithCompletion:(CanopyStorageCompletion)completion {
     NSAssert(NSThread.isMainThread,@"Storage main-thread owner");
@@ -263,6 +277,11 @@ static NSString *STAction(CanopyStorageAction action) {
             if(action==CanopyStorageVerifyGeneration)operation[@"verifiedAssets"]=@{@"assetBytes":@(verified.asset_bytes),@"assetCount":@(verified.asset_count),
                 @"titleVersion":@(verified.title_version),@"versionIdentified":verified.version_identified?@YES:@NO};
         } else {operation[@"outcome"]=@"notConfirmed";if(error)*error=STError(status==MNG_PREPARE_INVALID?2:status==MNG_PREPARE_INTEGRITY?4:3);}
+    } else if(action>=CanopyStorageClearMKRuntime) {
+        CanopyProviderCache *manager=[[CanopyProviderCache alloc] initWithCacheRootURL:_cache];NSError *failure=nil;
+        BOOL ok=action==CanopyStorageClearMKRuntime?[manager clearRuntimeForTitleID:title identity:identifier error:&failure]:
+            [manager removeKind:action==CanopyStorageRemoveMKIdentity?CanopyProviderCacheMKShader:CanopyProviderCacheRomFS identifier:identifier titleID:title error:&failure];
+        operation[@"outcome"]=ok?@"completed":@"notConfirmed";if(!ok&&error)*error=STError(3);
     } else {
         int cache=STRoot(_cache),titleFD=cache<0?-1:STChild(cache,title.UTF8String),shader=titleFD<0?-1:STChild(titleFD,"shader-identities");
         if(shader>=0) {
@@ -279,7 +298,7 @@ static NSString *STAction(CanopyStorageAction action) {
 - (BOOL)performAction:(CanopyStorageAction)action identifier:(NSString *)identifier titleID:(NSString *)title completion:(CanopyStorageCompletion)completion {
     NSAssert(NSThread.isMainThread,@"Storage main-thread owner");
     BOOL job=action==CanopyStorageDiscardJob;
-    if(_busy||!completion||action>CanopyStorageRemoveShaderIdentity||!STHex(identifier,job?32:64)||
+    if(_busy||!completion||action>CanopyStorageRemoveRomFSFolder||(action==CanopyStorageRemoveRomFSFolder?!STDerived(title,identifier):!STHex(identifier,job?32:64))||
         (job?title!=nil:!STTitle(title)))return NO;
     _busy=YES;NSString *selected=[identifier copy],*selectedTitle=[title copy];
     dispatch_async(_queue,^{@autoreleasepool{
