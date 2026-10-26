@@ -1,4 +1,5 @@
 #import "CanopyRuntime.h"
+#import "CanopyRuntimeRegistry.h"
 #import <CoreFoundation/CoreFoundation.h>
 #import "CanopyShaderCache.h"
 #import <QuartzCore/CAMetalLayer.h>
@@ -29,7 +30,7 @@
 #if !defined(CANOPY_HOST_RUNTIME)
 __attribute__((weak,noinline)) const struct canopy_totk_host *totk_canopy_host_v1(void) {return NULL;}
 #endif
-static CanopyRuntime *activeRuntime;
+
 static NSError *CRError(NSInteger code,NSString *message) {
     return [NSError errorWithDomain:@"CanopyRuntime" code:code userInfo:@{NSLocalizedDescriptionKey:message}];
 }
@@ -337,6 +338,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 @end
 @implementation CanopyRuntime {
     NSURL *_root;
+    CanopyAppleRuntime *_appleRuntime;
     NSString *_state,*_titleID;
     NSDictionary *_settingStates,*_startupSettings;
     CanopyShaderCacheLease *_shaderLease;
@@ -356,12 +358,13 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
 - (instancetype)initWithPreparedRootURL:(NSURL *)root {
     if((self=[super init])){_root=[root.URLByResolvingSymlinksInPath copy];_state=@"idle";_lease=-1;_settingStates=@{};atomic_init(&_preflightCancelled,0);}return self;
 }
-- (NSString *)state{return _state;}
-- (NSString *)titleID{return _titleID;}
-- (BOOL)nativeEntryInvoked{return _nativeEntryInvoked;}
-- (NSDictionary *)capabilities{return CRCapabilities(CRHost()!=NULL);}
-- (NSDictionary *)settingStates{return _settingStates;}
+- (NSString *)state{return _appleRuntime?_appleRuntime.state:_state;}
+- (NSString *)titleID{return _appleRuntime?_appleRuntime.titleID:_titleID;}
+- (BOOL)nativeEntryInvoked{return _appleRuntime?_appleRuntime.nativeEntryInvoked:_nativeEntryInvoked;}
+- (NSDictionary *)capabilities{return _appleRuntime?_appleRuntime.capabilities:CRCapabilities(CRHost()!=NULL);}
+- (NSDictionary *)settingStates{return _appleRuntime?_appleRuntime.settingStates:_settingStates;}
 - (NSDictionary *)diagnosticMetrics {
+    if(_appleRuntime)return _appleRuntime.diagnosticMetrics;
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
     struct canopy_totk_lifecycle_state lifecycle={0};
     BOOL observed=_nativeEntryInvoked && CRReadLifecycle(_host,&lifecycle);
@@ -388,6 +391,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     return [metrics copy];
 }
 + (NSDictionary *)trustedProfileForTitleID:(NSString *)titleID {
+    NSDictionary *apple=CanopyAppleTrustedProfile(titleID);if(apple)return apple;
     const struct canopy_totk_host *h=CRHost();
     if(!h || ![titleID isEqual:[NSString stringWithFormat:@"%016llx",(unsigned long long)h->title_id]])return nil;
     NSMutableDictionary *profile=[CRCapabilities(YES) mutableCopy];
@@ -399,8 +403,15 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
             settings:(NSDictionary *)settings graphicsSurface:(id)surface hostView:(id)view error:(NSError **)error
           completion:(void (^)(BOOL,NSError * _Nullable))completion {
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
+    if(_appleRuntime || CanopyAppleTrustedProfile(titleID)) {
+        if(!_appleRuntime && (_nativeEntryInvoked || ![_state isEqual:@"idle"] || CanopyRuntimeProcessOccupied())) {
+            if(error)*error=CRError(3,@"A native session already owns this runtime or process.");return NO;
+        }
+        if(!_appleRuntime)_appleRuntime=[[CanopyAppleRuntime alloc] initWithPreparedRootURL:_root];
+        return [_appleRuntime startTitleID:titleID generationID:generationID hostAssetsURL:assets activeSavesURL:saves identityURL:identity cacheURL:cache settings:settings graphicsSurface:surface hostView:view error:error completion:completion];
+    }
     NSDictionary *profile=[CanopyRuntime trustedProfileForTitleID:titleID];
-    if(activeRuntime || ![_state isEqual:@"idle"] || !profile || !CRHex(generationID,64) || !completion || !surface || !view ||
+    if(CanopyRuntimeProcessOccupied() || ![_state isEqual:@"idle"] || !profile || !CRHex(generationID,64) || !completion || !surface || !view ||
        !saves.isFileURL || !identity.isFileURL || !cache.isFileURL ||
        ![assets.URLByStandardizingPath isEqual:[profile[@"hostAssetsURL"] URLByStandardizingPath]]) {
         if(error)*error=CRError(3,@"No approved native host is available for this session.");return NO;
@@ -430,7 +441,8 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     _host=CRHost();_titleID=[titleID copy];_state=@"preparing";
     NSMutableDictionary *startup=[settings mutableCopy];
     if(!startup[@"renderHeight"])startup[@"renderHeight"]=@720;if(!startup[@"aspect"])startup[@"aspect"]=@"16:9";
-    _startupSettings=[[NSDictionary alloc] initWithDictionary:startup copyItems:YES];atomic_store(&_preflightCancelled,0);activeRuntime=self;
+    _startupSettings=[[NSDictionary alloc] initWithDictionary:startup copyItems:YES];atomic_store(&_preflightCancelled,0);
+    if(!CanopyRuntimeClaimProcess(self)){_state=@"idle";_titleID=nil;if(error)*error=CRError(3,@"A native session already owns this process.");return NO;}
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         int root=CROpenDirectory(self->_root,YES),lease=-1;struct mng_store *store=NULL;
         struct mng_store_verified_assets verified={0};
@@ -503,7 +515,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
         if(saveFD>=0)close(saveFD);if(identityFD>=0)close(identityFD);if(cacheFD>=0)close(cacheFD);
         if(gen>=0)close(gen);if(exefs>=0)close(exefs);if(resources>=0)close(resources);
         dispatch_async(dispatch_get_main_queue(),^{
-            if(!valid || atomic_load(&self->_preflightCancelled)){if(lease>=0)close(lease);self->_state=@"idle";self->_titleID=nil;activeRuntime=nil;
+            if(!valid || atomic_load(&self->_preflightCancelled)){if(lease>=0)close(lease);self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
                 completion(NO,atomic_load(&self->_preflightCancelled)?CRError(7,@"Native startup preparation cancelled."):
                     deviceUnavailable?CRError(3,@"No native Metal device is available."):CRError(4,preflightFailure));return;}
             self->_lease=lease;
@@ -514,16 +526,16 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
             if(![@[@30,@40,@60] containsObject:desired[@"fpsLimit"]] || !self->_host->fps_supported(fps) ||
                (taa && !self->_host->taa_supported()) || ![@[@0,@1,@2] containsObject:desired[@"hud"]] ||
                ![@[@"",@"zh-Hant",@"zh-Hans",@"en-US",@"ja",@"de",@"es",@"fr",@"it",@"nl",@"ru",@"ko"] containsObject:language]) {
-                close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;activeRuntime=nil;
+                close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
                 completion(NO,CRError(4,@"Requested startup settings are unsupported by the native host."));return;
             }
             if(metalLayer.device!=selectedDevice) {
-                close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;activeRuntime=nil;
+                close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
                 completion(NO,CRError(4,@"The native graphics device changed during preparation. Retry startup."));return;
             }
             CGSize currentViewSize;struct mng_display_resolution selected={0};
             if(!CRViewSize(view,&currentViewSize) || !CRDisplayResolve(self->_host,desired,currentViewSize,&selected)) {
-                close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;activeRuntime=nil;
+                close(self->_lease);self->_lease=-1;self->_shaderLease=nil;self->_state=@"idle";self->_titleID=nil;CanopyRuntimeReleaseBeforeEntry(self);
                 completion(NO,CRError(4,@"The native game view bounds are unavailable. Retry startup."));return;
             }
             self->_displayConfig=selected.config;self->_displayViewSize=currentViewSize;self->_displayHostView=view;
@@ -553,6 +565,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     return YES;
 }
 - (BOOL)cancelPreparation:(NSError **)error {
+    if(_appleRuntime)return [_appleRuntime cancelPreparation:error];
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
     if(![_state isEqual:@"preparing"] && ![_state isEqual:@"cancelling"]) {
         if(error)*error=CRError(3,@"Native startup preparation is not pending.");return NO;
@@ -581,6 +594,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     return state.validation==MNG_DISPLAY_PATCHES_VALIDATED?@"patchesValidated":@"pending";
 }
 - (NSDictionary *)updatePresentationLayout {
+    if(_appleRuntime)return [_appleRuntime updatePresentationLayout];
     NSAssert(NSThread.isMainThread,@"Presentation layout belongs on main thread");
     CGSize size;struct mng_display_presentation presentation={0};
     int result=-1;
@@ -625,6 +639,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     outcome[@"validation"]=validation;outcome[@"experimental"]=_displayConfig.experimental?@YES:@NO;return outcome;
 }
 - (NSDictionary *)applyDesiredSettings:(NSDictionary *)settings {
+    if(_appleRuntime)return [_appleRuntime applyDesiredSettings:settings];
     NSAssert(NSThread.isMainThread,@"Runtime settings belong on main thread");
     if(_nativeEntryInvoked && ([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]))[self observeMainWorker:NULL];
     NSMutableDictionary *states=[NSMutableDictionary dictionary];
@@ -657,6 +672,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     _settingStates=[states copy];return _settingStates;
 }
 - (BOOL)captureInput:(NSError **)error {
+    if(_appleRuntime)return [_appleRuntime captureInput:error];
     NSAssert(NSThread.isMainThread,@"Runtime input belongs on main thread");
     if(_nativeEntryInvoked && ![self observeMainWorker:error])return NO;
     if(!_nativeEntryInvoked || (![_state isEqual:@"active"] && ![_state isEqual:@"inputCaptured"])) {
@@ -664,6 +680,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     _host->clear_input();_host->set_focus(0);_state=@"inputCaptured";return YES;
 }
 - (BOOL)restoreInput:(NSError **)error {
+    if(_appleRuntime)return [_appleRuntime restoreInput:error];
     NSAssert(NSThread.isMainThread,@"Runtime input belongs on main thread");
     if(_nativeEntryInvoked && ![self observeMainWorker:error])return NO;
     if(![[self updatePresentationLayout][@"state"] isEqual:@"applied"]) {if(error)*error=CRError(4,_presentationOutcome[@"message"]);return NO;}
@@ -671,6 +688,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     _host->clear_input();_host->set_focus(1);_state=@"active";return YES;
 }
 - (BOOL)submitInput:(const struct mng_session_input *)input error:(NSError **)error {
+    if(_appleRuntime)return [_appleRuntime submitInput:input error:error];
     NSAssert(NSThread.isMainThread,@"Runtime input belongs on main thread");
     if(_nativeEntryInvoked && ![self observeMainWorker:error])return NO;
     if(![[self updatePresentationLayout][@"state"] isEqual:@"applied"]) {if(error)*error=CRError(4,_presentationOutcome[@"message"]);return NO;}
@@ -694,6 +712,7 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     _sequence=input->sequence;_timestamp=input->timestamp_ns;return YES;
 }
 - (BOOL)tick:(NSError **)error {
+    if(_appleRuntime)return [_appleRuntime tick:error];
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
     if([_state isEqual:@"active"] || [_state isEqual:@"inputCaptured"]) {
         if(![self observeMainWorker:error])return NO;
@@ -708,10 +727,12 @@ static NSDictionary *CROutcome(NSString *state,id desired,id effective,NSString 
     if(error)*error=CRError(3,@"The native host has not started.");return NO;
 }
 - (BOOL)pause:(BOOL)paused error:(NSError **)error {
+    if(_appleRuntime)return [_appleRuntime pause:paused error:error];
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
     (void)paused;if(error)*error=CRError(6,@"This single-use native host cannot promise guest CPU pause.");return NO;
 }
 - (BOOL)close:(NSError **)error {
+    if(_appleRuntime)return [_appleRuntime close:error];
     NSAssert(NSThread.isMainThread,@"Runtime owner must be main thread");
     if(!_nativeEntryInvoked && [_state isEqual:@"idle"])return YES;
     if(error)*error=CRError(6,@"Safe native thread teardown is unavailable. Keep this session sealed until the application exits.");return NO;
