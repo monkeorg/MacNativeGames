@@ -160,7 +160,16 @@ int canopy_host_read_lifecycle_state(struct canopy_totk_lifecycle_state *out) {
 #import <AVFoundation/AVFoundation.h>
 #include "runtime.h"
 #include "game_version.h"
+#if defined(CANOPY_GAME_DATA_RESOURCES)
+#include "game_data.h"
+#ifndef CANOPY_HOST_GAME_DATA_MANIFEST_SHA256
+#define CANOPY_HOST_GAME_DATA_MANIFEST_SHA256 ""
+#endif
+#define ROMFS_IMAGE_SHA256 CANOPY_HOST_ROMFS_SHA256
+#define ROMFS_INDEX_SHA256 CANOPY_HOST_RUNTIME_INDEX_SHA256
+#else
 #include "romfs_config.h"
+#endif
 #include "dmsh_chain.h"
 #include <pthread.h>
 #include <stdatomic.h>
@@ -274,6 +283,9 @@ static void observe_audio(void) {
 static int start_host(const struct canopy_totk_start *s) {
     NSCAssert(NSThread.isMainThread,@"Private host starts on main thread");
     if(canopy_host_pin_compile_environment())return -1;
+#if defined(CANOPY_GAME_DATA_RESOURCES)
+    if(!runtime_game_data_is_installed())return -1;
+#endif
     if(!s || !s->metal_layer || !s->host_view || !s->metal_device || !s->modules || !s->language ||
        (s->taa_enabled && !runtime_ios_taa_supported()) || !runtime_ios_fps_limit_supported(s->fps_limit))return -1;
     CAMetalLayer *selected_layer=(__bridge CAMetalLayer *)s->metal_layer;
@@ -321,6 +333,9 @@ static int start_host(const struct canopy_totk_start *s) {
     /* Main and its observer remain process-owned; no reusable-destroy claim. */
 }
 const struct canopy_totk_host *totk_canopy_host_v1(void) {
+#if defined(CANOPY_GAME_DATA_RESOURCES)
+    if(!display_hash_valid(CANOPY_HOST_GAME_DATA_MANIFEST_SHA256))return NULL;
+#endif
     if(!CANOPY_HOST_TITLE_ID || strlen(CANOPY_HOST_ORIGINAL_MAIN_SHA256)!=64 ||
        strlen(CANOPY_HOST_SHADER_SEED_MANIFEST_SHA256)!=64)return NULL;
     if((CANOPY_DISPLAY_FLAGS&MNG_DISPLAY_SCENE_1080)&&!display_hash_valid(CANOPY_HOST_DISPLAY_HEAP_SHA256))return NULL;
@@ -336,7 +351,31 @@ const struct canopy_totk_host *totk_canopy_host_v1(void) {
         {CANOPY_TOTK_LIFECYCLE_ABI,sizeof(struct canopy_totk_lifecycle),canopy_host_read_lifecycle_state}};
     return &host;
 }
+#if defined(CANOPY_GAME_DATA_RESOURCES)
+static int game_data_prepare(int resources,int (*cancelled)(void *),void *context,void **out){
+    if(!out)return -1;
+    struct RuntimeGameData *data=NULL;
+    int rc=runtime_game_data_prepare_fd(resources,CANOPY_HOST_GAME_DATA_MANIFEST_SHA256,
+        CANOPY_HOST_ROMFS_SHA256,CANOPY_HOST_RUNTIME_INDEX_SHA256,cancelled,context,&data);
+    if(!rc)*out=data;return rc;
+}
+static void game_data_release(void *data){runtime_game_data_release(data);}
+static int game_data_install(void *data){NSCAssert(NSThread.isMainThread,@"Game data install belongs on main");return runtime_game_data_install(data);}
+#endif
+const struct canopy_totk_host_v4 *totk_canopy_host_v4(void){
+#if defined(CANOPY_GAME_DATA_RESOURCES)
+    static struct canopy_totk_host_v4 host;
+    if(!display_hash_valid(CANOPY_HOST_GAME_DATA_MANIFEST_SHA256))return NULL;
+    static dispatch_once_t once;dispatch_once(&once,^{host=(struct canopy_totk_host_v4){CANOPY_TOTK_HOST_V4_ABI,sizeof(host),totk_canopy_host_v1(),
+        {CANOPY_TOTK_GAME_DATA_ABI,sizeof(struct canopy_totk_game_data),CANOPY_HOST_GAME_DATA_MANIFEST_SHA256,game_data_prepare,game_data_release,game_data_install}};});
+    return host.legacy?&host:NULL;
+#else
+    return NULL;
+#endif
+}
+
 #else
 const struct canopy_totk_host *totk_canopy_host_v1(void) {return NULL;}
+const struct canopy_totk_host_v4 *totk_canopy_host_v4(void) {return NULL;}
 #endif
 #endif

@@ -18,7 +18,15 @@
 #include <mach/mach.h>
 #include "mach_vm_compat.h"
 #include <sys/ucontext.h>
+#if defined(GAME_BOTW) || (defined(CANOPY_HOST_RUNTIME) && !defined(CANOPY_GAME_DATA_RESOURCES))
 #include "runtime_tables.h"
+#else
+#include "game_data.h"
+static Module modules[3];
+static uint64_t probe_plt,probe_slot;
+#define PROBE_PLT probe_plt
+#define PROBE_SLOT probe_slot
+#endif
 #include "game_patches.h"
 #include "game_version.h"
 #if defined(CANOPY_HOST_RUNTIME) && !defined(GAME_BOTW)
@@ -414,6 +422,9 @@ int main(int argc,char **argv) {
  for(unsigned i=0;i<8;i++)need(pthread_key_create(&runtime_keys[i],NULL)==0&&runtime_keys[i]!=0,"allocate Darwin key");
  runtime_hle_stack_init((uint64_t)runtime_keys[4]*8);
  need(pthread_key_create(&environment_key,environment_destroy)==0,"thread environment key");
+#if !(defined(GAME_BOTW) || (defined(CANOPY_HOST_RUNTIME) && !defined(CANOPY_GAME_DATA_RESOURCES)))
+ runtime_game_data_modules(modules,&probe_plt,&probe_slot);
+#endif
  for(unsigned i=0;i<NM;i++)map_module(&modules[i],argv[1]);
  for(unsigned i=0;i<NM;i++)relocate(&modules[i]);
  for(unsigned i=0;i<NM;i++)if(!strcmp(modules[i].name,"main")){

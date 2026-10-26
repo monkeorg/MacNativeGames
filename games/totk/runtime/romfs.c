@@ -1,7 +1,15 @@
 /* Read-only game RomFS, backed by the player's fully IVFC-verified image. */
 #include "runtime.h"
 #include "totk_ui_lang.h"
+#if defined(GAME_BOTW) || (defined(CANOPY_HOST_RUNTIME) && !defined(CANOPY_GAME_DATA_RESOURCES))
 #include "romfs_config.h"
+#else
+#include "game_data.h"
+static uint64_t romfs_image_size;static const char *romfs_image_sha256,*romfs_index_sha256;
+#define ROMFS_IMAGE_SIZE romfs_image_size
+#define ROMFS_IMAGE_SHA256 romfs_image_sha256
+#define ROMFS_INDEX_SHA256 romfs_index_sha256
+#endif
 #include "game_version.h"
 #include "fs_host.h"
 #include "romfs_path.h"
@@ -244,10 +252,33 @@ static void overlay_init(void) {
 }
 void runtime_fs_init(void) {
  if(image_fd>=0)return;
+#if !(defined(GAME_BOTW) || (defined(CANOPY_HOST_RUNTIME) && !defined(CANOPY_GAME_DATA_RESOURCES)))
+ romfs_image_size=runtime_game_number("romfs-config.txt","ROMFS_IMAGE_SIZE");romfs_image_sha256=runtime_game_sha256("romfs-config.txt","ROMFS_IMAGE_SHA256");
+ romfs_index_sha256=runtime_game_sha256("romfs-config.txt","ROMFS_INDEX_SHA256");
+#endif
  const char *dir=getenv("TOTK_ROMFS");if(!dir)dir="extracted/" TOTK_GAME_DIR "/romfs";char path[4096];
- need(snprintf(path,sizeof(path),"%s/runtime-index.bin",dir)<(int)sizeof(path),"RomFS path");int fd=open(path,O_RDONLY);need(fd>=0,"RomFS index missing");
- struct stat st;need(fstat(fd,&st)==0&&st.st_size>=24&&st.st_size<128*1024*1024,"RomFS index size");runtime_boot_progress(TOTK_UI("读取资源索引","Reading the data index"),0,0);sha_fd(fd,ROMFS_INDEX_SHA256,0,NULL);
+ need(snprintf(path,sizeof(path),"%s/runtime-index.bin",dir)<(int)sizeof(path),"RomFS path");
+#if defined(GAME_BOTW) || (defined(CANOPY_HOST_RUNTIME) && !defined(CANOPY_GAME_DATA_RESOURCES))
+ int fd=open(path,O_RDONLY);
+#else
+ int fd=open(path,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+#endif
+ need(fd>=0,"RomFS index missing");
+ struct stat st;need(fstat(fd,&st)==0&&st.st_size>=24&&st.st_size<128*1024*1024,"RomFS index size");runtime_boot_progress(TOTK_UI("读取资源索引","Reading the data index"),0,0);
+#if defined(GAME_BOTW) || (defined(CANOPY_HOST_RUNTIME) && !defined(CANOPY_GAME_DATA_RESOURCES))
+ sha_fd(fd,ROMFS_INDEX_SHA256,0,NULL);
+#endif
+#if defined(GAME_BOTW) || (defined(CANOPY_HOST_RUNTIME) && !defined(CANOPY_GAME_DATA_RESOURCES))
  index_size=(size_t)st.st_size;index_bytes=mmap(NULL,index_size,PROT_READ,MAP_PRIVATE,fd,0);close(fd);need(index_bytes!=MAP_FAILED,"map RomFS index");
+#else
+ /* Metadata consumers use the same owned bytes that were hashed. MAP_PRIVATE
+  * of a mutable external file is not an immutable snapshot after close(fd). */
+ need(S_ISREG(st.st_mode)&&st.st_nlink==1,"RomFS index snapshot type");
+ index_size=(size_t)st.st_size;index_bytes=malloc(index_size);need(index_bytes!=NULL,"RomFS index snapshot");
+ size_t used=0;while(used<index_size){ssize_t n=pread(fd,index_bytes+used,index_size-used,(off_t)used);if(n<0&&errno==EINTR)continue;need(n>0,"RomFS index snapshot read");used+=(size_t)n;}
+ struct stat after;need(fstat(fd,&after)==0&&st.st_dev==after.st_dev&&st.st_ino==after.st_ino&&st.st_size==after.st_size&&st.st_mode==after.st_mode&&st.st_nlink==after.st_nlink&&st.st_mtimespec.tv_sec==after.st_mtimespec.tv_sec&&st.st_mtimespec.tv_nsec==after.st_mtimespec.tv_nsec&&st.st_ctimespec.tv_sec==after.st_ctimespec.tv_sec&&st.st_ctimespec.tv_nsec==after.st_ctimespec.tv_nsec,"RomFS index changed during snapshot");
+ need(close(fd)==0,"RomFS index snapshot close");unsigned char digest[32];char hex[65];CC_SHA256(index_bytes,(CC_LONG)index_size,digest);for(unsigned i=0;i<32;i++)snprintf(hex+2*i,3,"%02x",digest[i]);need(!strcmp(hex,ROMFS_INDEX_SHA256),"RomFS index snapshot integrity");
+#endif
  need(!memcmp(index_bytes,"TOTKRFS1",8),"RomFS index format");memcpy(&file_count,index_bytes+8,8);memcpy(&strings_offset,index_bytes+16,8);
  need(file_count<1000000&&strings_offset==24+file_count*24&&strings_offset<index_size,"RomFS index layout");
  const char *previous=NULL;

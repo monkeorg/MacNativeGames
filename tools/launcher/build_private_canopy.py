@@ -22,7 +22,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-RECIPE = 'canopy-private-native-ios26-icon-v2'
+RECIPE = 'canopy-private-native-ios26-game-data-v1'
 FRAMEWORKS = ('UIKit', 'Metal', 'MetalFX', 'Foundation', 'QuartzCore', 'ImageIO',
               'CoreGraphics', 'CoreText', 'UniformTypeIdentifiers', 'CoreFoundation',
               'AudioToolbox', 'GameController', 'AVFAudio', 'Security', 'WebKit', 'CoreHaptics')
@@ -352,6 +352,7 @@ def stage_inputs(tree, stage_tree, version, profile):
     report = json.loads((stage_tree / report_name).read_bytes())
     require(report.get('status') == 'pass' and report.get('rom_version') == version,
             'retained native validation did not pass the selected version')
+    copy(f'rewritten/{version}/build_src.sha256', limit=4096)
     for name in MODULES:
         require(report['module_file_sha256'][f'extracted/{version}/exefs/{name}'] == profile['exefs_sha256'][name] and
                 report['module_file_sha256'][f'rewritten/{version}/{name}.patched.bin'] == profile['rewritten_sha256'][name + '.patched.bin'],
@@ -755,7 +756,41 @@ def stage_shader_native(source, destination, report_sha, repo):
             'licenses': licenses}
 
 
-def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, display_profile=None, shader_native=None):
+GAME_DATA_FILES = ('runtime-tables.bin', 'romfs-config.txt', 'shared-fonts.txt', 'rewriter.txt')
+
+def stage_game_data(stage_tree, destination, version, profile):
+    source = stage_tree / f'build/game-data/{version}'
+    require(sorted(p.name for p in source.iterdir()) == sorted(GAME_DATA_FILES), 'unexpected runtime-data output')
+    rows = {}; manifest = ['CANOPY-GAME-DATA-1']
+    for name in GAME_DATA_FILES:
+        data = stable_bytes(source / name, (256 << 20) if name == 'runtime-tables.bin' else (1 << 20))
+        require(data, 'empty runtime-data output')
+        rows[name] = {'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+        manifest.append(f'{name} {len(data)} {rows[name]["sha256"]}')
+    def config(name):
+        data = stable_bytes(source / name, 1 << 20).decode('ascii')
+        pairs = [line.split(' ') for line in data.splitlines() if line and not line.startswith('#')]
+        require(all(len(row) == 2 and row[0] and row[1] for row in pairs) and len({row[0] for row in pairs}) == len(pairs), 'invalid runtime-data config')
+        return dict(pairs)
+    romfs = config('romfs-config.txt')
+    require(romfs == {'ROMFS_IMAGE_SIZE': str(profile['romfs']['size']), 'ROMFS_IMAGE_SHA256': profile['romfs']['sha256'],
+                     'ROMFS_INDEX_SHA256': hashlib.sha256(stable_bytes(stage_tree / f'extracted/{version}/romfs/runtime-index.bin',128 << 20)).hexdigest()}, 'runtime-data RomFS identity differs')
+    fonts = config('shared-fonts.txt')
+    require(len(fonts) == 24, 'runtime-data font schema differs')
+    for i, (name, expected) in enumerate(profile['shared_fonts_sha256'].items()):
+        require(fonts.get(f'FONT{i}_FILE') == name and fonts.get(f'FONT{i}_SHA256') == expected, 'runtime-data font identity differs')
+    rewrite = config('rewriter.txt')
+    recorded = stable_bytes(stage_tree / f'rewritten/{version}/build_src.sha256',4096).decode('ascii').split()[0]
+    require(re.fullmatch('[0-9a-f]{64}', recorded) and rewrite == {'REWRITER_SHA256': recorded}, 'runtime-data rewriter record differs')
+    destination.mkdir(mode=0o700)
+    for name, row in rows.items():
+        digest(source / name, destination / name, expected=row['sha256'], limit=1 << 30)
+    raw = ('\n'.join(manifest)+'\n').encode('ascii');(destination / 'manifest.txt').write_bytes(raw)
+    return {'manifestSHA256': hashlib.sha256(raw).hexdigest(), 'files': rows, 'recordedRewriterSHA256': recorded,
+            'runtimeIndexSHA256': romfs['ROMFS_INDEX_SHA256']}
+
+
+def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, display_profile=None, shader_native=None, game_data=None):
     display_option(version, display_profile is not None)
     selected = PROFILES.version_profile(stage, version)[1]
     require(profile == selected['_expected'], 'compiler profile differs from staged registry')
@@ -766,6 +801,11 @@ def compiler_commands(stage, work, toolchain, version, profile, seed_sha, deps, 
             '-DCANOPY_HOST_TITLE_ID=0x' + profile['title_id'] + 'ULL',
             '-DCANOPY_HOST_ORIGINAL_MAIN_SHA256="' + profile['exefs_sha256']['main'] + '"',
             '-DCANOPY_HOST_SHADER_SEED_MANIFEST_SHA256="' + seed_sha + '"']
+    require(isinstance(game_data,dict) and re.fullmatch('[0-9a-f]{64}',game_data.get('manifestSHA256','')), 'runtime-data manifest pin is required')
+    base += ['-DCANOPY_GAME_DATA_RESOURCES=1',
+             '-DCANOPY_HOST_GAME_DATA_MANIFEST_SHA256="'+game_data['manifestSHA256']+'"',
+             '-DCANOPY_HOST_ROMFS_SHA256="'+profile['romfs']['sha256']+'"',
+             '-DCANOPY_HOST_RUNTIME_INDEX_SHA256="'+game_data['runtimeIndexSHA256']+'"']
     if shader_native is not None:
         recipe = shader_native['observation']['recipeSHA256']
         require(re.fullmatch('[0-9a-f]{64}', recipe), 'native shader product recipe is missing')
@@ -887,15 +927,16 @@ def build(args):
             observation['privateInputs'] = stage_inputs(tree, stage_tree, args.version, profile)
             generated = stage_tree / 'build' / args.version
             for script in ('prepare_runtime.py', 'prepare_romfs_backend.py'):
-                run([sys.executable, str(stage_tree / 'scripts' / script), '--version', args.version])
-            run([sys.executable, str(stage_tree / 'scripts/prepare_shared_fonts.py')])
+                run([sys.executable, '-E', str(stage_tree / 'scripts' / script), '--version', args.version])
+            run([sys.executable, '-E', str(stage_tree / 'scripts/prepare_shared_fonts.py'), '--version', args.version])
             host = tree / f'build/totk-native-{args.version}'
             require(os.access(host, os.X_OK), 'trusted local exporter is not executable')
             exporter = work / 'trusted-native-exporter'
             observation['trustedLocalExporterSHA256'] = digest(host, exporter, limit=512 << 20)
             exporter.chmod(0o700)
             modules = work / 'modules';modules.mkdir()
-            run([str(exporter), str(stage_tree / 'rewritten' / args.version), 'export-ios'], exporter_environment(modules, display_settings))
+            run([str(exporter), str(stage_tree / 'rewritten' / args.version), 'export-ios'],
+                dict(exporter_environment(modules,display_settings),TOTK_GAME_DATA=str(stage_tree / f'build/game-data/{args.version}')))
             flags = shlex.split(run([sys.executable, str(stage_tree / 'ios/tools/gen_embed.py'),
                                     str(stage_tree / 'rewritten' / args.version), str(work / 'embed.S'),
                                     '--text-dir', str(modules), *MODULES]))
@@ -903,6 +944,8 @@ def build(args):
                     'unexpected generated segment flags')
             app = work / 'Canopy.app';app.mkdir(mode=0o700)
             data = app / 'GameData';data.mkdir(mode=0o700)
+            game_data=stage_game_data(stage_tree,data/'runtime-data',args.version,profile)
+            observation['runtimeData']=game_data
             chain_header = (stage_tree / 'third_party/d2r_gfx/gfx/nvn/dmsh_chain.h').read_text()
             chain = re.search(r'^#define DMSH_CHAIN "([^"\n]+)"$', chain_header, re.M).group(1)
             stage_seed(seed, data / 'shader-seed', args.shader_manifest_sha256, profile['romfs']['sha256'], chain)
@@ -924,7 +967,7 @@ def build(args):
                 observation['nativeShaderProvider'] = shader_native['observation']
                 libraries.extend(shader_native['libraries'])
                 native_arguments = shader_native['arguments']
-            commands, objects = compiler_commands(stage, work, toolchain, args.version, profile, args.shader_manifest_sha256, codec_snapshot, display_profile, shader_native)
+            commands, objects = compiler_commands(stage, work, toolchain, args.version, profile, args.shader_manifest_sha256, codec_snapshot, display_profile, shader_native, game_data)
             for command in commands:
                 run(command)
             link = [toolchain['clang'], '-target', 'arm64-apple-ios26.0', '-isysroot', toolchain['sdk'],

@@ -252,15 +252,13 @@ def main():
     subprocess.run(['xcodebuild','-version'],env=env,check=True,stdout=subprocess.DEVNULL)
     if not shutil.which('xcodegen'): raise RuntimeError('install xcodegen: brew install xcodegen')
     gen.mkdir(parents=True,exist_ok=True)
-    version_dir=tree/'build'/({'v0':'','v112':'v112','v121':'v121','v143':'v143'}[a.version])
-    if a.version=='v0': version_dir=tree/'build'
-    for name in ('runtime_tables.h','romfs_config.h'):
-        clone(version_dir/name,gen/name)
-    clone(tree/'build/shared_fonts_config.h',gen/'shared_fonts_config.h')
+    game_data=tree/f'build/game-data/{a.version}'
+    if not all((game_data/name).is_file() for name in ('runtime-tables.bin','romfs-config.txt','shared-fonts.txt','rewriter.txt')):
+        raise RuntimeError('missing verified runtime data; make the selected runtime target first')
     # Export the final code after all verified runtime patches have been applied, then embed it in executable segments.
     host=tree/('build/totk-native' if a.version=='v0' else f'build/totk-native-{a.version}')
     rewritten=tree/f'rewritten/{a.version}'; modules=gen/'modules';modules.mkdir(exist_ok=True)
-    e=dict(env,TOTK_EXPORT_IOS=str(modules))
+    e=dict(env,TOTK_EXPORT_IOS=str(modules),TOTK_GAME_DATA=str(game_data))
     e.pop('TOTK_IOS_DISPLAY_SETTINGS',None)   # This signed-code capability belongs to the explicit build flag.
     e.pop('TOTK_IOS_ASPECT_VERT',None)
     if a.display_settings:
@@ -351,6 +349,7 @@ def main():
     if out.suffix!='.app': shutil.rmtree(tree/'build/ios-payload',ignore_errors=True)
     copy_tree(app,dest)
     res=dest/'GameData';res.mkdir(exist_ok=True)
+    copy_tree(game_data,res/'game-data')
     romfs=tree/f'extracted/{a.version}/romfs'
     copy_tree(romfs,res/'romfs')
     if a.image_outside:   # the index stays (it changes with the build); the 17 GB image is in Documents/GameData (main.m)
