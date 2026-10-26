@@ -346,14 +346,18 @@ class ShaderKeyScope(unittest.TestCase):
             _, again, _ = self.prepare_with_service(root, root/'seed', listed, compare={shadow})
             self.assertEqual(again, [])
 
-    def test_deps_match_reads_wildcard_texture_kinds_and_unbound_vertex_inputs_as_the_runtime_does(self):
+    def test_deps_match_accepts_vertex_retypes_and_preserves_other_dependencies(self):
         deps = {'tex': {'1': '*', '2': '*_depth', '3': '2d'}, 'attr': {'0': 'uint'}, 'fout': {}, 'img': {}}
         self.assertTrue(seed.deps_match(deps, {'tex': {'1': 'cube', '2': '2darray_depth'}, 'attr': {'0': 'uint'}}))
         self.assertTrue(seed.deps_match(deps, {'tex': {'2': '2d_depth'}}))              # unbound slot 1 and input 0
         self.assertFalse(seed.deps_match(deps, {'tex': {'1': '2d_depth', '2': '2d_depth'}}))
         self.assertFalse(seed.deps_match(deps, {'tex': {'2': '2d'}}))
         self.assertFalse(seed.deps_match(deps, {'tex': {'2': '2d_depth', '3': '3d'}}))   # a queried kind still counts
-        self.assertFalse(seed.deps_match(deps, {'tex': {'2': '2d_depth'}, 'attr': {'0': 'float'}}))
+        for component_type in ('float', 'int', 'uint'):
+            with self.subTest(component_type=component_type):
+                self.assertTrue(seed.deps_match(deps, {'tex': {'2': '2d_depth'}, 'attr': {'0': component_type}}))
+        self.assertFalse(seed.deps_match({'fout': {'0': 'uint'}}, {'fout': {'0': 'float'}}))
+        self.assertFalse(seed.deps_match({'img': {'1': '2d'}}, {'img': {'1': '3d'}}))
         self.assertEqual(seed.answers_for({'tex': {'1': '*', '2': '*_depth', '3': 'cube'}})['tex'],
                          {'1': '2d', '2': '2d_depth', '3': 'cube'})
 
@@ -387,7 +391,7 @@ class ShaderKeyScope(unittest.TestCase):
             (root/f'{key}-{seed.SUFFIX}_b.json').write_text(json.dumps({'compare_slots': [3]}))
             self.assertTrue(seed.builtin_serves(root, key, '{"tex":{"3":"2darray"},"attr":{"6":"uint"}}'))
             self.assertTrue(seed.builtin_serves(root, key, {'tex': {'3': '2d_depth'}}))      # the depth-bound one
-            self.assertFalse(seed.builtin_serves(root, key, {'attr': {'6': 'float'}}))      # a float input: its own variant
+            self.assertTrue(seed.builtin_serves(root, key, {'attr': {'6': 'float'}}))       # renderer retypes the default
             self.assertFalse(seed.builtin_serves(root, key, {'fout': {'0': 'uint'}}))      # served by a listed variant only
             self.assertFalse(seed.builtin_serves(root, other, {}))                          # not a shader of this seed
             lst = root/'list.tsv'
@@ -398,8 +402,7 @@ class ShaderKeyScope(unittest.TestCase):
                                   capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr)
             kept = [l for l in lst.read_text().splitlines() if l.startswith('V')]
-            self.assertEqual(kept, [f'V\t{key}\t{{"attr":{{"6":"float"}},"fout":{{}},"img":{{}},"tex":{{}}}}',
-                                    f'V\t{other}\t{{"attr":{{}},"fout":{{}},"img":{{}},"tex":{{}}}}'])
+            self.assertEqual(kept, [f'V\t{other}\t{{"attr":{{}},"fout":{{}},"img":{{}},"tex":{{}}}}'])
 
     def test_a_new_translator_empties_the_translation_cache(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -41,7 +41,8 @@ class CanopyRuntimeTests(unittest.TestCase):
         cls.probe = cls.build / 'runtime-probe'
         cls.compile(['xcrun', 'clang', '-fobjc-arc', '-fblocks', '-Wall', '-Wextra', '-Werror',
                      '-I', str(SOURCES), '-I', str(ROOT / 'launcher/include'),
-                     str(ROOT / 'tests/canopy_runtime_probe.m'), str(SOURCES / 'CanopyRuntime.m'), str(SOURCES / 'CanopyShaderCache.m'),
+                     str(ROOT / 'tests/canopy_runtime_probe.m'), str(SOURCES / 'CanopyRuntime.m'), str(SOURCES / 'CanopyRuntimeRegistry.m'),
+                     str(SOURCES / 'CanopyShaderCache.m'), str(SOURCES / 'CanopyCacheFS.m'),
                      *objects, '-framework', 'Foundation', '-framework', 'CoreFoundation',
                      '-framework', 'Metal', '-framework', 'QuartzCore', '-o', str(cls.probe)])
 
@@ -225,7 +226,8 @@ int main(void) {@autoreleasepool {
         output = self.build / 'public-runtime'
         self.compile(['xcrun', 'clang', '-O2', '-fobjc-arc', '-fblocks', '-Wall', '-Wextra', '-Werror',
                       '-I', str(SOURCES), '-I', str(ROOT / 'launcher/include'), str(source),
-                      str(SOURCES / 'CanopyRuntime.m'), str(SOURCES / 'CanopyShaderCache.m'),
+                      str(SOURCES / 'CanopyRuntime.m'), str(SOURCES / 'CanopyRuntimeRegistry.m'),
+                      str(SOURCES / 'CanopyShaderCache.m'), str(SOURCES / 'CanopyCacheFS.m'),
                       *self.objects, '-framework', 'Foundation', '-framework', 'CoreFoundation',
                       '-framework', 'Metal', '-framework', 'QuartzCore', '-o', str(output)])
         run = subprocess.run([str(output)], capture_output=True, text=True, timeout=10)
