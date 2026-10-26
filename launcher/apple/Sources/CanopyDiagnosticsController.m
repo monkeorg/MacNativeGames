@@ -60,6 +60,13 @@ static NSString *CDBytes(id value) {return [value isKindOfClass:NSNumber.class]?
             @"storageListingComplete",@"storageListedGenerations",@"storageVerifiedGenerations",@"storageVerifiedAssetBytes",@"storageListedJobs",
             @"storageListedShaders",@"storageAvailableShaders",@"storageAvailableSeedBytes",@"storageAvailableRuntimeBytes"];
         for(NSString *key in keys)if(metrics[key])[rows addObject:@[key,[key hasSuffix:@"Bytes"]?CDBytes(metrics[key]):CDValue(metrics[key])]];
+        NSArray *providerRows=@[@[@"storageListedProviderCaches",@"Listed provider caches"],
+            @[@"storageKnownActiveProviderCaches",@"Known active listed provider caches"],
+            @[@"storageInactiveProviderCachesWithKnownUsage",@"Inactive provider caches with known usage"],
+            @[@"storageUnverifiedInactiveProviderLogicalBytes",@"UNVERIFIED inactive provider logical bytes (known subset)"]];
+        for(NSArray *row in providerRows)if(metrics[row[0]])[rows addObject:@[row[1],[row[0] hasSuffix:@"Bytes"]?CDBytes(metrics[row[0]]):CDValue(metrics[row[0]])]];
+        if(metrics[@"storageListedProviderCaches"] && !metrics[@"storageUnverifiedInactiveProviderLogicalBytes"])
+            [rows addObject:@[@"UNVERIFIED inactive provider logical bytes",@"Unavailable — no known inactive usage; active and unknown sizes are omitted"]];
         NSDictionary *io=metrics[@"preparationIO"];
         for(NSString *key in @[@"streamedBytes",@"writtenBytes",@"clonedLogicalBytes",@"comparedEqualBytes",@"resumedBytes",@"clonedAssets",@"cloneFallbackAssets"])
             if(io[key])[rows addObject:@[[NSString stringWithFormat:@"Preparation · %@",key],[key hasSuffix:@"Bytes"]?CDBytes(io[key]):CDValue(io[key])]];
@@ -84,7 +91,7 @@ static NSString *CDBytes(id value) {return [value isKindOfClass:NSNumber.class]?
     if(section==0)return [_notice stringByAppendingString:@"\nCollection is opt-in and stores at most 16 redacted samples in memory. Disable clears history. No automatic upload or timer."];
     if(section==1)return @"Memory covers this entire process, not guest-only or GPU memory. A frame ceiling is desired configuration, not measured throughput. Presentation is not gameplay evidence.";
     if(section==2)return @"Hashes and integrity do not establish execution, compatibility or signature authenticity. Folder inventories are not physical container hashes.";
-    if(section==3)return @"Storage counters cover listed rows only. Verified generation bytes and available shader bytes are logical file lengths, not total disk use or promised reclaimed space. Preparation counters cover the actual attempt, including failures; old-snapshot clone lengths are not physical space savings or retained target bytes. Counters do not prove publication. Progress units are preserved.";
+    if(section==3)return @"Storage counters cover listed rows only. Verified generation bytes and available shader bytes are logical file lengths, not total disk use or promised reclaimed space. Preparation counters cover the actual attempt, including failures; old-snapshot clone lengths are not physical space savings or retained target bytes. Counters do not prove publication. Provider-cache byte totals are an UNVERIFIED known inactive subset; active, missing and unsafe sizes remain unavailable. They establish neither content correctness nor physical allocation or reclaimable space. Progress units are preserved.";
     return @"Oldest samples are discarded at 16. Refresh obtains a new observation; history is not a time series or a frame-rate measurement.";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
