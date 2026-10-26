@@ -517,9 +517,14 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 
 @interface CanopyKeyboardKeyPicker : UITableViewController
 @property(nonatomic,copy) void (^choose)(UIViewController *,NSNumber *);
+@property(nonatomic,copy) void (^didLeave)(void);
 @end
 @implementation CanopyKeyboardKeyPicker
 - (void)viewDidLoad {[super viewDidLoad];self.title=@"Choose keyboard key";self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=50;}
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    if((self.isMovingFromParentViewController || self.isBeingDismissed || self.navigationController.isBeingDismissed || self.navigationController.topViewController!=self) && self.didLeave)self.didLeave();
+}
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {(void)tableView;(void)section;return (NSInteger)CanopySettings.keyboardSupportedKeys.count;}
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)path {
     NSNumber *usage=CanopySettings.keyboardSupportedKeys[(NSUInteger)path.row];
@@ -536,11 +541,43 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
 @end
 @implementation CanopyKeyboardBindingsController {
     CanopySettings *_settings; NSString *_titleID;
+    NSUInteger _keyEpoch;
+    CanopyKeyboardKeyPicker *_keyPicker;
+    UIViewController *_keyDialog;
+    __weak UIWindowScene *_keyScene;
 }
 - (instancetype)initWithSettings:(CanopySettings *)settings titleID:(NSString *)titleID {
     if((self=[super initWithStyle:UITableViewStyleInsetGrouped])){_settings=settings;_titleID=[titleID copy];}return self;
 }
-- (void)viewDidLoad {[super viewDidLoad];self.title=@"Keyboard bindings";self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=60;}
+- (void)viewDidLoad {
+    [super viewDidLoad];self.title=@"Keyboard bindings";self.tableView.rowHeight=UITableViewAutomaticDimension;self.tableView.estimatedRowHeight=60;
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyInterrupted:) name:UIApplicationWillResignActiveNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyInterrupted:) name:UISceneWillDeactivateNotification object:nil];
+}
+- (void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];}
+- (void)invalidateKeyIntent {
+    ++_keyEpoch;CanopyKeyboardKeyPicker *picker=_keyPicker;UIViewController *dialog=_keyDialog;
+    _keyPicker=nil;_keyDialog=nil;picker.choose=nil;picker.didLeave=nil;
+    picker.navigationItem.prompt=@"Selection expired. Return to bindings and choose the action again.";
+    if(dialog && picker.presentedViewController==dialog)[dialog dismissViewControllerAnimated:NO completion:nil];
+}
+- (void)keyInterrupted:(NSNotification *)notification {
+    if([notification.name isEqual:UISceneWillDeactivateNotification] && notification.object!=_keyScene)return;
+    [self invalidateKeyIntent];
+}
+- (BOOL)keyIntentValid:(NSUInteger)epoch picker:(UIViewController *)picker {
+    if(epoch!=_keyEpoch || !picker || picker!=_keyPicker || picker.navigationController.topViewController!=picker ||
+       picker.isMovingFromParentViewController || picker.isBeingDismissed || picker.navigationController.isBeingDismissed)return NO;
+    UIWindow *window=picker.viewIfLoaded.window;
+    if(!window && _keyDialog && picker.presentedViewController==_keyDialog)window=_keyDialog.viewIfLoaded.window;
+    return window.isKeyWindow && window.windowScene && _keyScene && window.windowScene==_keyScene && window.windowScene.activationState==UISceneActivationStateForegroundActive &&
+        UIApplication.sharedApplication.applicationState==UIApplicationStateActive && (!picker.presentedViewController || picker.presentedViewController==_keyDialog);
+}
+- (void)armKeyPicker:(CanopyKeyboardKeyPicker *)picker action:(NSString *)action epoch:(NSUInteger)epoch {
+    __weak CanopyKeyboardBindingsController *weakSelf=self;__weak CanopyKeyboardKeyPicker *weakPicker=picker;
+    picker.choose=^(UIViewController *presenter,NSNumber *usage){[weakSelf assignUsage:usage action:action presenter:presenter epoch:epoch];};
+    picker.didLeave=^{CanopyKeyboardBindingsController *owner=weakSelf;if(owner && owner->_keyPicker==weakPicker)[owner invalidateKeyIntent];};
+}
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self.tableView reloadData];}
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {(void)tableView;(void)section;return (NSInteger)CanopySettings.keyboardActions.count;}
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
@@ -555,41 +592,73 @@ static void ApplySavedSettings(CanopySettings *settings, NSString *title, Canopy
     UITableViewCell *cell=GamesCell(tableView,action,values ? [CanopySettings keyboardKeyTitle:[CanopySettings keyboardBindingForAction:action settings:values]] : @"Metadata recovery required");
     cell.accessoryType=values ? UITableViewCellAccessoryDisclosureIndicator : UITableViewCellAccessoryNone;return cell;
 }
-- (void)assignUsage:(NSNumber *)usage action:(NSString *)action presenter:(UIViewController *)presenter {
-    NSError *error=nil;NSDictionary *values=[_settings settingsForTitleID:_titleID error:&error];
-    if(!values){GamesAlert(presenter,@"Settings unavailable",error.localizedDescription);return;}
-    NSMutableArray<NSString *> *conflicts=[NSMutableArray new];
-    if(usage.unsignedIntValue)for(NSString *other in CanopySettings.keyboardActions)
-        if(![other isEqual:action] && [CanopySettings keyboardBindingForAction:other settings:values]==usage.unsignedIntValue)[conflicts addObject:other];
-    // Confirm the exact current conflict, then re-read before writing so a
-    // stale confirmation cannot silently displace a different binding.
-    void (^save)(void)=^{
-        NSError *failure=nil;NSDictionary *current=[self->_settings settingsForTitleID:self->_titleID error:&failure];
-        if(!current){GamesAlert(presenter,@"Could not save keyboard binding",failure.localizedDescription);return;}
-        NSMutableArray *actual=[NSMutableArray new];
-        if(usage.unsignedIntValue)for(NSString *other in CanopySettings.keyboardActions)
-            if(![other isEqual:action] && [CanopySettings keyboardBindingForAction:other settings:current]==usage.unsignedIntValue)[actual addObject:other];
-        if(![actual isEqualToArray:conflicts]){GamesAlert(presenter,@"Bindings changed",@"Choose the key again to review its current assignment.");return;}
+- (void)finishKeySelection:(CanopyKeyboardKeyPicker *)picker dialog:(UIViewController *)dialog action:(NSString *)action epoch:(NSUInteger)epoch failure:(NSString *)failure success:(BOOL)success {
+    void (^finish)(void)=^{
+        if(![self keyIntentValid:epoch picker:picker] || self->_keyDialog!=dialog || picker.presentedViewController)return;
+        self->_keyDialog=nil;
+        if(success) {
+            [self invalidateKeyIntent];[self.navigationController popToViewController:self animated:YES];[self.tableView reloadData];
+        } else {
+            [self armKeyPicker:picker action:action epoch:epoch];
+            if(failure)GamesAlert(picker,@"Could not save keyboard binding",failure);
+        }
+    };
+    if(dialog && picker.presentedViewController==dialog)[dialog dismissViewControllerAnimated:YES completion:finish];
+    else if(!picker.presentedViewController)finish();
+}
+- (void)saveUsage:(NSNumber *)usage action:(NSString *)action conflicts:(NSArray *)conflicts picker:(CanopyKeyboardKeyPicker *)picker dialog:(UIViewController *)dialog epoch:(NSUInteger)epoch {
+    if(![self keyIntentValid:epoch picker:picker] || _keyDialog!=dialog)return;
+    NSUInteger next=++_keyEpoch; // Consume before any persistence or callback.
+    NSError *failure=nil;NSDictionary *current=[_settings settingsForTitleID:_titleID error:&failure];
+    NSMutableArray *actual=[NSMutableArray new];
+    if(current && usage.unsignedIntValue)for(NSString *other in CanopySettings.keyboardActions)
+        if(![other isEqual:action] && [CanopySettings keyboardBindingForAction:other settings:current]==usage.unsignedIntValue)[actual addObject:other];
+    NSString *message=!current?failure.localizedDescription:nil;BOOL saved=NO;
+    if(current && ![actual isEqualToArray:conflicts])message=@"Bindings changed. Choose the key again to review its current assignment.";
+    else if(current) {
         NSMutableDictionary *bindings=[current[@"keyboardBindings"] mutableCopy] ?: [NSMutableDictionary new];
         for(NSString *other in conflicts)bindings[other]=@0;
         bindings[action]=usage;
-        if(![self->_settings setValue:bindings forSetting:@"keyboardBindings" titleID:self->_titleID error:&failure]){GamesAlert(presenter,@"Could not save keyboard binding",failure.localizedDescription);return;}
-        ApplySavedSettings(self->_settings,self->_titleID,self.applySettings);
-        [self.navigationController popToViewController:self animated:YES];[self.tableView reloadData];
-    };
-    if(!conflicts.count){save();return;}
+        saved=[_settings setValue:bindings forSetting:@"keyboardBindings" titleID:_titleID error:&failure];
+        if(saved)ApplySavedSettings(_settings,_titleID,self.applySettings);else message=failure.localizedDescription;
+    }
+    [self finishKeySelection:picker dialog:dialog action:action epoch:next failure:message ?: (saved?nil:@"Load valid settings before editing keyboard bindings.") success:saved];
+}
+- (void)assignUsage:(NSNumber *)usage action:(NSString *)action presenter:(UIViewController *)presenter epoch:(NSUInteger)epoch {
+    if(![self keyIntentValid:epoch picker:presenter] || _keyDialog || presenter.presentedViewController)return;
+    NSUInteger next=++_keyEpoch; // One key event owns this phase exactly once.
+    NSError *error=nil;NSDictionary *values=[_settings settingsForTitleID:_titleID error:&error];
+    CanopyKeyboardKeyPicker *picker=(CanopyKeyboardKeyPicker *)presenter;
+    if(!values){[self finishKeySelection:picker dialog:nil action:action epoch:next failure:error.localizedDescription ?: @"Settings unavailable." success:NO];return;}
+    NSMutableArray *conflicts=[NSMutableArray new];
+    if(usage.unsignedIntValue)for(NSString *other in CanopySettings.keyboardActions)
+        if(![other isEqual:action] && [CanopySettings keyboardBindingForAction:other settings:values]==usage.unsignedIntValue)[conflicts addObject:other];
+    if(!conflicts.count){[self saveUsage:usage action:action conflicts:conflicts picker:picker dialog:nil epoch:next];return;}
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"Reassign this key?" message:[NSString stringWithFormat:@"Assign %@ to %@ and unbind %@?",[CanopySettings keyboardKeyTitle:usage.unsignedIntValue],action,[conflicts componentsJoinedByString:@", "]] preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Reassign" style:UIAlertActionStyleDefault handler:^(UIAlertAction *button){(void)button;save();}]];
-    [presenter presentViewController:alert animated:YES completion:nil];
+    __weak CanopyKeyboardBindingsController *weakSelf=self;__weak UIAlertController *weakAlert=alert;__weak CanopyKeyboardKeyPicker *weakPicker=picker;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *button){
+        (void)button;CanopyKeyboardBindingsController *owner=weakSelf;UIViewController *origin=weakAlert;CanopyKeyboardKeyPicker *source=weakPicker;
+        if(!owner || !origin || owner->_keyDialog!=origin || ![owner keyIntentValid:next picker:source])return;
+        NSUInteger terminal=++owner->_keyEpoch;
+        [owner finishKeySelection:source dialog:origin action:action epoch:terminal failure:nil success:NO];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Reassign" style:UIAlertActionStyleDefault handler:^(UIAlertAction *button){
+        (void)button;CanopyKeyboardBindingsController *owner=weakSelf;UIViewController *origin=weakAlert;CanopyKeyboardKeyPicker *source=weakPicker;
+        if(!owner || !origin || owner->_keyDialog!=origin)return;
+        [owner saveUsage:usage action:action conflicts:conflicts picker:source dialog:origin epoch:next];
+    }]];
+    _keyDialog=alert;[picker presentViewController:alert animated:YES completion:nil];
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)path {
-    [tableView deselectRowAtIndexPath:path animated:YES];NSString *action=CanopySettings.keyboardActions[(NSUInteger)path.row];
-    CanopyKeyboardKeyPicker *picker=[[CanopyKeyboardKeyPicker alloc] initWithStyle:UITableViewStyleInsetGrouped];
-    __weak CanopyKeyboardBindingsController *owner=self;
-    picker.choose=^(UIViewController *presenter,NSNumber *usage){[owner assignUsage:usage action:action presenter:presenter];};
-    [self.navigationController pushViewController:picker animated:YES];
+    [tableView deselectRowAtIndexPath:path animated:YES];UIWindow *window=self.viewIfLoaded.window;
+    if(self.navigationController.topViewController!=self || self.presentedViewController || !window.isKeyWindow || !window.windowScene ||
+       window.windowScene.activationState!=UISceneActivationStateForegroundActive || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
+    [self invalidateKeyIntent];_keyScene=window.windowScene;NSUInteger epoch=_keyEpoch;
+    NSString *action=CanopySettings.keyboardActions[(NSUInteger)path.row];
+    CanopyKeyboardKeyPicker *picker=[[CanopyKeyboardKeyPicker alloc] initWithStyle:UITableViewStyleInsetGrouped];_keyPicker=picker;
+    [self armKeyPicker:picker action:action epoch:epoch];[self.navigationController pushViewController:picker animated:YES];
 }
+
 @end
 
 @interface CanopyGameDetails : UITableViewController
