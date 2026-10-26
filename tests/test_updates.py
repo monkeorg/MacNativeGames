@@ -41,6 +41,15 @@ def fake_data_bundle(tree, version, _logs, **_names):
 
 
 class Updates(unittest.TestCase):
+    def runtime_data(self, tree, version):
+        """Original packaging bytes only; these files never authorize execution."""
+        files = {name: f'original {version} packaging fixture {name}'.encode() for name in build_app.GAME_DATA}
+        for name, data in files.items():
+            path = tree / f'build/game-data/{version}' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        return files
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -247,6 +256,8 @@ class Updates(unittest.TestCase):
         for version, display in (('v112', '1.1.2'), ('v121', '1.2.1'), ('v143', '1.4.3')):
             with self.subTest(version=version):
                 tree=self.root/version;out=self.root/f'{version}.app'
+                runtime_data = self.runtime_data(tree, version)
+                self.runtime_data(tree, 'unselected-version')
                 files=[f'build/totk-native-{version}','build/pso_manifest.tsv','build/pso_title.tsv','build/spirv-cross/spirv-cross',
                        'prebuilt/macos-arm64/totk_xlate','build/app-launcher',f'extracted/{version}/romfs/romfs.bin',
                        f'extracted/{version}/romfs/runtime-index.bin',
@@ -270,9 +281,12 @@ class Updates(unittest.TestCase):
                 self.assertTrue((res/'build/shader-seed/seed-manifest.json').exists())
                 self.assertTrue((res/'build/pso_title.tsv').exists())   # the list the first frame waits for
                 self.assertEqual([p.name for p in (res/'rewritten').iterdir()], [version])
+                self.assertEqual([p.name for p in (res/'build/game-data').iterdir()], [version])
+                self.assertEqual({p.name: p.read_bytes() for p in (res/f'build/game-data/{version}').iterdir()}, runtime_data)
 
     def test_failed_bundle_seal_preserves_previous_app(self):
         tree=self.root/'tree';out=self.root/'existing.app';out.mkdir()
+        self.runtime_data(tree, 'v143')
         (out/'keep.txt').write_text('previous working app')
         (tree/'build/shader-seed/v143').mkdir(parents=True)
         import hashlib
@@ -291,6 +305,7 @@ class Updates(unittest.TestCase):
 
     def test_wrong_shader_seed_version_does_not_replace_existing_app(self):
         tree=self.root/'tree';out=self.root/'existing.app';out.mkdir()
+        self.runtime_data(tree, 'v143')
         (out/'keep.txt').write_text('previous working app')
         seed=tree/'build/shader-seed/v143';seed.mkdir(parents=True)
         (seed/'seed-manifest.json').write_text(json.dumps(dict(version='v112',chain='totk-native-v7-unverified',shaders=1,files={'x':'0'*64})))
@@ -306,6 +321,7 @@ class Updates(unittest.TestCase):
         import hashlib
         from types import SimpleNamespace
         tree=self.root/'tree';out=self.root/'existing.app'
+        self.runtime_data(tree, 'v143')
         old=out/'Contents/Resources/totk/build/totk-native';old.parent.mkdir(parents=True);old.write_bytes(b'old running app')
         seed=tree/'build/shader-seed/v143';seed.mkdir(parents=True)
         (seed/'pso_manifest.tsv').write_bytes(b'test')

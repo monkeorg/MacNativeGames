@@ -25,7 +25,7 @@
 #include "totk_shader_seed.h"
 #include "totk_shader_observed.h"
 #include "totk_shader_contrib.h"
-#if defined(CANOPY_HOST_RUNTIME)
+#if defined(CANOPY_HOST_RUNTIME) || TARGET_OS_IPHONE
 extern _Noreturn void runtime_fail(const char *);
 #endif
 extern void runtime_boot_status(const char *,const char *) __attribute__((weak_import));

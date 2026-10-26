@@ -1,6 +1,12 @@
 # Canopy · ordered Mac and iPad handoff
 
-**Pending local acceptance, not completed results.** Newest fully green baseline
+**Local validation update — 2026-10-26:** the isolated #170 validation and repairs are recorded in [the current evidence](canopy-local-validation.md). Final source `8cc737c` passes 992 run / 988 passed / 4 skipped with actual Mac compiler products. Public, original-iPad and private v143 stock/display builds pass. Mac static NativeAOT publication and original synthetic parity pass separately; iOS translator acceptance remains open. No installation or physical acceptance ran. Historical evidence below retains its original revision.
+
+The three case-alias skips also passed on a separate case-sensitive APFS volume.
+Only the intentional non-Apple refusal remains unexecuted. The following device
+steps remain pending; the local build phase above does not prove device behavior.
+
+**Historical baseline; device acceptance pending.** Newest fully green baseline
 [#77 / `976d856`](https://github.com/monkeorg/MacNativeGames/commit/976d8561ce9839dcf3da86221fa7c1c321bd87fd): recorded Canopy 524 run/517 passed/7 skipped
 (71.610s), Source 940 run/931 passed/9 skipped (231.342s), unsigned SDK 26.2 app
 and original 32-object matrix green. Earlier `09785cd` remains recorded in

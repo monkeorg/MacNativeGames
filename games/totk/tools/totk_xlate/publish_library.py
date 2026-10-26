@@ -119,9 +119,11 @@ def validate_apple_archive(path,rid):
     with tempfile.TemporaryDirectory(prefix='canopy-archive-') as temp:
         for index,name in enumerate(names):
             if len(name)>255 or '/' in name or any(ord(c)<32 for c in name):raise ValueError('Unsafe native archive member')
+            if name in ('__.SYMDEF','__.SYMDEF SORTED','__.SYMDEF_64','__.SYMDEF_64 SORTED'):continue
             member=Path(temp)/(str(index)+'.o')
             with member.open('wb') as stream:run(['ar','p',path,name],stdout=stream)
             result[name]=validate_apple_product(member,rid)
+    if not result:raise ValueError('Native archive has no object members')
     return result
 
 

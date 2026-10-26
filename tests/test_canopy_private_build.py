@@ -20,6 +20,11 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+# Compiler orchestration identities belong only to these original test bytes.
+SYNTHETIC_GAME_DATA = {'manifestSHA256': sha(b'original runtime-data manifest fixture'),
+                       'runtimeIndexSHA256': sha(b'original runtime-index fixture')}
+
+
 class CanopyPrivateBuildTests(unittest.TestCase):
     def test_private_icon_uses_public_recipe_without_traversing_game_data(self):
         import plistlib
@@ -90,9 +95,9 @@ class CanopyPrivateBuildTests(unittest.TestCase):
         profile = BUILDER.expected_profile(ROOT, 'v143')
         args = (ROOT, Path('/private-stage'), {'clang': 'selected-clang', 'sdk': '/selected-sdk'},
                 'v143', profile, 'a' * 64, Path('/local-codecs'))
-        stock, _ = BUILDER.compiler_commands(*args)
+        stock, _ = BUILDER.compiler_commands(*args, game_data=SYNTHETIC_GAME_DATA)
         pins = {'heapManifestSHA256': 'b' * 64, 'layoutManifestSHA256': 'c' * 64}
-        enabled, _ = BUILDER.compiler_commands(*args, display_profile=pins)
+        enabled, _ = BUILDER.compiler_commands(*args, display_profile=pins, game_data=SYNTHETIC_GAME_DATA)
         self.assertFalse(any('TOTK_IOS_DISPLAY_SETTINGS' in arg for command in stock for arg in command))
         for command in enabled:
             self.assertIn('-DTOTK_IOS_DISPLAY_SETTINGS=1', command)
@@ -100,9 +105,9 @@ class CanopyPrivateBuildTests(unittest.TestCase):
             self.assertIn('-DCANOPY_HOST_DISPLAY_HEAP_SHA256="' + 'b' * 64 + '"', command)
             self.assertIn('-DCANOPY_HOST_DISPLAY_LAYOUT_SHA256="' + 'c' * 64 + '"', command)
         with self.assertRaises(ValueError):
-            BUILDER.compiler_commands(*args, display_profile={'heapManifestSHA256': 'invented'})
+            BUILDER.compiler_commands(*args, display_profile={'heapManifestSHA256': 'invented'}, game_data=SYNTHETIC_GAME_DATA)
         with self.assertRaises(ValueError):
-            BUILDER.compiler_commands(*args[:3], 'v121', *args[4:], display_profile=pins)
+            BUILDER.compiler_commands(*args[:3], 'v121', *args[4:], display_profile=pins, game_data=SYNTHETIC_GAME_DATA)
 
     def display_fixture(self, root, fault=None):
         """Synthetic orchestration outputs, not a run of private generators.
@@ -227,7 +232,8 @@ class CanopyPrivateBuildTests(unittest.TestCase):
     def test_loader_rename_is_per_source_and_pins_are_separate(self):
         profile = BUILDER.expected_profile(ROOT, 'v121')
         commands, objects = BUILDER.compiler_commands(ROOT, Path('/private-stage'),
-            {'clang': 'selected-apple-clang', 'sdk': '/selected-sdk'}, 'v121', profile, 'a' * 64, Path('/local-codecs'))
+            {'clang': 'selected-apple-clang', 'sdk': '/selected-sdk'}, 'v121', profile, 'a' * 64, Path('/local-codecs'),
+            game_data=SYNTHETIC_GAME_DATA)
         renamed = [c for c in commands if '-Dmain=totk_host_main' in c]
         self.assertEqual(len(renamed), 1)
         self.assertEqual(renamed[0][renamed[0].index('-c') + 1], str(ROOT / 'games/totk/runtime/loader.c'))
@@ -236,6 +242,12 @@ class CanopyPrivateBuildTests(unittest.TestCase):
         self.assertTrue(all('-DCANOPY_HOST_RUNTIME=1' in c for c in commands))
         self.assertTrue(all('-DCANOPY_HOST_ORIGINAL_MAIN_SHA256="' + profile['exefs_sha256']['main'] + '"' in c for c in commands))
         self.assertTrue(all('-DCANOPY_HOST_SHADER_SEED_MANIFEST_SHA256="' + 'a' * 64 + '"' in c for c in commands))
+        self.assertTrue(any(str(ROOT / 'games/totk/runtime/game_data.c') in c for c in commands))
+        for command in commands:
+            self.assertIn('-DCANOPY_GAME_DATA_RESOURCES=1', command)
+            self.assertIn('-DCANOPY_HOST_GAME_DATA_MANIFEST_SHA256="' + SYNTHETIC_GAME_DATA['manifestSHA256'] + '"', command)
+            self.assertIn('-DCANOPY_HOST_RUNTIME_INDEX_SHA256="' + SYNTHETIC_GAME_DATA['runtimeIndexSHA256'] + '"', command)
+            self.assertIn('-DCANOPY_HOST_ROMFS_SHA256="' + profile['romfs']['sha256'] + '"', command)
         self.assertFalse(any(any('codesign' in part or 'install_device' in part for part in c) for c in commands))
 
     def test_stable_regular_private_copy_refuses_mismatch_links_and_overwrite(self):
@@ -278,6 +290,7 @@ class CanopyPrivateBuildTests(unittest.TestCase):
             write(f'rewritten/{version}/{name}.fixups.tsv', b'original fixture metadata')
             write(f'rewritten/{version}/{name}.gates.tsv', b'original fixture gate metadata')
             write(f'extracted/{version}/elf/{name}-inventory.json', b'{}')
+        write(f'rewritten/{version}/build_src.sha256', (sha(b'original synthetic rewriter source') + '\n').encode())
         report = {'status': 'pass', 'rom_version': version, 'module_file_sha256': hashes}
         write(f'analysis/{version}-port/phase12-validation.json', json.dumps(report).encode())
         image = b'invented original RomFS';profile['romfs'] = {'sha256': sha(image), 'size': len(image)}

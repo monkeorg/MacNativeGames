@@ -20,7 +20,7 @@ class CanopyControllers(unittest.TestCase):
         cls.probe = Path(cls.directory.name) / 'controllers'
         sources = ROOT / 'launcher/apple/Sources'
         objects = []
-        for module in ('mng_players', 'mng_input'):
+        for module in ('mng_players', 'mng_input', 'mng_keyboard'):
             output = Path(cls.directory.name) / (module + '.o')
             core = subprocess.run([
                 'xcrun', 'clang', '-std=c11', '-Wall', '-Wextra', '-Werror',
@@ -34,7 +34,7 @@ class CanopyControllers(unittest.TestCase):
             'xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror',
             '-I', str(sources), '-I', str(ROOT / 'launcher/include'),
             str(ROOT / 'tests/canopy_controllers_probe.m'),
-            str(sources / 'CanopyControllers.m'), *objects,
+            str(sources / 'CanopyControllers.m'), str(sources / 'CanopySettings.m'), *objects,
             '-framework', 'Foundation', '-framework', 'GameController', '-o', str(cls.probe),
         ], capture_output=True, text=True, timeout=120)
         if result.returncode:

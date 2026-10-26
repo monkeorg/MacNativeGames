@@ -82,6 +82,10 @@ class IOSDisplayBuildGateTests(unittest.TestCase):
             with self.subTest(enabled=enabled, inherited=inherited), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 captured = []
+                game_data = root / 'build/game-data/v143'
+                game_data.mkdir(parents=True)
+                for name in ('runtime-tables.bin', 'romfs-config.txt', 'shared-fonts.txt', 'rewriter.txt'):
+                    (game_data / name).write_bytes(('original packaging fixture ' + name).encode())
 
                 def stop_at_export(args, cwd, log, env):
                     self.assertEqual(args[-1], 'export-ios')
@@ -103,6 +107,7 @@ class IOSDisplayBuildGateTests(unittest.TestCase):
                     with self.assertRaises(ExportCaptured):
                         packager.main()
                 self.assertEqual(len(captured), 1)
+                self.assertEqual(captured[0]['TOTK_GAME_DATA'], str(game_data.resolve()))
                 self.assertEqual(captured[0].get('TOTK_IOS_DISPLAY_SETTINGS'), '1' if enabled else None)
                 if enabled:
                     self.assertEqual(captured[0]['TOTK_OUTPUT_RES'], '1280x720')

@@ -778,7 +778,7 @@ def stage_game_data(stage_tree, destination, version, profile):
     fonts = config('shared-fonts.txt')
     require(len(fonts) == 24, 'runtime-data font schema differs')
     for i, (name, expected) in enumerate(profile['shared_fonts_sha256'].items()):
-        require(fonts.get(f'FONT{i}_FILE') == name and fonts.get(f'FONT{i}_SHA256') == expected, 'runtime-data font identity differs')
+        require(fonts.get(f'FONT{i}_FILE') == f'{i}-{name}.bfttf' and fonts.get(f'FONT{i}_SHA256') == expected, 'runtime-data font identity differs')
     rewrite = config('rewriter.txt')
     recorded = stable_bytes(stage_tree / f'rewritten/{version}/build_src.sha256',4096).decode('ascii').split()[0]
     require(re.fullmatch('[0-9a-f]{64}', recorded) and rewrite == {'REWRITER_SHA256': recorded}, 'runtime-data rewriter record differs')

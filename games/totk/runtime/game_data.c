@@ -103,7 +103,7 @@ static int tables_parse(struct RuntimeGameData *d){
         for(uint32_t k=0;k<t->nsym;k++){
             uint64_t length=0;
             if((!(k&255)&&stopped(d))||ts[k].name!=next_string||ts[k].name>=h->strings_size||string_length(d,strings+ts[k].name,h->strings_size-ts[k].name,&length)||ts[k].defined>1||ts[k].reserved||
-                (ts[k].defined&&(ts[k].value>=t->key_off||ts[k].size>t->key_off-ts[k].value)))return -1;
+                (ts[k].defined&&((ts[k].value>=t->key_off&&(ts[k].value!=t->key_off||ts[k].size||ts[k].type))||ts[k].size>t->key_off-ts[k].value)))return -1;
             next_string+=length+1;
             symbols[k]=(Symbol){strings+ts[k].name,ts[k].value,ts[k].size,ts[k].defined,ts[k].binding,ts[k].type};
         }

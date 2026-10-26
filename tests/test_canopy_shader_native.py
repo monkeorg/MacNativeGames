@@ -17,10 +17,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT=Path(__file__).resolve().parents[1]
 TOOLS=ROOT/'games/totk/tools/totk_xlate'
 PIN='aa217aeb6c9f0ace7a0ab233b28807edf45eb165'
+# Darwin ASan does not support LeakSanitizer; these probes verify memory errors,
+# not leaks there. Other platforms retain leak detection.
+ASAN_OPTIONS='abort_on_error=1:detect_leaks='+('0' if sys.platform=='darwin' else '1')
 
 
 def original_compute_spirv():
@@ -100,6 +104,43 @@ class FixtureContractTests(unittest.TestCase):
             for invalid in ('','\0','"unterminated'):
                 plan.write_text(invalid)
                 with self.assertRaises(ValueError):builder.read_link_plan(plan)
+
+    @unittest.skipUnless(sys.platform=='darwin' and shutil.which('xcrun') and shutil.which('ar'),
+                         'requires installed Apple compiler and ar')
+    def test_real_darwin_archive_metadata_is_not_an_object_but_payload_still_requires_macho(self):
+        builder=self.builder()
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp);source=folder/'original.c';obj=folder/'original.o';archive=folder/'original.a'
+            source.write_text('int original_archive_fixture(void){return 17;}\n')
+            subprocess.run(['xcrun','clang','-target','arm64-apple-macos14.0','-c',str(source),'-o',str(obj)],check=True,capture_output=True)
+            subprocess.run(['ar','rcs',str(archive),str(obj)],check=True,capture_output=True)
+            inventory=subprocess.check_output(['ar','t',str(archive)],text=True).splitlines()
+            self.assertIn('__.SYMDEF SORTED',inventory)
+            result=builder.validate_apple_archive(archive,'osx-arm64')
+            self.assertEqual(set(result),{'original.o'})
+            self.assertEqual(result['original.o']['architectures'],['arm64'])
+            with self.assertRaisesRegex(ValueError,'platform mismatch'):
+                builder.validate_apple_archive(archive,'ios-arm64')
+            text=folder/'not-an-object';text.write_bytes(b'original non-Mach-O fixture')
+            invalid=folder/'invalid.a'
+            subprocess.run(['ar','rcs',str(invalid),str(text)],check=True,capture_output=True)
+            with self.assertRaises((ValueError,subprocess.CalledProcessError)):
+                builder.validate_apple_archive(invalid,'osx-arm64')
+
+    def test_archive_metadata_skip_retains_inventory_and_name_refusals(self):
+        builder=self.builder()
+        metadata=('__.SYMDEF','__.SYMDEF SORTED','__.SYMDEF_64','__.SYMDEF_64 SORTED')
+        for name in metadata:
+            with self.subTest(name=name),mock.patch.object(builder,'capture',return_value=name),mock.patch.object(builder,'run') as run:
+                with self.assertRaisesRegex(ValueError,'no object members'):
+                    builder.validate_apple_archive(Path('original.a'),'osx-arm64')
+                run.assert_not_called()
+        for names in ('','\n'.join(['__.SYMDEF SORTED']*2),
+                      '\n'.join('original-'+str(i) for i in range(4097)),
+                      '../unsafe.o','original\x01.o','x'*256):
+            with self.subTest(names=names[:40]),mock.patch.object(builder,'capture',return_value=names),mock.patch.object(builder,'run') as run:
+                with self.assertRaises(ValueError):builder.validate_apple_archive(Path('original.a'),'osx-arm64')
+                run.assert_not_called()
 
     def test_checked_vendor_patches_refuse_mutation_and_reapplication_without_touching_original(self):
         builder=self.builder();original=ROOT/'vendor/ryujinx/src/Ryujinx.Graphics.Shader/Translation/Optimizations/Optimizer.cs'
@@ -216,7 +257,7 @@ class InProcessCrossTests(unittest.TestCase):
             for status in (5,6):
                 with self.subTest(kind=kind,status=status):
                     run=subprocess.run([str(self.walk_probe),str(kind),str(status)],capture_output=True,text=True,timeout=15,
-                        env=dict(os.environ,ASAN_OPTIONS='abort_on_error=1:detect_leaks=1'))
+                        env=dict(os.environ,ASAN_OPTIONS=ASAN_OPTIONS))
                     self.assertEqual(run.returncode,0,run.stdout+run.stderr)
                     self.assertEqual(run.stdout.strip(),'{"status":0}')
 
@@ -225,7 +266,7 @@ class InProcessCrossTests(unittest.TestCase):
             for status in (5,6):
                 with self.subTest(kind=kind,status=status):
                     run=subprocess.run([str(self.flush_probe),str(kind),str(status)],capture_output=True,text=True,timeout=15,
-                        env=dict(os.environ,ASAN_OPTIONS='abort_on_error=1:detect_leaks=1'))
+                        env=dict(os.environ,ASAN_OPTIONS=ASAN_OPTIONS))
                     self.assertEqual(run.returncode,0,run.stdout+run.stderr)
                     self.assertEqual(run.stdout.strip(),'{"status":0}')
 
@@ -235,7 +276,7 @@ class InProcessCrossTests(unittest.TestCase):
                 with self.subTest(kind=kind,shape=shape,status=status):
                     run=subprocess.run([str(self.dependency_probe),str(kind),str(shape),str(status)],
                         capture_output=True,text=True,timeout=15,
-                        env=dict(os.environ,ASAN_OPTIONS='abort_on_error=1:detect_leaks=1'))
+                        env=dict(os.environ,ASAN_OPTIONS=ASAN_OPTIONS))
                     self.assertEqual(run.returncode,0,run.stdout+run.stderr)
                     self.assertEqual(run.stdout.strip(),'{"status":0}')
 
@@ -284,7 +325,7 @@ class CrossStreamOwnershipTests(unittest.TestCase):
         for status in (0,5,6):
             with self.subTest(status=status):
                 result=subprocess.run([str(self.probe),str(status)],capture_output=True,text=True,timeout=20,
-                    env=dict(os.environ,ASAN_OPTIONS='abort_on_error=1:detect_leaks=1'))
+                    env=dict(os.environ,ASAN_OPTIONS=ASAN_OPTIONS))
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
                 self.assertEqual(result.stdout.strip(),'{"status":0}')
 

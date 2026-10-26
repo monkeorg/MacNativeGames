@@ -63,6 +63,7 @@ class CanopyShaderCacheTests(unittest.TestCase):
             ['xcrun','clang','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror',
              '-I',str(ROOT/'launcher/include'),'-I',str(ROOT/'launcher/apple/Sources'),
              str(ROOT/'tests/canopy_shader_cache_probe.m'),str(ROOT/'launcher/apple/Sources/CanopyShaderCache.m'),
+             str(ROOT/'launcher/apple/Sources/CanopyCacheFS.m'),
              str(obj),'-framework','Foundation','-framework','Metal','-o',str(cls.probe)]):
             run=subprocess.run(command,capture_output=True,text=True,timeout=120)
             if run.returncode:raise AssertionError(run.stdout+run.stderr)

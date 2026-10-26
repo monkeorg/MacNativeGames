@@ -41,7 +41,9 @@ class CanopyStorageTests(unittest.TestCase):
                    '-I', str(ROOT / 'launcher/include'), '-I', str(ROOT / 'launcher/apple/Sources'),
                    str(ROOT / 'tests/canopy_storage_probe.m'),
                    str(ROOT / 'launcher/apple/Sources/CanopyStorage.m'),
-                   str(ROOT / 'launcher/apple/Sources/CanopyShaderCache.m'), *objects,
+                   str(ROOT / 'launcher/apple/Sources/CanopyShaderCache.m'),
+                   str(ROOT / 'launcher/apple/Sources/CanopyCacheFS.m'),
+                   str(ROOT / 'launcher/apple/Sources/CanopyProviderCache.m'), *objects,
                    '-framework', 'Foundation', '-framework', 'Metal', '-o', str(cls.probe)]
         run = subprocess.run(command, capture_output=True, text=True, timeout=120)
         if run.returncode: raise AssertionError(run.stdout + run.stderr)

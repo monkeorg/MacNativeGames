@@ -52,14 +52,15 @@ static const IosEmbed ios_embed[]={{"original-compilation-fixture","not-a-pin","
                 sdk=subprocess.run(['xcrun','--sdk',sdk_name,'--show-sdk-path'],capture_output=True,text=True,timeout=30)
                 self.assertEqual(sdk.returncode,0,sdk.stderr)
                 for version in ('V121','V143'):
-                    for canopy in (False,True):
+                    for canopy in ('original','legacy-abi3','resource-v4'):
                         with self.subTest(sdk=sdk_name,version=version,canopy=canopy):
                             command=['xcrun','--sdk',sdk_name,'clang','-fsyntax-only','-target',target,'-isysroot',sdk.stdout.strip(),
                                      '-std=gnu11','-Wall','-Wextra','-Werror=implicit-function-declaration',
                                      '-DTOTK_GAME_'+version+'=1','-I',str(generated),'-I',str(ROOT/'launcher/include'),
                                      '-I',str(ROOT/'games/totk/runtime'),
                                      '-I',str(ROOT/'games/totk/third_party/d2r_gfx/gfx/nvn/include')]
-                            if canopy:command.append('-DCANOPY_HOST_RUNTIME=1')
+                            if canopy != 'original':command.append('-DCANOPY_HOST_RUNTIME=1')
+                            if canopy == 'resource-v4':command.append('-DCANOPY_GAME_DATA_RESOURCES=1')
                             run=subprocess.run(command+[str(source)],capture_output=True,text=True,timeout=60)
                             self.assertEqual(run.returncode,0,run.stdout+run.stderr)
 
