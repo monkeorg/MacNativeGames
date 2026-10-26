@@ -4787,7 +4787,11 @@ static int sh_has_src(NvShader *s) { return s && (s->src || s->src_path); }
     void *udc_sh[6]; uint8_t udc_ok, udc_img, udc_imgw; uint32_t udc_cmask;   // udc_*: udc_note_draw's summary of sh[] (valid while sh[] is the same)
     void *ar_sh[6]; uint8_t ar_n, ar_st[32], ar_reg[32], ar_img[32];   // ar_*: draw_att_reads' sampled texture / image slots of sh[] (valid while sh[] is the same; ar_n 255 = more than 32, scan the bindings)
     int missing, miss_has[2]; uint64_t miss_sig[2]; int exp_skip;
-    int keeps; uint64_t miss_gen; } @end   // TOTK (iOS, Mac async shaders): missing = stages whose variant is not translated yet; miss_sig: signature whose variant is missing (prog_fit); exp_skip: TOTK_EXP_SKIP_FS decision (0 unknown, 1 keep, 2 skip); keeps: a stage stores to memory or streams out (sph_keeps_memory), its draws are never skipped; miss_gen: totk_rt_ready_gen() when a stage was last found missing
+    int keeps; uint64_t miss_gen;
+#if defined(CANOPY_HOST_RUNTIME)
+    uint64_t native_retry_at[6];
+#endif
+} @end   // TOTK (iOS, Mac async shaders): missing = stages whose variant is not translated yet; miss_sig: signature whose variant is missing (prog_fit); exp_skip: TOTK_EXP_SKIP_FS decision (0 unknown, 1 keep, 2 skip); keeps: a stage stores to memory or streams out (sph_keeps_memory), its draws are never skipped; miss_gen: totk_rt_ready_gen() when a stage was last found missing
 @implementation NvProg @end
 /* TOTK_EXP_SKIP_FS=<fragment key prefix>[,<prefix>...] (measurement only, 2026-10-16): drop every draw whose fragment shader key
    starts with one of the prefixes. A render pass whose draws are all dropped is never opened, so the GPU time saved is the
@@ -5276,24 +5280,45 @@ static void async_ready(NSString *variant, int stage) {   // a translator worker
     os_unfair_lock_unlock(&g_async_lock);
 }
 #if defined(CANOPY_HOST_RUNTIME)
-/* Native translations acknowledge the actual Metal library before their
- * variant index/readiness is published. Epoch changes discard old results. */
+/* Retain at most 64 checked native libraries awaiting actual shader_get.
+ * Reservation precedes Metal/C1 allocation. Exact immutable variant+stage
+ * reuse survives index failure/focus changes; reuse still needs a current job. */
+#define CANOPY_READY_LIMIT 64u
+static NSMutableDictionary<NSString *,id> *g_native_ready;
 static int canopy_async_ready(NSString *variant,int stage,uint64_t epoch) {
     if(!totk_rt_native_epoch_current(epoch))return 0;
     NSString *pc=[variant stringByAppendingString:@"_b"];
-    NvShader *sh=shader_load_inner(pc,stage,1);
-    if(!sh || !totk_rt_native_epoch_current(epoch))return 0;
     os_unfair_lock_lock(&g_async_lock);
-    if(!g_async_libs)g_async_libs=[NSMutableDictionary dictionary];
-    g_async_libs[pc]=sh;
+    if(!g_native_ready)g_native_ready=[NSMutableDictionary dictionary];
+    id prior=g_native_ready[pc];
+    if(prior){
+        int ok=prior!=NSNull.null && ((NvShader *)prior)->stage==stage;
+        if(ok){if(!g_async_libs)g_async_libs=[NSMutableDictionary dictionary];g_async_libs[pc]=prior;}
+        os_unfair_lock_unlock(&g_async_lock);
+        return ok&&totk_rt_native_epoch_current(epoch);
+    }
+    if(g_native_ready.count>=CANOPY_READY_LIMIT){os_unfair_lock_unlock(&g_async_lock);return -1;}
+    g_native_ready[pc]=NSNull.null;
     os_unfair_lock_unlock(&g_async_lock);
-    return totk_rt_native_epoch_current(epoch);
+    NvShader *sh=shader_load_inner(pc,stage,1);
+    os_unfair_lock_lock(&g_async_lock);
+    if(sh)g_native_ready[pc]=sh;else[g_native_ready removeObjectForKey:pc];
+    if(sh&&totk_rt_native_epoch_current(epoch)){
+        if(!g_async_libs)g_async_libs=[NSMutableDictionary dictionary];g_async_libs[pc]=sh;
+    }
+    os_unfair_lock_unlock(&g_async_lock);
+    return sh&&totk_rt_native_epoch_current(epoch);
 }
 void nvn_canopy_install_shader_ready_hook(void) {totk_rt_set_checked_ready_hook(canopy_async_ready);}
 #endif
 static NvShader *async_take(NSString *pc) {
     os_unfair_lock_lock(&g_async_lock);
-    NvShader *sh = g_async_libs[pc]; if (sh) [g_async_libs removeObjectForKey:pc];
+    NvShader *sh = g_async_libs[pc]; if (sh) {
+        [g_async_libs removeObjectForKey:pc];
+#if defined(CANOPY_HOST_RUNTIME)
+        [g_native_ready removeObjectForKey:pc];
+#endif
+    }
     os_unfair_lock_unlock(&g_async_lock);
     return sh;
 }
@@ -5471,6 +5496,9 @@ static __unsafe_unretained NvProg *prog_get(const prog_t *cp) {   // 只在提�
             MLOG("[ctl st%d]%s", st, b); } }
         o->ctl[st]=control; o->code[st]=(const uint8_t *)(uintptr_t)p->sd[i].data; o->key[st]=@(key);
         uint64_t f0 = async_fresh();
+#if defined(CANOPY_HOST_RUNTIME)
+        if(totk_rt_native_provider_present())o->native_retry_at[st]=totk_rt_native_retry_token();
+#endif
         NSString *variant=totk_rt_variant(@(key),st,control,o->code[st],rt_answers(st),rt_local(control,st),defer);
         if (!defer && g_prog_for_draw) async_why(o, f0);
         if(!variant){o->missing|=1<<st;continue;}   // iOS: not translated yet; Mac (async shaders): translating in the background. Its draws are skipped
@@ -6197,11 +6225,31 @@ static void draw_skipped(void) {
 }
 /* A program with a stage in the background (async shaders): look again once a background job has been recorded, or
    wait for the job when this draw may not be skipped (totk_rt_variant without may_defer). */
+static int native_shader_retry(void) {
+#if defined(CANOPY_HOST_RUNTIME)
+    return totk_rt_native_provider_present();
+#else
+    return 0;
+#endif
+}
+static int native_retry_admit(NvProg *pr,int stage) {
+#if defined(CANOPY_HOST_RUNTIME)
+    if(totk_rt_native_provider_present()){
+        uint64_t pulse=totk_rt_native_retry_token();
+        if(!pulse||pr->native_retry_at[stage]==pulse)return 0;
+        pr->native_retry_at[stage]=pulse;
+    }
+#else
+    (void)pr;(void)stage;
+#endif
+    return 1;
+}
 static void prog_resolve(NvProg *pr, int may_skip) {
     uint64_t gen = totk_rt_ready_gen();
-    if (may_skip && gen == pr->miss_gen) return;
+    if (!native_shader_retry() && may_skip && gen == pr->miss_gen) return;
     for (int st = 0; st < 6; st++) {
         if (!(pr->missing >> st & 1) || !pr->key[st]) continue;
+        if(!native_retry_admit(pr,st))continue;
         uint64_t f0 = async_fresh();
         NSString *variant = totk_rt_variant(pr->key[st], st, pr->ctl[st], pr->code[st], rt_answers(st), rt_local(pr->ctl[st], st), may_skip);
         if (!may_skip) async_why(pr, f0);
@@ -6217,8 +6265,9 @@ static int prog_fit(NvProg *pr) {
         uint64_t sg = stage_sig(st); if (sg == pr->sig[st]) continue;
         NvShader *v = pr->alt[st][@(sg)];
         int may_skip = v ? 0 : draw_may_skip(pr); uint64_t gen = totk_rt_ready_gen();
-        if (!v && pr->miss_has[st] && sg == pr->miss_sig[st] && (!async_shaders() || (may_skip && gen == pr->miss_gen))) return -1;
+        if (!native_shader_retry() && !v && pr->miss_has[st] && sg == pr->miss_sig[st] && (!async_shaders() || (may_skip && gen == pr->miss_gen))) return -1;
         if (!v) {
+            if(!native_retry_admit(pr,st))return -1;
             shader_predict_maybe();
             uint64_t f0 = async_fresh();
             NSString *variant = totk_rt_variant(pr->key[st], st, pr->ctl[st], pr->code[st], rt_answers(st), nil, may_skip);
@@ -11025,7 +11074,7 @@ static int mfxup_draw(NvProg *pr) {
 static void draw_inner(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); g_draw_skip[0]++; return; }
     g_prog_for_draw = 1; __unsafe_unretained NvProg *pr = prog_get(S.prog); g_prog_for_draw = 0;
-    if (pr && pr->missing && async_shaders()) { shader_predict_maybe(); prog_resolve(pr, draw_may_skip(pr)); }
+    if (pr && pr->missing && (async_shaders() || native_shader_retry())) { shader_predict_maybe(); prog_resolve(pr, draw_may_skip(pr)); }
     if (pr && pr->missing) { draw_skipped(); return; }   // TOTK (iOS): a stage is not translated yet; Mac (async shaders): still in the background
     if (g_nupd) upd_guard_draw(pr, di);   // TOTK: before any encoder or texture preparation of this draw
     { int fit = pr ? prog_fit(pr) : 0; if (fit < 0) { draw_skipped(); return; } if (fit) g_pso_dirty = 1; }
@@ -11589,7 +11638,7 @@ static void dispatch(const p_dispatch *dp) {
     // As for a draw: a compute program met for the first time, or one still being prepared, starts the urgent scan of the
     // rest of the submission (prog_get, shader_predict_maybe), since a dispatch is often the first thing a submission misses.
     g_prog_for_draw = 1; __unsafe_unretained NvProg *cpr = prog_get(S.prog); g_prog_for_draw = 0;
-    if (cpr->missing && async_shaders()) { shader_predict_maybe(); prog_resolve(cpr, 0); }   // Mac: a dispatch waits for its urgent job, never skipped
+    if (cpr->missing && (async_shaders() || native_shader_retry())) { shader_predict_maybe(); prog_resolve(cpr, 0); }   // Mac: a dispatch waits for its urgent job, never skipped
     if (cpr->missing) { static uint64_t n; if (!n++) MLOG("[shader-miss] 计算着色器还没翻译：跳过这个派发（以后同类不再提示）"); return; }
     NvShader *cs = cpr->sh[5];
     if (!cs) { RED_ONCE(28, "派发的程序没有计算着色器（或未映射）"); return; }

@@ -8,6 +8,7 @@
 #include "totk_ui_lang.h"
 #include <TargetConditionals.h>
 #include "totk_shader_rt.h"
+#include "totk_shader_provider.h"
 #include "dmsh_chain.h"
 #include "../../host/hle.h"
 #include <CommonCrypto/CommonDigest.h>
@@ -49,12 +50,14 @@ int totk_rt_install_provider(const struct totk_shader_provider *provider) {
     if (provider->abi != TOTK_SHADER_PROVIDER_ABI || provider->size != sizeof(*provider) ||
         !provider->recipe_sha256 || strlen(provider->recipe_sha256) != 64 ||
         !provider->chain || strcmp(provider->chain, DMSH_CHAIN) || !provider->translate || !provider->publish_index ||
-        !provider->is_current || !provider->file || !provider->files) return -1;
+        !provider->failed || !provider->is_current || !provider->retry_token || !provider->file || !provider->files) return -1;
     for (unsigned i=0;i<64;i++) if (!((provider->recipe_sha256[i]>='0' && provider->recipe_sha256[i]<='9') ||
         (provider->recipe_sha256[i]>='a' && provider->recipe_sha256[i]<='f'))) return -1;
     g_provider=provider;return 0;
 }
 int totk_rt_native_epoch_current(uint64_t epoch) {return g_provider && g_provider->is_current(epoch);}
+int totk_rt_native_provider_present(void) {return g_provider != NULL;}
+uint64_t totk_rt_native_retry_token(void) {return g_provider ? g_provider->retry_token() : 0;}
 static int (*g_checked_ready_hook)(NSString *,int,uint64_t);
 void totk_rt_set_checked_ready_hook(int (*hook)(NSString *,int,uint64_t)) {g_checked_ready_hook=hook;}
 #define RT_NATIVE_PROVIDER (g_provider != NULL)
@@ -457,10 +460,10 @@ static void record_miss(NSString *shader, NSDictionary *rq, NSDictionary *answer
         [rq[@"stage"] UTF8String], variant.UTF8String, (unsigned long)missed.count);
 }
 /* One request through a translator service; the reflection of the new variant. */
-static NSDictionary *translate(rt_svc *svc, NSDictionary *rq, NSData *code, uint64_t started, uint64_t *epoch) {
-    *epoch=0;
+static NSDictionary *translate(rt_svc *svc, NSDictionary *rq, NSData *code, uint64_t started, struct totk_shader_job *native_job) {
+    memset(native_job,0,sizeof(*native_job));
 #if defined(CANOPY_HOST_RUNTIME)
-    if (g_provider) return g_provider->translate(rq, code, epoch);
+    if (g_provider) return g_provider->translate(rq, code, native_job);
 #endif
     (void)code;
     NSString *variant = rq[@"variant"]; const char *stage = [rq[@"stage"] UTF8String];
@@ -481,14 +484,14 @@ static NSDictionary *translate(rt_svc *svc, NSDictionary *rq, NSData *code, uint
     return refl;
 }
 /* A translated variant into the shader's index, the counters and the contribution file (g_rt_lock held). */
-static BOOL variant_record(NSString *shader, NSDictionary *rq, NSDictionary *refl, BOOL existed, uint64_t started, uint64_t queued, uint64_t epoch) {   // queued: 0, or when a background job was queued
+static BOOL variant_record(NSString *shader, NSDictionary *rq, NSDictionary *refl, BOOL existed, uint64_t started, uint64_t queued, struct totk_shader_job *native_job) {   // queued: 0, or when a background job was queued
     NSString *variant = rq[@"variant"];
     NSMutableArray *vs = variants_of(shader);
 #if defined(CANOPY_HOST_RUNTIME)
     if (g_provider) {
         NSMutableArray *next=[vs mutableCopy];
         [next addObject:@{@"variant": variant, @"deps": refl[@"deps"] ?: @{}}];
-        if (g_provider->publish_index(shader,next,epoch)) return NO;
+        if (g_provider->publish_index(shader,next,native_job)) return NO;
         [vs setArray:next];
     } else
 #endif
@@ -549,15 +552,22 @@ static void rt_job_run(NSString *shader, NSMutableArray *job, rt_svc *svc, uint6
     NSDictionary *rq = job[1]; int stage = [job[2] intValue]; BOOL existed = [job[3] boolValue]; NSData *code = job[4];
     if (!RT_NATIVE_PROVIDER && ![code writeToFile:rq[@"code"] atomically:YES]) die("write shader code %s", [rq[@"code"] UTF8String]);
     uint64_t started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
-    uint64_t epoch=0;
-    NSDictionary *refl = translate(svc, rq, code, started,&epoch);
+    struct totk_shader_job native_job={0};
+    NSDictionary *refl = translate(svc, rq, code, started,&native_job);
 #if defined(CANOPY_HOST_RUNTIME)
-    if(g_provider && (!refl || !g_provider->is_current(epoch) || !g_checked_ready_hook ||
-        !g_checked_ready_hook(rq[@"variant"],stage,epoch) || !g_provider->is_current(epoch))) refl=nil;
+    if(g_provider && refl) {
+        int ready=g_provider->is_current(native_job.epoch)&&g_checked_ready_hook ?
+            g_checked_ready_hook(rq[@"variant"],stage,native_job.epoch):0;
+        if(ready!=1 || !g_provider->is_current(native_job.epoch)) {
+            g_provider->failed(&native_job,!g_provider->is_current(native_job.epoch)?TOTK_SHADER_CANCELLED:
+                ready<0?TOTK_SHADER_READY_LIMIT:TOTK_SHADER_METAL);
+            refl=nil;
+        }
+    }
 #endif
     if (refl && !RT_NATIVE_PROVIDER && g_rt_ready_hook) g_rt_ready_hook(rq[@"variant"], stage);   // the Metal library too, off the submit thread
     pthread_mutex_lock(&g_rt_lock);
-    BOOL recorded=refl && variant_record(shader, rq, refl, existed, started, queued,epoch);
+    BOOL recorded=refl && variant_record(shader, rq, refl, existed, started, queued,&native_job);
     if (g_rt_pending[shader] == job) [g_rt_pending removeObjectForKey:shader];
     if (recorded) atomic_fetch_add(&g_rt_gen, 1);
     pthread_cond_broadcast(&g_rt_done);
@@ -633,13 +643,20 @@ NSString *totk_rt_variant(NSString *shader, int stage, const uint8_t *control, c
     BOOL existed = [NSFileManager.defaultManager fileExistsAtPath:totk_rt_file([rq[@"variant"] stringByAppendingString:@"_b.metal"])];   // a re-translation of a broken variant is not a new one
     if (may_defer == 2) { urgent_translate(shader, rt_job_new(shader, stage, rq, existed, code_bytes)); pthread_mutex_unlock(&g_rt_lock); return nil; }
     if (may_defer) { bg_translate(shader, stage, rq, existed, code_bytes); pthread_mutex_unlock(&g_rt_lock); return nil; }
-    uint64_t epoch=0;
-    NSDictionary *reflection=translate(&g_svc, rq, code_bytes, started,&epoch);
+    struct totk_shader_job native_job={0};
+    NSDictionary *reflection=translate(&g_svc, rq, code_bytes, started,&native_job);
 #if defined(CANOPY_HOST_RUNTIME)
-    if(g_provider && (!reflection || !g_provider->is_current(epoch) || !g_checked_ready_hook ||
-        !g_checked_ready_hook(rq[@"variant"],stage,epoch) || !g_provider->is_current(epoch))) reflection=nil;
+    if(g_provider && reflection) {
+        int ready=g_provider->is_current(native_job.epoch)&&g_checked_ready_hook ?
+            g_checked_ready_hook(rq[@"variant"],stage,native_job.epoch):0;
+        if(ready!=1 || !g_provider->is_current(native_job.epoch)) {
+            g_provider->failed(&native_job,!g_provider->is_current(native_job.epoch)?TOTK_SHADER_CANCELLED:
+                ready<0?TOTK_SHADER_READY_LIMIT:TOTK_SHADER_METAL);
+            reflection=nil;
+        }
+    }
 #endif
-    BOOL recorded=reflection && variant_record(shader, rq, reflection, existed, started, 0,epoch);
+    BOOL recorded=reflection && variant_record(shader, rq, reflection, existed, started, 0,&native_job);
     pthread_mutex_unlock(&g_rt_lock);
     return recorded ? rq[@"variant"] : nil;
 }
