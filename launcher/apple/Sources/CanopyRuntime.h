@@ -13,6 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// counters only. Contains no frame/presentation/gameplay throughput estimate.
 @property(nonatomic, readonly) NSDictionary<NSString *, id> *diagnosticMetrics;
 + (nullable NSDictionary<NSString *, id> *)trustedProfileForTitleID:(NSString *)titleID;
+/// One facade belongs to its SessionController's immutable title selection.
+/// Selecting another title after pre-entry refusal/cancellation creates a fresh
+/// controller/facade. Native entry consumes the process across all facades.
 - (instancetype)initWithPreparedRootURL:(NSURL *)root;
 /// hostAssets holds approved private fonts/shaders and native host resources;
 /// the runtime index is produced in private cache and checked against host pins.
@@ -38,7 +41,8 @@ NS_ASSUME_NONNULL_BEGIN
 /// state applied/restartRequired/rejected; incompatible layouts capture input.
 /// Returning to compatible bounds never restores focus automatically.
 - (NSDictionary<NSString *, id> *)updatePresentationLayout;
-/// Existing TOTK accepts one native pad; additional connected players refuse.
+/// Uses the compiled profile player limit. Existing TOTK accepts one native pad;
+/// an independently linked MK8DX provider accepts up to four routed seats.
 - (BOOL)submitInput:(const struct mng_session_input *)input error:(NSError **)error;
 /// Host owns its display/render loop. Tick never manufactures frame evidence.
 - (BOOL)tick:(NSError **)error;

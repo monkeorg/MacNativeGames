@@ -19,6 +19,9 @@ static const char *RFRecipe="romfs-folders-v1";
 @interface CanopyRomFS ()
 - (BOOL)stopped;
 - (void)report:(NSString *)phase done:(uint64_t)done total:(uint64_t)total;
+- (CanopyRomFSLease *)performTitleID:(uint64_t)title generationID:(NSString *)identity
+    verifiedImageFD:(int)verifiedImage error:(NSError **)error;
+- (BOOL)beginPublication;
 @end
 struct rf_context {
     __unsafe_unretained CanopyRomFS *owner;
@@ -77,9 +80,41 @@ static int RFRelative(int root,const char *path,int flags) {
 }
 static BOOL RFStable(const struct stat *a,const struct stat *b) {
     return a->st_dev==b->st_dev && a->st_ino==b->st_ino && a->st_size==b->st_size &&
-        a->st_mode==b->st_mode && a->st_nlink==b->st_nlink &&
+        a->st_mode==b->st_mode && a->st_uid==b->st_uid && a->st_nlink==b->st_nlink &&
         a->st_mtimespec.tv_sec==b->st_mtimespec.tv_sec && a->st_mtimespec.tv_nsec==b->st_mtimespec.tv_nsec &&
         a->st_ctimespec.tv_sec==b->st_ctimespec.tv_sec && a->st_ctimespec.tv_nsec==b->st_ctimespec.tv_nsec;
+}
+/* Storage recovery owns this fixed namespace. Producers never interpret or
+ * delete its records. Under the same parent EX lock, only durable absence or
+ * an exact empty private directory permits any cache reuse/publication. */
+static BOOL RFJournalClear(int parent,const char *name){
+    struct stat named,opened,after;
+    if(fstatat(parent,name,&named,AT_SYMLINK_NOFOLLOW)){
+        if(errno!=ENOENT||fsync(parent))return NO;
+        return fstatat(parent,name,&named,AT_SYMLINK_NOFOLLOW)<0&&errno==ENOENT;
+    }
+    if(!S_ISDIR(named.st_mode)||named.st_uid!=geteuid()||(named.st_mode&077))return NO;
+    int fd=openat(parent,name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if(fd<0)return NO;
+    BOOL ok=!fstat(fd,&opened)&&RFStable(&named,&opened);
+    int scan=ok?openat(fd,".",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC):-1;
+    DIR *stream=scan<0?NULL:fdopendir(scan);
+    if(!stream){if(scan>=0)close(scan);ok=NO;}
+    if(stream){
+        struct dirent *entry;unsigned seen=0;errno=0;
+        while((entry=readdir(stream))){
+            if(++seen>2){ok=NO;break;}
+            if(strcmp(entry->d_name,".")&&strcmp(entry->d_name,"..")){ok=NO;break;}
+            errno=0;
+        }
+        if(!entry&&errno)ok=NO;
+        if(closedir(stream))ok=NO;
+    }
+    if(ok)ok=!fstat(fd,&after)&&RFStable(&opened,&after)&&!fsync(fd)&&!fsync(parent)&&
+        !fstat(fd,&after)&&RFStable(&opened,&after)&&
+        !fstatat(parent,name,&named,AT_SYMLINK_NOFOLLOW)&&RFStable(&after,&named);
+    if(close(fd))ok=NO;
+    return ok;
 }
 static int RFRead(int fd,uint64_t at,void *bytes,size_t size) {
     unsigned char *p=bytes;
@@ -192,11 +227,26 @@ static NSError *RFError(NSInteger code,BOOL published) {
         @"publishedFolderMayExist":@(published)}];
 }
 
+@interface CanopyRomFSLease ()
+- (instancetype)initWithURL:(NSURL *)url folder:(int)folder lease:(int)lease;
+@end
+@implementation CanopyRomFSLease {
+    int _folderFD,_leaseFD;
+}
+- (instancetype)initWithURL:(NSURL *)url folder:(int)folder lease:(int)lease {
+    if((self=[super init])){_folderURL=[url copy];_folderFD=folder;_leaseFD=lease;}
+    return self;
+}
+- (void)dealloc {if(_folderFD>=0)close(_folderFD);if(_leaseFD>=0)close(_leaseFD);}
+@end
+
 @implementation CanopyRomFS {
     NSURL *_prepared,*_derived;
     dispatch_queue_t _queue;
     _Atomic int _cancelled;
-    BOOL _busy;
+    BOOL _busy,_worker;
+    BOOL (^_workerCancelled)(void);
+    void (^_workerProgress)(NSString *,uint64_t,uint64_t);
 }
 - (instancetype)initWithPreparedRootURL:(NSURL *)prepared derivedRootURL:(NSURL *)derived {
     if ((self=[super init])) { _prepared=[prepared copy];_derived=[derived copy];
@@ -204,33 +254,40 @@ static NSError *RFError(NSInteger code,BOOL published) {
     return self;
 }
 - (BOOL)busy { return _busy; }
-- (BOOL)stopped { return atomic_load(&_cancelled)==1; }
+- (BOOL)stopped {
+    int state=atomic_load(&_cancelled);
+    return state==1||(state==0&&_workerCancelled&&_workerCancelled());
+}
+- (BOOL)beginPublication {
+    if([self stopped])return NO;
+    int active=0;return atomic_compare_exchange_strong(&_cancelled,&active,2);
+}
 - (void)cancel {
     NSAssert(NSThread.isMainThread,@"CanopyRomFS main-thread owner");
     if (_busy) { int active=0;(void)atomic_compare_exchange_strong(&_cancelled,&active,1); }
 }
 - (void)report:(NSString *)phase done:(uint64_t)done total:(uint64_t)total {
+    if(_worker){if(_workerProgress)_workerProgress(phase,done,total);return;}
     dispatch_sync(dispatch_get_main_queue(),^{ if (self->_busy && self.progress)self.progress(phase,done,total); });
 }
-- (BOOL)materializeTitleID:(uint64_t)title generationID:(NSString *)generation completion:(void (^)(NSURL * _Nullable,NSError * _Nullable))completion {
-    NSAssert(NSThread.isMainThread,@"CanopyRomFS main-thread owner");
-    NSCharacterSet *bad=[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
-    if (_busy || !title || !completion || generation.length!=64 || [generation rangeOfCharacterFromSet:bad].location!=NSNotFound) return NO;
-    _busy=YES;atomic_store(&_cancelled,0);
-    NSString *identity=[generation copy];
-    dispatch_async(_queue,^{ @autoreleasepool {
-        int prepared=-1,derived=-1,lock=-1,lease=-1,image=-1,folder=-1,stage=-1;
+- (CanopyRomFSLease *)performTitleID:(uint64_t)title generationID:(NSString *)identity
+    verifiedImageFD:(int)verifiedImage error:(NSError **)error {
+        int prepared=-1,derived=-1,lock=-1,lease=-1,image=-1,folder=-1,stage=-1,cacheLease=-1;
         struct mng_store *store=NULL;enum mng_romfs_status status=MNG_ROMFS_IO;
-        BOOL published=NO;char final[128]={0},staging[64]={0};NSURL *result=nil;
+        BOOL published=NO;char final[128]={0},staging[64]={0},leaseName[144]={0};
+        struct stat leaseStat={0},leaseNamed={0};NSURL *result=nil;CanopyRomFSLease *held=nil;
         NSString *uuid=nil;
         NSMutableDictionary<NSString *,NSNumber *> *expected=[NSMutableDictionary new];
         struct rf_context context={self,expected,-1,-1,0,0,0,"materialize-private-folder"};
-        prepared=RFRoot(self->_prepared,NO);derived=RFRoot(self->_derived,YES);
-        if (prepared<0 || derived<0) goto finish;
+        if(verifiedImage<0)prepared=RFRoot(self->_prepared,NO);
+        derived=RFRoot(self->_derived,YES);
+        if ((verifiedImage<0&&prepared<0) || derived<0) goto finish;
         lock=openat(derived,".romfs.lock",O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK,0600);
         struct stat lock_stat;
         if (lock<0 || fstat(lock,&lock_stat) || !S_ISREG(lock_stat.st_mode) || lock_stat.st_nlink!=1 ||
             lock_stat.st_uid!=geteuid() || (lock_stat.st_mode&077) || flock(lock,LOCK_EX|LOCK_NB)) goto finish;
+        if(!RFJournalClear(derived,".romfs-removal"))goto finish;
+        if(verifiedImage<0){
         [self report:@"verify-prepared-generation" done:0 total:0];
         if ([self stopped]) { status=MNG_ROMFS_CANCELLED;goto finish; }
         if (mng_store_open(prepared,&store)!=MNG_PREPARE_OK) goto finish;
@@ -240,9 +297,15 @@ static NSError *RFError(NSInteger code,BOOL published) {
         mng_store_close(store);store=NULL;
         char relative[160];snprintf(relative,sizeof(relative),"titles/%016llx/generations/%s/romfs.bin",(unsigned long long)title,identity.UTF8String);
         image=RFRelative(prepared,relative,O_RDONLY|O_NONBLOCK);
-        struct stat source_stat;if (image<0 || fstat(image,&source_stat) || !S_ISREG(source_stat.st_mode)) goto finish;
+        }else image=fcntl(verifiedImage,F_DUPFD_CLOEXEC,0);
+        struct stat source_stat;if (image<0 || fstat(image,&source_stat) || !S_ISREG(source_stat.st_mode)||source_stat.st_nlink!=1||source_stat.st_uid!=geteuid()||source_stat.st_size<0) goto finish;
         context.image=image;context.total=(uint64_t)source_stat.st_size;
         snprintf(final,sizeof(final),"%s-%016llx-%s",RFRecipe,(unsigned long long)title,identity.UTF8String);
+        snprintf(leaseName,sizeof(leaseName),".%s.lease",final);
+        cacheLease=openat(derived,leaseName,O_RDWR|O_CREAT|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC,0600);
+        if(cacheLease<0||fstat(cacheLease,&leaseStat)||!S_ISREG(leaseStat.st_mode)||leaseStat.st_uid!=geteuid()||
+           leaseStat.st_nlink!=1||(leaseStat.st_mode&077)||leaseStat.st_size||flock(cacheLease,LOCK_SH|LOCK_NB)||
+           fstatat(derived,leaseName,&leaseNamed,AT_SYMLINK_NOFOLLOW)||!RFStable(&leaseStat,&leaseNamed))goto finish;
         struct mng_romfs_callbacks callbacks={&context,RFEntry,RFStopped,RFProgress,RFCanonical,RFDirectory};
         folder=openat(derived,final,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
         if (folder>=0) {
@@ -269,22 +332,56 @@ static NSError *RFError(NSInteger code,BOOL published) {
         NSUInteger count=0;
         if (RFTree(stage,@"",expected,&count,0,YES,&context) || count!=expected.count) { status=MNG_ROMFS_IO;goto finish; }
         [self report:@"publish-private-folder" done:extracted.bytes total:extracted.bytes];
-        int active=0;
-        if (!atomic_compare_exchange_strong(&self->_cancelled,&active,2)) { status=MNG_ROMFS_CANCELLED;goto finish; }
+        if (![self beginPublication]) { status=MNG_ROMFS_CANCELLED;goto finish; }
         if (renameatx_np(derived,staging,derived,final,RENAME_EXCL)) { status=MNG_ROMFS_IO;goto finish; }
         staging[0]=0;published=YES;
         if (fsync(derived)) { status=MNG_ROMFS_IO;goto finish; }
         result=[self->_derived URLByAppendingPathComponent:[NSString stringWithUTF8String:final] isDirectory:YES];
-    finish:
+    finish:;
+        if(result){
+            int finalFD=folder>=0?fcntl(folder,F_DUPFD_CLOEXEC,0):fcntl(stage,F_DUPFD_CLOEXEC,0);
+            struct stat opened,named;
+            if(finalFD<0||fstat(finalFD,&opened)||!RFPrivateDirectory(finalFD)||
+               fstatat(derived,final,&named,AT_SYMLINK_NOFOLLOW)||!RFStable(&opened,&named)||
+               fstat(cacheLease,&leaseStat)||fstatat(derived,leaseName,&leaseNamed,AT_SYMLINK_NOFOLLOW)||
+               !RFStable(&leaseStat,&leaseNamed)||fsync(cacheLease)||fsync(derived)){
+                if(finalFD>=0)close(finalFD);result=nil;status=MNG_ROMFS_IO;
+            }else{
+                held=[[CanopyRomFSLease alloc] initWithURL:result folder:finalFD lease:cacheLease];
+                if(held)cacheLease=-1;else{close(finalFD);result=nil;status=MNG_ROMFS_NOMEM;}
+            }
+        }
         if (stage>=0 && staging[0]) { NSUInteger count=0;(void)RFRemoveStaging(stage,0,&count); }
         if (stage>=0)close(stage);
         if (staging[0] && derived>=0)(void)unlinkat(derived,staging,AT_REMOVEDIR);
-        if (folder>=0)close(folder);if (image>=0)close(image);if (lease>=0)close(lease);
+        if(cacheLease>=0)close(cacheLease);if (folder>=0)close(folder);if (image>=0)close(image);if (lease>=0)close(lease);
         mng_store_close(store);if (lock>=0)close(lock);if (derived>=0)close(derived);if (prepared>=0)close(prepared);
         if (!result && [self stopped] && !published) status=MNG_ROMFS_CANCELLED;
-        NSError *error=result ? nil:RFError(status,published);
-        dispatch_async(dispatch_get_main_queue(),^{ self->_busy=NO;completion(result,error); });
-    }});
-    return YES;
+        if(!held&&error)*error=RFError(status,published);
+        return held;
+}
++ (CanopyRomFSLease *)materializeVerifiedImageFD:(int)image titleID:(uint64_t)title generationID:(NSString *)generation
+    derivedRootURL:(NSURL *)derived cancelled:(BOOL (^)(void))cancelled
+    progress:(CanopyRomFSWorkerProgress _Nullable)progress error:(NSError * _Nullable * _Nullable)error {
+    NSAssert(!NSThread.isMainThread,@"Verified folder materialization belongs on worker");
+    generation=[generation copy];derived=[derived copy];
+    NSCharacterSet *bad=[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
+    if(image<0||!title||generation.length!=64||[generation rangeOfCharacterFromSet:bad].location!=NSNotFound||!derived.isFileURL||!cancelled){
+        if(error)*error=RFError(MNG_ROMFS_INVALID,NO);return nil;
+    }
+    CanopyRomFS *operation=[[self alloc] initWithPreparedRootURL:derived derivedRootURL:derived];
+    operation->_worker=YES;operation->_workerCancelled=[cancelled copy];operation->_workerProgress=[progress copy];
+    return [operation performTitleID:title generationID:generation verifiedImageFD:image error:error];
+}
+- (BOOL)materializeTitleID:(uint64_t)title generationID:(NSString *)generation completion:(void (^)(NSURL * _Nullable,NSError * _Nullable))completion {
+    NSAssert(NSThread.isMainThread,@"CanopyRomFS main-thread owner");
+    NSCharacterSet *bad=[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
+    if (_busy || !title || !completion || generation.length!=64 || [generation rangeOfCharacterFromSet:bad].location!=NSNotFound) return NO;
+    _busy=YES;atomic_store(&_cancelled,0);NSString *identity=[generation copy];
+    dispatch_async(_queue,^{@autoreleasepool{
+        NSError *error=nil;
+        CanopyRomFSLease *held=[self performTitleID:title generationID:identity verifiedImageFD:-1 error:&error];
+        dispatch_async(dispatch_get_main_queue(),^{self->_busy=NO;completion(held.folderURL,error);});
+    }});return YES;
 }
 @end
